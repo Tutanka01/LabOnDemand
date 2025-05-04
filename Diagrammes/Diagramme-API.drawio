@@ -16,6 +16,9 @@
         <mxCell id="Qdy2ovpCAplX7VyIytZM-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Qdy2ovpCAplX7VyIytZM-1" target="Qdy2ovpCAplX7VyIytZM-13">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
+        <mxCell id="Qdy2ovpCAplX7VyIytZM-29" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Qdy2ovpCAplX7VyIytZM-1" target="Qdy2ovpCAplX7VyIytZM-28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
         <mxCell id="Qdy2ovpCAplX7VyIytZM-1" value="API" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
           <mxGeometry x="356" y="310" width="118" height="40" as="geometry" />
         </mxCell>
@@ -87,6 +90,9 @@
         </mxCell>
         <mxCell id="Qdy2ovpCAplX7VyIytZM-24" value="Cluster Worker Nodes" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
           <mxGeometry x="372.5" y="900" width="85" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Qdy2ovpCAplX7VyIytZM-28" value="DB" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="590" y="350" width="50" height="60" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

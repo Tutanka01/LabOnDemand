@@ -1,9 +1,25 @@
 from fastapi import FastAPI
 import uvicorn # Importé juste pour pouvoir le lancer depuis ce fichier si besoin
 from kubernetes import client, config
+import os
+from dotenv import load_dotenv
 
+# Charger les variables d'environnement depuis le fichier .env
+load_dotenv()
 
-config.load_kube_config()
+# Configuration Kubernetes - utilisation des variables d'environnement
+try:
+    # Si le fichier kubeconfig est disponible, l'utiliser
+    config.load_kube_config()
+except:
+    # Sinon, utiliser les variables d'environnement pour la configuration
+    configuration = client.Configuration()
+    configuration.host = os.getenv("KUBE_API_SERVER")
+    configuration.api_key = {"authorization": f"Bearer {os.getenv('KUBE_TOKEN')}"}
+    client.Configuration.set_default(configuration)
+
+# Obtenir le namespace par défaut depuis les variables d'environnement
+DEFAULT_NAMESPACE = os.getenv("KUBE_NAMESPACE", "default")
 
 # Crée une instance de l'application FastAPI
 # Le titre et la version apparaîtront dans la documentation automatique
@@ -28,7 +44,6 @@ async def get_status():
 # Lister les pods Kubernetes
 @app.get("/api/v1/get-pods")
 async def get_pods():
-    v1 = client.CoreV1Api()
     v1 = client.CoreV1Api()
     ret = v1.list_pod_for_all_namespaces(watch=False)
     for i in ret.items:
@@ -64,7 +79,10 @@ async def get_pods_by_namespace(namespace: str):
 
 # Create new pod with an image and name
 @app.post("/api/v1/create-pod")
-async def create_pod(name: str, image: str, namespace: str = "default"):
+async def create_pod(name: str, image: str, namespace: str = None):
+    if namespace is None:
+        namespace = DEFAULT_NAMESPACE
+        
     v1 = client.CoreV1Api()
     pod_manifest = {
         "apiVersion": "v1",
@@ -78,5 +96,11 @@ async def create_pod(name: str, image: str, namespace: str = "default"):
     return {"message": f"Pod {name} créé dans le namespace {namespace} avec l'image {image}"}
 
 ## Comment creer le pod ?
-# curl -X POST "http://127.0.1:8000/api/v1/create-pod?name=mon_pod&image=nginx&namespace=default"
+# curl -X POST "http://127.0.1:8000/api/v1/create-pod?name=mon_pod&image=nginx"
+
+# Point d'entrée pour lancer l'API directement
+if __name__ == "__main__":
+    port = int(os.getenv("API_PORT", 8000))
+    debug = os.getenv("DEBUG_MODE", "False").lower() in ["true", "1", "yes"]
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=debug)
 

@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -18,6 +18,7 @@ RUN apt-get update && \
 COPY requirements.txt .
 COPY kubeconfig.yaml /root/.kube/config
 COPY backend/ /app/backend/
+# Ne copiez PAS le fichier .env dans l'image !
 
 # Installation des dépendances Python
 RUN pip install --no-cache-dir -r requirements.txt
@@ -25,8 +26,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Vérification que kubectl est correctement installé
 RUN kubectl version --client
 
-# Exposition du port utilisé par l'API
+# Exposition du port utilisé par l'API (sera écrasé par la variable d'environnement si définie)
 EXPOSE 8000
 
-# Commande pour démarrer l'API
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Commande pour démarrer l'API en utilisant uvicorn directement
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
