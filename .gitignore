@@ -59,3 +59,7 @@ htmlcov/
 .cache
 coverage.xml
 *.cover
+
+kubeconfig.yaml
+
+*.dtmp
