@@ -1,0 +1,63 @@
+/* Styles personnalisés pour LabOnDemand */
+body {
+    background-color: #f8f9fa;
+    padding-top: 20px;
+    padding-bottom: 40px;
+}
+
+.card {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.card-header h2 {
+    font-size: 1.5rem;
+    margin-bottom: 0;
+}
+
+.table-responsive {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+#api-status.online {
+    color: green;
+    font-weight: bold;
+}
+
+#api-status.offline {
+    color: red;
+    font-weight: bold;
+}
+
+.btn-danger-light {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+    color: #721c24;
+}
+
+.pod-controls {
+    display: flex;
+    gap: 5px;
+}
+
+.notification {
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+}
+
+.notification.success {
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
+    color: #155724;
+}
+
+.notification.error {
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+    color: #721c24;
+}
+
+.hidden {
+    display: none;
+}

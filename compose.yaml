@@ -21,6 +21,19 @@ services:
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
     depends_on:
       - db
+
+  frontend:
+    image: nginx:alpine
+    container_name: labondemand-frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+    restart: unless-stopped
+    depends_on:
+      - api
+
   db:
     image: mariadb:latest
     container_name: labondemand-db
