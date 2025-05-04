@@ -16,7 +16,7 @@ config.load_kube_config()
 app = FastAPI(
     title="LabOnDemand API",
     description="API pour gérer le déploiement de laboratoires à la demande.",
-    version="0.1.1",
+    version="0.5.1",
 )
 
 # Fonction pour valider et formater les noms Kubernetes
@@ -358,6 +358,25 @@ async def create_deployment(
         cpu_limit = max_resource(cpu_limit, min_cpu_limit)
         memory_limit = max_resource(memory_limit, min_memory_limit)
     
+    elif deployment_type == "jupyter":
+        # Pour Jupyter Notebook, utiliser l'image Jupyter et configurer les ports appropriés
+        image = "tutanka01/k8s:jupyter"
+        service_target_port = 8888  # Port sur lequel Jupyter écoute
+        create_service = True  # Toujours créer un service pour Jupyter
+        service_type = "NodePort"  # Utiliser NodePort pour accéder depuis l'extérieur
+        
+        # Assurer des ressources minimales pour Jupyter (data science nécessite plus de ressources)
+        cpu_request = max_resource(cpu_request, "250m")
+        memory_request = max_resource(memory_request, "512Mi")
+        
+        # Minimums pour Jupyter
+        min_cpu_limit = "500m"
+        min_memory_limit = "1Gi"
+        
+        # Vérifier que les limites sont au moins égales aux minimums
+        cpu_limit = max_resource(cpu_limit, min_cpu_limit)
+        memory_limit = max_resource(memory_limit, min_memory_limit)
+    
     try:
         # Créer le deployment
         apps_v1 = client.AppsV1Api()
@@ -499,6 +518,14 @@ async def get_deployment_templates():
             "icon": "fa-code",
             "default_image": "tutanka01/k8s:vscode",
             "default_port": 8080
+        },
+        {
+            "id": "jupyter",
+            "name": "Jupyter Notebook",
+            "description": "Déployer un environnement Jupyter Notebook pour l'analyse de données et le machine learning",
+            "icon": "fa-chart-line",
+            "default_image": "tutanka01/k8s:jupyter",
+            "default_port": 8888
         }
     ]
     return {"templates": templates}

@@ -61,6 +61,7 @@
                                 <select class="form-select" id="deployment-type">
                                     <option value="custom" selected>Déploiement personnalisé</option>
                                     <option value="vscode">VS Code Online</option>
+                                    <option value="jupyter">Jupyter Notebook</option>
                                 </select>
                             </div>
                             
@@ -192,6 +193,52 @@
                                                 <option value="low">Faible (256 Mi)</option>
                                                 <option value="medium" selected>Moyen (512 Mi)</option>
                                                 <option value="high">Élevé (1 Gi)</option>
+                                                <option value="very-high">Très élevé (2 Gi)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div id="jupyter-deployment-options" class="d-none">
+                                <div class="alert alert-success">
+                                    <p><i class="bi bi-journal-code"></i> <strong>Jupyter Notebook</strong></p>
+                                    <p>Un environnement d'analyse de données et machine learning avec:</p>
+                                    <ul>
+                                        <li>Interface Jupyter Lab complète</li>
+                                        <li>Bibliothèques pré-installées: NumPy, Pandas, Matplotlib, TensorFlow, PyTorch</li>
+                                        <li>Support pour la visualisation des données avec Plotly</li>
+                                        <li>Extensions pour Git et collaboration</li>
+                                    </ul>
+                                    <p class="mb-0"><small>Accès direct sans mot de passe pour faciliter l'utilisation</small></p>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="jupyter-namespace" class="form-label">Namespace</label>
+                                    <input type="text" class="form-control" id="jupyter-namespace" value="default">
+                                </div>
+                                
+                                <!-- Options de ressources pour Jupyter -->
+                                <div class="mb-4 resource-options">
+                                    <h5><i class="bi bi-cpu"></i> Limites de ressources</h5>
+                                    <div class="alert alert-warning">
+                                        <small><i class="bi bi-exclamation-triangle"></i> Jupyter avec les bibliothèques de machine learning nécessite des ressources plus importantes pour fonctionner efficacement.</small>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label for="jupyter-cpu-preset" class="form-label">CPU</label>
+                                            <select class="form-select" id="jupyter-cpu-preset">
+                                                <option value="low">Faible (0.25 CPU)</option>
+                                                <option value="medium" selected>Moyen (0.5 CPU)</option>
+                                                <option value="high">Élevé (1 CPU)</option>
+                                                <option value="very-high">Très élevé (2 CPU)</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label for="jupyter-memory-preset" class="form-label">Mémoire</label>
+                                            <select class="form-select" id="jupyter-memory-preset">
+                                                <option value="medium">Moyen (512 Mi)</option>
+                                                <option value="high" selected>Élevé (1 Gi)</option>
                                                 <option value="very-high">Très élevé (2 Gi)</option>
                                             </select>
                                         </div>

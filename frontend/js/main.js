@@ -23,12 +23,15 @@ const deploymentDetailsContent = document.getElementById('deployment-details-con
 const deploymentTypeSelect = document.getElementById('deployment-type');
 const customDeploymentOptions = document.getElementById('custom-deployment-options');
 const vscodeDeploymentOptions = document.getElementById('vscode-deployment-options');
+const jupyterDeploymentOptions = document.getElementById('jupyter-deployment-options');
 const deploymentTypeInfo = document.getElementById('deployment-type-info');
 const deploymentTypeDescription = document.getElementById('deployment-type-description');
 const cpuPresetSelect = document.getElementById('cpu-preset');
 const memoryPresetSelect = document.getElementById('memory-preset');
 const vscodeCpuPresetSelect = document.getElementById('vscode-cpu-preset');
 const vscodeMemoryPresetSelect = document.getElementById('vscode-memory-preset');
+const jupyterCpuPresetSelect = document.getElementById('jupyter-cpu-preset');
+const jupyterMemoryPresetSelect = document.getElementById('jupyter-memory-preset');
 
 // Variables globales
 let podToDelete = null;
@@ -579,12 +582,15 @@ function toggleDeploymentOptions() {
     // Masquer toutes les options
     customDeploymentOptions.classList.add('d-none');
     vscodeDeploymentOptions.classList.add('d-none');
+    jupyterDeploymentOptions.classList.add('d-none');
     
     // Afficher les options selon le type de déploiement
     if (deploymentType === 'custom') {
         customDeploymentOptions.classList.remove('d-none');
     } else if (deploymentType === 'vscode') {
         vscodeDeploymentOptions.classList.remove('d-none');
+    } else if (deploymentType === 'jupyter') {
+        jupyterDeploymentOptions.classList.remove('d-none');
     }
     
     // Afficher les informations sur le type de déploiement
@@ -720,10 +726,44 @@ createDeploymentForm.addEventListener('submit', async function(e) {
         params = {
             ...params,
             namespace,
-            image: 'tutanka01/k8s:vscode',
+            image: "tutanka01/k8s:vscode", // Obligatoire de fournir une image même si le backend la remplace
             create_service: true,
             service_port: 80,
             service_target_port: 8080,
+            service_type: 'NodePort',
+            cpu_request: cpuRequestValue,
+            cpu_limit: cpuLimitValue,
+            memory_request: memoryRequestValue,
+            memory_limit: memoryLimitValue
+        };
+    } else if (deploymentType === 'jupyter') {
+        // Options pour un déploiement Jupyter Notebook
+        const namespace = document.getElementById('jupyter-namespace').value || 'default';
+        
+        // Obtenir les valeurs des ressources en fonction des préréglages
+        const cpuPresetIndex = jupyterCpuPresetSelect.selectedIndex;
+        const memoryPresetIndex = jupyterMemoryPresetSelect.selectedIndex;
+        
+        // Pour Jupyter, on utilise directement l'index sélectionné
+        const cpuIndex = cpuPresetIndex;
+        const memoryIndex = memoryPresetIndex;
+        
+        // Ressources CPU
+        const cpuRequestValue = resourcePresets.cpu[cpuIndex]?.request || "250m";
+        const cpuLimitValue = resourcePresets.cpu[cpuIndex]?.limit || "500m";
+        
+        // Ressources mémoire - les notebooks ont besoin de plus de mémoire
+        const memoryRequestValue = resourcePresets.memory[memoryIndex]?.request || "512Mi";
+        const memoryLimitValue = resourcePresets.memory[memoryIndex]?.limit || "1Gi";  // Minimum 1Gi pour Jupyter
+        
+        // Pour Jupyter, certains paramètres sont définis par défaut
+        params = {
+            ...params,
+            namespace,
+            image: "tutanka01/k8s:jupyter", // Obligatoire de fournir une image même si le backend la remplace
+            create_service: true,
+            service_port: 80,
+            service_target_port: 8888,
             service_type: 'NodePort',
             cpu_request: cpuRequestValue,
             cpu_limit: cpuLimitValue,
