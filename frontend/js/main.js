@@ -25,11 +25,19 @@ const customDeploymentOptions = document.getElementById('custom-deployment-optio
 const vscodeDeploymentOptions = document.getElementById('vscode-deployment-options');
 const deploymentTypeInfo = document.getElementById('deployment-type-info');
 const deploymentTypeDescription = document.getElementById('deployment-type-description');
+const cpuPresetSelect = document.getElementById('cpu-preset');
+const memoryPresetSelect = document.getElementById('memory-preset');
+const vscodeCpuPresetSelect = document.getElementById('vscode-cpu-preset');
+const vscodeMemoryPresetSelect = document.getElementById('vscode-memory-preset');
 
 // Variables globales
 let podToDelete = null;
 let deploymentToDelete = null;
 let deploymentTemplates = [];
+let resourcePresets = {
+    cpu: [],
+    memory: []
+};
 
 // Fonctions pour les interactions avec l'API
 async function fetchWithTimeout(url, options = {}, timeout = 5000) {
@@ -206,6 +214,34 @@ async function fetchDeploymentDetails(namespace, name) {
     } catch (error) {
         console.error('Error fetching deployment details:', error);
         return null;
+    }
+}
+
+async function fetchResourcePresets() {
+    try {
+        const response = await fetch(`${API_URL}/api/v1/get-resource-presets`);
+        if (!response.ok) throw new Error('Failed to fetch resource presets');
+        
+        return await response.json();
+    } catch (error) {
+        console.error('Error fetching resource presets:', error);
+        // Retourner des préréglages par défaut en cas d'erreur
+        return {
+            cpu: [
+                {"label": "Très faible (0.1 CPU)", "request": "100m", "limit": "200m"},
+                {"label": "Faible (0.25 CPU)", "request": "250m", "limit": "500m"},
+                {"label": "Moyen (0.5 CPU)", "request": "500m", "limit": "1000m"},
+                {"label": "Élevé (1 CPU)", "request": "1000m", "limit": "2000m"},
+                {"label": "Très élevé (2 CPU)", "request": "2000m", "limit": "4000m"}
+            ],
+            memory: [
+                {"label": "Très faible (128 Mi)", "request": "128Mi", "limit": "256Mi"},
+                {"label": "Faible (256 Mi)", "request": "256Mi", "limit": "512Mi"},
+                {"label": "Moyen (512 Mi)", "request": "512Mi", "limit": "1Gi"},
+                {"label": "Élevé (1 Gi)", "request": "1Gi", "limit": "2Gi"},
+                {"label": "Très élevé (2 Gi)", "request": "2Gi", "limit": "4Gi"}
+            ]
+        };
     }
 }
 
@@ -570,6 +606,9 @@ async function loadInitialData() {
     deploymentTemplates = await fetchDeploymentTemplates();
     toggleDeploymentOptions(); // Initialiser l'affichage selon le type sélectionné
     
+    // Charger les préréglages de ressources
+    resourcePresets = await fetchResourcePresets();
+    
     // Charger les namespaces
     const namespaces = await fetchNamespaces();
     displayNamespaces(namespaces);
@@ -626,13 +665,29 @@ createDeploymentForm.addEventListener('submit', async function(e) {
         const namespace = document.getElementById('deployment-namespace').value || 'default';
         const createService = document.getElementById('create-service').checked;
         
+        // Obtenir les valeurs des ressources en fonction des préréglages
+        const cpuPresetIndex = cpuPresetSelect.selectedIndex;
+        const memoryPresetIndex = memoryPresetSelect.selectedIndex;
+        
+        // Ressources CPU
+        const cpuRequestValue = resourcePresets.cpu[cpuPresetIndex]?.request || "100m";
+        const cpuLimitValue = resourcePresets.cpu[cpuPresetIndex]?.limit || "500m";
+        
+        // Ressources mémoire
+        const memoryRequestValue = resourcePresets.memory[memoryPresetIndex]?.request || "128Mi";
+        const memoryLimitValue = resourcePresets.memory[memoryPresetIndex]?.limit || "512Mi";
+        
         // Ajouter les paramètres spécifiques
         params = {
             ...params,
             image,
             replicas,
             namespace,
-            create_service: createService
+            create_service: createService,
+            cpu_request: cpuRequestValue,
+            cpu_limit: cpuLimitValue,
+            memory_request: memoryRequestValue,
+            memory_limit: memoryLimitValue
         };
         
         // Si un service est demandé, ajouter ses options
@@ -645,16 +700,35 @@ createDeploymentForm.addEventListener('submit', async function(e) {
         // Options pour un déploiement VS Code
         const namespace = document.getElementById('vscode-namespace').value || 'default';
         
-        // Pour VS Code, ces paramètres sont définis par défaut dans le backend
+        // Obtenir les valeurs des ressources en fonction des préréglages
+        const cpuPresetIndex = vscodeCpuPresetSelect.selectedIndex;
+        const memoryPresetIndex = vscodeMemoryPresetSelect.selectedIndex;
+        
+        // Pour VS Code, on utilise directement l'index sélectionné
+        const cpuIndex = cpuPresetIndex;
+        const memoryIndex = memoryPresetIndex;
+        
+        // Ressources CPU - Utilisation directe de l'index sélectionné
+        const cpuRequestValue = resourcePresets.cpu[cpuIndex]?.request || "250m";
+        const cpuLimitValue = resourcePresets.cpu[cpuIndex]?.limit || "500m";
+        
+        // Ressources mémoire - Utilisation directe de l'index sélectionné
+        const memoryRequestValue = resourcePresets.memory[memoryIndex]?.request || "256Mi";
+        const memoryLimitValue = resourcePresets.memory[memoryIndex]?.limit || "512Mi";
+        
+        // Pour VS Code, certains paramètres sont définis par défaut dans le backend
         params = {
             ...params,
             namespace,
-            // Ces valeurs pourraient être ignorées par le backend, mais on les envoie par cohérence
             image: 'tutanka01/k8s:vscode',
             create_service: true,
             service_port: 80,
             service_target_port: 8080,
-            service_type: 'NodePort'
+            service_type: 'NodePort',
+            cpu_request: cpuRequestValue,
+            cpu_limit: cpuLimitValue,
+            memory_request: memoryRequestValue,
+            memory_limit: memoryLimitValue
         };
     }
     

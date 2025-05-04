@@ -31,6 +31,45 @@ def validate_k8s_name(name):
                            detail=f"Le nom '{name}' n'est pas valide pour Kubernetes. Les noms doivent être en minuscules, ne contenir que des caractères alphanumériques ou des tirets, et commencer et se terminer par un caractère alphanumérique.")
     return name
 
+# Fonction pour comparer et prendre la plus grande valeur de ressource
+def max_resource(res1, res2):
+    """
+    Compare deux chaînes de ressources (CPU ou mémoire) et retourne la plus grande.
+    Supporte les formats:
+    - CPU: '100m', '0.1', '1'
+    - Mémoire: '100Mi', '1Gi', etc.
+    """
+    # Convertir les valeurs CPU en millicores
+    def parse_cpu(cpu_str):
+        if cpu_str.endswith('m'):
+            return float(cpu_str[:-1])
+        else:
+            return float(cpu_str) * 1000
+    
+    # Convertir les valeurs mémoire en Mi
+    def parse_memory(mem_str):
+        units = {'Ki': 1/1024, 'Mi': 1, 'Gi': 1024, 'Ti': 1024*1024}
+        
+        if any(mem_str.endswith(unit) for unit in units.keys()):
+            for unit, multiplier in units.items():
+                if mem_str.endswith(unit):
+                    return float(mem_str[:-len(unit)]) * multiplier
+        else:
+            # Assume Mi if no unit specified
+            return float(mem_str)
+    
+    # Déterminer le type de ressource et comparer
+    if any(u in res1 for u in ['Ki', 'Mi', 'Gi', 'Ti']):
+        # Ressource mémoire
+        val1 = parse_memory(res1)
+        val2 = parse_memory(res2)
+        return res1 if val1 > val2 else res2
+    else:
+        # Ressource CPU
+        val1 = parse_cpu(res1)
+        val2 = parse_cpu(res2)
+        return res1 if val1 > val2 else res2
+
 # Définit une première "route" (endpoint)
 # @app.get("/") signifie : quand quelqu'un accède à la racine ("/") via une requête GET HTTP...
 @app.get("/")
@@ -266,7 +305,11 @@ async def create_deployment(
     service_port: int = 80,
     service_target_port: int = 80,
     service_type: str = "ClusterIP",
-    deployment_type: str = "custom"
+    deployment_type: str = "custom",
+    cpu_request: str = "100m",
+    cpu_limit: str = "500m",
+    memory_request: str = "128Mi",
+    memory_limit: str = "512Mi"
 ):
     # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
     name = validate_k8s_name(name)
@@ -277,13 +320,43 @@ async def create_deployment(
     if service_type not in valid_service_types:
         raise HTTPException(status_code=400, detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}")
     
+    # Valider les formats des ressources
+    try:
+        # Valider le format des CPU
+        if not re.match(r'^(\d+m|[0-9]*\.?[0-9]+)$', cpu_request):
+            raise ValueError(f"Format CPU request invalide: {cpu_request}. Utilisez un nombre suivi de 'm' (millicores) ou un nombre décimal.")
+        if not re.match(r'^(\d+m|[0-9]*\.?[0-9]+)$', cpu_limit):
+            raise ValueError(f"Format CPU limit invalide: {cpu_limit}. Utilisez un nombre suivi de 'm' (millicores) ou un nombre décimal.")
+            
+        # Valider le format de la mémoire
+        if not re.match(r'^(\d+)(Ki|Mi|Gi|Ti|Pi|Ei|[kMGTPE]i?)?$', memory_request):
+            raise ValueError(f"Format memory request invalide: {memory_request}. Utilisez un nombre suivi d'une unité (Mi, Gi, etc.).")
+        if not re.match(r'^(\d+)(Ki|Mi|Gi|Ti|Pi|Ei|[kMGTPE]i?)?$', memory_limit):
+            raise ValueError(f"Format memory limit invalide: {memory_limit}. Utilisez un nombre suivi d'une unité (Mi, Gi, etc.).")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
     # Adapter les paramètres selon le type de déploiement
     if deployment_type == "vscode":
         # Pour VS Code Online, on utilise l'image spécifique et les paramètres appropriés
-        image = "tutanka01/k8s:vscode"  # Sera remplacé par l'image buildée
+        image = "tutanka01/k8s:vscode"
         service_target_port = 8080  # Port sur lequel code-server écoute
         create_service = True  # Toujours créer un service pour VS Code
         service_type = "NodePort"  # Utiliser NodePort pour accéder depuis l'extérieur
+        
+        # Assurer des ressources minimales pour VS Code
+        cpu_request = max_resource(cpu_request, "200m")
+        memory_request = max_resource(memory_request, "256Mi")
+        
+        # Le backend ne devrait pas remplacer les limites de ressources choisies par l'utilisateur
+        # sauf si elles sont inférieures aux minimums requis
+        # Définir les minimums pour VS Code
+        min_cpu_limit = "500m"
+        min_memory_limit = "512Mi"
+        
+        # Vérifier que les limites sont au moins égales aux minimums
+        cpu_limit = max_resource(cpu_limit, min_cpu_limit)
+        memory_limit = max_resource(memory_limit, min_memory_limit)
     
     try:
         # Créer le deployment
@@ -308,12 +381,12 @@ async def create_deployment(
                             "ports": [{"containerPort": service_target_port}],
                             "resources": {
                                 "requests": {
-                                    "cpu": "100m",
-                                    "memory": "128Mi"
+                                    "cpu": cpu_request,
+                                    "memory": memory_request
                                 },
                                 "limits": {
-                                    "cpu": "500m",
-                                    "memory": "512Mi"
+                                    "cpu": cpu_limit,
+                                    "memory": memory_limit
                                 }
                             },
                             "livenessProbe": {
@@ -339,24 +412,11 @@ async def create_deployment(
             }
         }
         
-        # Ajuster les ressources pour VS Code
-        if deployment_type == "vscode":
-            # VS Code nécessite plus de ressources
-            dep_manifest["spec"]["template"]["spec"]["containers"][0]["resources"] = {
-                "requests": {
-                    "cpu": "200m",
-                    "memory": "512Mi"
-                },
-                "limits": {
-                    "cpu": "1000m",
-                    "memory": "1Gi"
-                }
-            }
-        
         apps_v1.create_namespaced_deployment(namespace, dep_manifest)
         
         # Créer le service si demandé
         result_message = f"Deployment {name} créé dans le namespace {namespace} avec l'image {image}"
+        result_message += f" (CPU: {cpu_request}-{cpu_limit}, RAM: {memory_request}-{memory_limit})"
         
         if create_service:
             core_v1 = client.CoreV1Api()
@@ -408,8 +468,17 @@ async def create_deployment(
                 if service_type == "NodePort":
                     result_message += f" VS Code Online sera accessible à l'adresse http://<IP_DU_NOEUD>:{node_port}/ (mot de passe: labondemand)"
         
-        # Ajouter le type de déploiement à la réponse
-        return {"message": result_message, "deployment_type": deployment_type}
+        # Ajouter le type de déploiement et les ressources à la réponse
+        return {
+            "message": result_message, 
+            "deployment_type": deployment_type,
+            "resources": {
+                "cpu_request": cpu_request,
+                "cpu_limit": cpu_limit,
+                "memory_request": memory_request,
+                "memory_limit": memory_limit
+            }
+        }
     except client.exceptions.ApiException as e:
         raise HTTPException(status_code=e.status, detail=f"Erreur lors de la création: {e.reason} - {e.body}")
 
@@ -433,6 +502,27 @@ async def get_deployment_templates():
         }
     ]
     return {"templates": templates}
+
+# Récupérer les options de ressources prédéfinies
+@app.get("/api/v1/get-resource-presets")
+async def get_resource_presets():
+    presets = {
+        "cpu": [
+            {"label": "Très faible (0.1 CPU)", "request": "100m", "limit": "200m"},
+            {"label": "Faible (0.25 CPU)", "request": "250m", "limit": "500m"},
+            {"label": "Moyen (0.5 CPU)", "request": "500m", "limit": "1000m"},
+            {"label": "Élevé (1 CPU)", "request": "1000m", "limit": "2000m"},
+            {"label": "Très élevé (2 CPU)", "request": "2000m", "limit": "4000m"}
+        ],
+        "memory": [
+            {"label": "Très faible (128 Mi)", "request": "128Mi", "limit": "256Mi"},
+            {"label": "Faible (256 Mi)", "request": "256Mi", "limit": "512Mi"},
+            {"label": "Moyen (512 Mi)", "request": "512Mi", "limit": "1Gi"},
+            {"label": "Élevé (1 Gi)", "request": "1Gi", "limit": "2Gi"},
+            {"label": "Très élevé (2 Gi)", "request": "2Gi", "limit": "4Gi"}
+        ]
+    }
+    return presets
 
 # Point d'entrée pour lancer l'API directement
 if __name__ == "__main__":

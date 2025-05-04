@@ -87,6 +87,39 @@
                                     <input type="text" class="form-control" id="deployment-namespace" value="default">
                                 </div>
                                 
+                                <!-- Options de ressources -->
+                                <div class="mb-4 resource-options">
+                                    <h5><i class="bi bi-cpu"></i> Limites de ressources</h5>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label for="cpu-preset" class="form-label">CPU</label>
+                                            <select class="form-select" id="cpu-preset">
+                                                <option value="very-low">Très faible (0.1 CPU)</option>
+                                                <option value="low">Faible (0.25 CPU)</option>
+                                                <option value="medium" selected>Moyen (0.5 CPU)</option>
+                                                <option value="high">Élevé (1 CPU)</option>
+                                                <option value="very-high">Très élevé (2 CPU)</option>
+                                            </select>
+                                            <div class="form-text">
+                                                Puissance de calcul allouée au déploiement
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label for="memory-preset" class="form-label">Mémoire</label>
+                                            <select class="form-select" id="memory-preset">
+                                                <option value="very-low">Très faible (128 Mi)</option>
+                                                <option value="low">Faible (256 Mi)</option>
+                                                <option value="medium" selected>Moyen (512 Mi)</option>
+                                                <option value="high">Élevé (1 Gi)</option>
+                                                <option value="very-high">Très élevé (2 Gi)</option>
+                                            </select>
+                                            <div class="form-text">
+                                                Mémoire RAM allouée au déploiement
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
                                 <div class="mb-3 form-check">
                                     <input type="checkbox" class="form-check-input" id="create-service" checked>
                                     <label class="form-check-label" for="create-service">Créer un service</label>
@@ -135,6 +168,34 @@
                                 <div class="mb-3">
                                     <label for="vscode-namespace" class="form-label">Namespace</label>
                                     <input type="text" class="form-control" id="vscode-namespace" value="default">
+                                </div>
+                                
+                                <!-- Options de ressources pour VS Code -->
+                                <div class="mb-4 resource-options">
+                                    <h5><i class="bi bi-cpu"></i> Limites de ressources</h5>
+                                    <div class="alert alert-warning">
+                                        <small><i class="bi bi-exclamation-triangle"></i> VS Code nécessite un minimum de ressources pour fonctionner correctement.</small>
+                                    </div>
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label for="vscode-cpu-preset" class="form-label">CPU</label>
+                                            <select class="form-select" id="vscode-cpu-preset">
+                                                <option value="low">Faible (0.25 CPU)</option>
+                                                <option value="medium" selected>Moyen (0.5 CPU)</option>
+                                                <option value="high">Élevé (1 CPU)</option>
+                                                <option value="very-high">Très élevé (2 CPU)</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label for="vscode-memory-preset" class="form-label">Mémoire</label>
+                                            <select class="form-select" id="vscode-memory-preset">
+                                                <option value="low">Faible (256 Mi)</option>
+                                                <option value="medium" selected>Moyen (512 Mi)</option>
+                                                <option value="high">Élevé (1 Gi)</option>
+                                                <option value="very-high">Très élevé (2 Gi)</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             
