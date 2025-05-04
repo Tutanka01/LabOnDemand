@@ -20,10 +20,16 @@ const createServiceCheckbox = document.getElementById('create-service');
 const serviceOptions = document.getElementById('service-options');
 const deploymentDetailsModal = new bootstrap.Modal(document.getElementById('deploymentDetailsModal'));
 const deploymentDetailsContent = document.getElementById('deployment-details-content');
+const deploymentTypeSelect = document.getElementById('deployment-type');
+const customDeploymentOptions = document.getElementById('custom-deployment-options');
+const vscodeDeploymentOptions = document.getElementById('vscode-deployment-options');
+const deploymentTypeInfo = document.getElementById('deployment-type-info');
+const deploymentTypeDescription = document.getElementById('deployment-type-description');
 
 // Variables globales
 let podToDelete = null;
 let deploymentToDelete = null;
+let deploymentTemplates = [];
 
 // Fonctions pour les interactions avec l'API
 async function fetchWithTimeout(url, options = {}, timeout = 5000) {
@@ -102,6 +108,19 @@ async function fetchDeployments() {
     }
 }
 
+async function fetchDeploymentTemplates() {
+    try {
+        const response = await fetch(`${API_URL}/api/v1/get-deployment-templates`);
+        if (!response.ok) throw new Error('Failed to fetch deployment templates');
+        
+        const data = await response.json();
+        return data.templates || [];
+    } catch (error) {
+        console.error('Error fetching deployment templates:', error);
+        return [];
+    }
+}
+
 async function createPod(name, image, namespace = 'default') {
     try {
         const url = `${API_URL}/api/v1/create-pod?name=${encodeURIComponent(name)}&image=${encodeURIComponent(image)}&namespace=${encodeURIComponent(namespace)}`;
@@ -119,26 +138,15 @@ async function createPod(name, image, namespace = 'default') {
     }
 }
 
-async function createDeployment(name, image, replicas = 1, namespace = 'default', createService = false, serviceOptions = {}) {
+async function createDeployment(params = {}) {
     try {
-        let url = `${API_URL}/api/v1/create-deployment?name=${encodeURIComponent(name)}&image=${encodeURIComponent(image)}&replicas=${encodeURIComponent(replicas)}&namespace=${encodeURIComponent(namespace)}`;
+        // Construire l'URL avec tous les paramètres disponibles
+        let queryParams = Object.entries(params)
+            .filter(([key, value]) => value !== undefined && value !== null)
+            .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+            .join('&');
         
-        // Ajouter les paramètres du service si nécessaire
-        if (createService) {
-            url += `&create_service=true`;
-            
-            if (serviceOptions.type) {
-                url += `&service_type=${encodeURIComponent(serviceOptions.type)}`;
-            }
-            
-            if (serviceOptions.port) {
-                url += `&service_port=${encodeURIComponent(serviceOptions.port)}`;
-            }
-            
-            if (serviceOptions.targetPort) {
-                url += `&service_target_port=${encodeURIComponent(serviceOptions.targetPort)}`;
-            }
-        }
+        const url = `${API_URL}/api/v1/create-deployment?${queryParams}`;
         
         const response = await fetch(url, { method: 'POST' });
         const data = await response.json();
@@ -147,7 +155,7 @@ async function createDeployment(name, image, replicas = 1, namespace = 'default'
             throw new Error(data.detail || 'Failed to create deployment');
         }
         
-        return { success: true, message: data.message };
+        return { success: true, message: data.message, deploymentType: data.deployment_type };
     } catch (error) {
         console.error('Error creating deployment:', error);
         return { success: false, message: error.message };
@@ -528,10 +536,39 @@ function toggleServiceOptions() {
     serviceOptions.style.display = createServiceCheckbox.checked ? 'block' : 'none';
 }
 
+// Fonction pour basculer entre les types de déploiement
+function toggleDeploymentOptions() {
+    const deploymentType = deploymentTypeSelect.value;
+    
+    // Masquer toutes les options
+    customDeploymentOptions.classList.add('d-none');
+    vscodeDeploymentOptions.classList.add('d-none');
+    
+    // Afficher les options selon le type de déploiement
+    if (deploymentType === 'custom') {
+        customDeploymentOptions.classList.remove('d-none');
+    } else if (deploymentType === 'vscode') {
+        vscodeDeploymentOptions.classList.remove('d-none');
+    }
+    
+    // Afficher les informations sur le type de déploiement
+    const template = deploymentTemplates.find(t => t.id === deploymentType);
+    if (template) {
+        deploymentTypeDescription.textContent = template.description;
+        deploymentTypeInfo.classList.remove('d-none');
+    } else {
+        deploymentTypeInfo.classList.add('d-none');
+    }
+}
+
 // Chargement initial
 async function loadInitialData() {
     const isApiAvailable = await checkApiStatus();
     if (!isApiAvailable) return;
+    
+    // Charger les templates de déploiement
+    deploymentTemplates = await fetchDeploymentTemplates();
+    toggleDeploymentOptions(); // Initialiser l'affichage selon le type sélectionné
     
     // Charger les namespaces
     const namespaces = await fetchNamespaces();
@@ -548,6 +585,7 @@ async function loadInitialData() {
 
 // Gestionnaires d'événements
 createServiceCheckbox.addEventListener('change', toggleServiceOptions);
+deploymentTypeSelect.addEventListener('change', toggleDeploymentOptions);
 
 createPodForm.addEventListener('submit', async function(e) {
     e.preventDefault();
@@ -573,20 +611,56 @@ createPodForm.addEventListener('submit', async function(e) {
 createDeploymentForm.addEventListener('submit', async function(e) {
     e.preventDefault();
     
+    // Récupérer les valeurs du formulaire selon le type de déploiement
+    const deploymentType = deploymentTypeSelect.value;
     const name = document.getElementById('deployment-name').value;
-    const image = document.getElementById('deployment-image').value;
-    const replicas = document.getElementById('deployment-replicas').value || 1;
-    const namespace = document.getElementById('deployment-namespace').value || 'default';
-    const createService = createServiceCheckbox.checked;
-    const serviceOptions = {
-        type: document.getElementById('service-type').value,
-        port: document.getElementById('service-port').value,
-        targetPort: document.getElementById('service-target-port').value
+    let params = {
+        name,
+        deployment_type: deploymentType
     };
+    
+    if (deploymentType === 'custom') {
+        // Options pour un déploiement personnalisé
+        const image = document.getElementById('deployment-image').value;
+        const replicas = document.getElementById('deployment-replicas').value || 1;
+        const namespace = document.getElementById('deployment-namespace').value || 'default';
+        const createService = document.getElementById('create-service').checked;
+        
+        // Ajouter les paramètres spécifiques
+        params = {
+            ...params,
+            image,
+            replicas,
+            namespace,
+            create_service: createService
+        };
+        
+        // Si un service est demandé, ajouter ses options
+        if (createService) {
+            params.service_type = document.getElementById('service-type').value;
+            params.service_port = document.getElementById('service-port').value;
+            params.service_target_port = document.getElementById('service-target-port').value;
+        }
+    } else if (deploymentType === 'vscode') {
+        // Options pour un déploiement VS Code
+        const namespace = document.getElementById('vscode-namespace').value || 'default';
+        
+        // Pour VS Code, ces paramètres sont définis par défaut dans le backend
+        params = {
+            ...params,
+            namespace,
+            // Ces valeurs pourraient être ignorées par le backend, mais on les envoie par cohérence
+            image: 'tutanka01/k8s:vscode',
+            create_service: true,
+            service_port: 80,
+            service_target_port: 8080,
+            service_type: 'NodePort'
+        };
+    }
     
     createDeploymentResult.innerHTML = '<div class="notification">Création en cours...</div>';
     
-    const result = await createDeployment(name, image, replicas, namespace, createService, serviceOptions);
+    const result = await createDeployment(params);
     showNotification(createDeploymentResult, result.message, result.success);
     
     if (result.success) {

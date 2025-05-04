@@ -16,7 +16,7 @@ config.load_kube_config()
 app = FastAPI(
     title="LabOnDemand API",
     description="API pour gérer le déploiement de laboratoires à la demande.",
-    version="0.1.0",
+    version="0.1.1",
 )
 
 # Fonction pour valider et formater les noms Kubernetes
@@ -265,7 +265,8 @@ async def create_deployment(
     create_service: bool = False,
     service_port: int = 80,
     service_target_port: int = 80,
-    service_type: str = "ClusterIP"
+    service_type: str = "ClusterIP",
+    deployment_type: str = "custom"
 ):
     # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
     name = validate_k8s_name(name)
@@ -275,6 +276,14 @@ async def create_deployment(
     valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
     if service_type not in valid_service_types:
         raise HTTPException(status_code=400, detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}")
+    
+    # Adapter les paramètres selon le type de déploiement
+    if deployment_type == "vscode":
+        # Pour VS Code Online, on utilise l'image spécifique et les paramètres appropriés
+        image = "tutanka01/k8s:vscode"  # Sera remplacé par l'image buildée
+        service_target_port = 8080  # Port sur lequel code-server écoute
+        create_service = True  # Toujours créer un service pour VS Code
+        service_type = "NodePort"  # Utiliser NodePort pour accéder depuis l'extérieur
     
     try:
         # Créer le deployment
@@ -329,6 +338,21 @@ async def create_deployment(
                 }
             }
         }
+        
+        # Ajuster les ressources pour VS Code
+        if deployment_type == "vscode":
+            # VS Code nécessite plus de ressources
+            dep_manifest["spec"]["template"]["spec"]["containers"][0]["resources"] = {
+                "requests": {
+                    "cpu": "200m",
+                    "memory": "512Mi"
+                },
+                "limits": {
+                    "cpu": "1000m",
+                    "memory": "1Gi"
+                }
+            }
+        
         apps_v1.create_namespaced_deployment(namespace, dep_manifest)
         
         # Créer le service si demandé
@@ -378,15 +402,40 @@ async def create_deployment(
                 result_message += f" Accessible dans le cluster via: http://{name}-service:{service_port}/"
             elif service_type == "NodePort":
                 result_message += f" Accessible depuis l'extérieur via: http://<IP_DU_NOEUD>:{node_port}/"
+            
+            # Instructions spécifiques pour VS Code
+            if deployment_type == "vscode":
+                if service_type == "NodePort":
+                    result_message += f" VS Code Online sera accessible à l'adresse http://<IP_DU_NOEUD>:{node_port}/ (mot de passe: labondemand)"
         
-        return {"message": result_message}
+        # Ajouter le type de déploiement à la réponse
+        return {"message": result_message, "deployment_type": deployment_type}
     except client.exceptions.ApiException as e:
         raise HTTPException(status_code=e.status, detail=f"Erreur lors de la création: {e.reason} - {e.body}")
 
+# Récupérer les templates disponibles
+@app.get("/api/v1/get-deployment-templates")
+async def get_deployment_templates():
+    templates = [
+        {
+            "id": "custom",
+            "name": "Déploiement personnalisé",
+            "description": "Déployer une image Docker de votre choix",
+            "icon": "fa-docker"
+        },
+        {
+            "id": "vscode",
+            "name": "VS Code Online",
+            "description": "Déployer un environnement de développement VS Code accessible via navigateur",
+            "icon": "fa-code",
+            "default_image": "tutanka01/k8s:vscode",
+            "default_port": 8080
+        }
+    ]
+    return {"templates": templates}
 
 # Point d'entrée pour lancer l'API directement
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", 8000))
     debug = os.getenv("DEBUG_MODE", "False").lower() in ["true", "1", "yes"]
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=debug)
-

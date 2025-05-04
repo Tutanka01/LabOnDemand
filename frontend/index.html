@@ -6,6 +6,7 @@
     <title>LabOnDemand Dashboard</title>
     <link rel="stylesheet" href="css/styles.css">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
 </head>
 <body>
     <div class="container">
@@ -56,51 +57,84 @@
                     <div class="card-body">
                         <form id="create-deployment-form">
                             <div class="mb-3">
+                                <label for="deployment-type" class="form-label">Type de déploiement</label>
+                                <select class="form-select" id="deployment-type">
+                                    <option value="custom" selected>Déploiement personnalisé</option>
+                                    <option value="vscode">VS Code Online</option>
+                                </select>
+                            </div>
+                            
+                            <div id="deployment-type-info" class="mb-3 alert alert-info d-none">
+                                <i class="bi bi-info-circle"></i> <span id="deployment-type-description"></span>
+                            </div>
+
+                            <div class="mb-3">
                                 <label for="deployment-name" class="form-label">Nom du Déploiement</label>
                                 <input type="text" class="form-control" id="deployment-name" required>
                             </div>
-                            <div class="mb-3">
-                                <label for="deployment-image" class="form-label">Image Docker</label>
-                                <input type="text" class="form-control" id="deployment-image" value="nginx" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="deployment-replicas" class="form-label">Nombre de réplicas</label>
-                                <input type="number" class="form-control" id="deployment-replicas" value="1" min="1" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="deployment-namespace" class="form-label">Namespace</label>
-                                <input type="text" class="form-control" id="deployment-namespace" value="default">
-                            </div>
                             
-                            <div class="mb-3 form-check">
-                                <input type="checkbox" class="form-check-input" id="create-service" checked>
-                                <label class="form-check-label" for="create-service">Créer un service</label>
-                            </div>
-                            
-                            <div id="service-options" class="service-config mb-4 p-3 border rounded">
-                                <h5>Configuration du Service</h5>
+                            <div id="custom-deployment-options">
                                 <div class="mb-3">
-                                    <label for="service-type" class="form-label">Type de Service</label>
-                                    <select class="form-select" id="service-type">
-                                        <option value="ClusterIP" selected>ClusterIP</option>
-                                        <option value="NodePort">NodePort</option>
-                                        <option value="LoadBalancer">LoadBalancer</option>
-                                    </select>
-                                    <div class="form-text">
-                                        ClusterIP: Service interne uniquement<br>
-                                        NodePort: Accessible via le port du nœud<br>
-                                        LoadBalancer: Expose le service avec une IP externe
+                                    <label for="deployment-image" class="form-label">Image Docker</label>
+                                    <input type="text" class="form-control" id="deployment-image" value="nginx" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="deployment-replicas" class="form-label">Nombre de réplicas</label>
+                                    <input type="number" class="form-control" id="deployment-replicas" value="1" min="1" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="deployment-namespace" class="form-label">Namespace</label>
+                                    <input type="text" class="form-control" id="deployment-namespace" value="default">
+                                </div>
+                                
+                                <div class="mb-3 form-check">
+                                    <input type="checkbox" class="form-check-input" id="create-service" checked>
+                                    <label class="form-check-label" for="create-service">Créer un service</label>
+                                </div>
+                                
+                                <div id="service-options" class="service-config mb-4 p-3 border rounded">
+                                    <h5>Configuration du Service</h5>
+                                    <div class="mb-3">
+                                        <label for="service-type" class="form-label">Type de Service</label>
+                                        <select class="form-select" id="service-type">
+                                            <option value="ClusterIP" selected>ClusterIP</option>
+                                            <option value="NodePort">NodePort</option>
+                                            <option value="LoadBalancer">LoadBalancer</option>
+                                        </select>
+                                        <div class="form-text">
+                                            ClusterIP: Service interne uniquement<br>
+                                            NodePort: Accessible via le port du nœud<br>
+                                            LoadBalancer: Expose le service avec une IP externe
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="service-port" class="form-label">Port du Service</label>
+                                        <input type="number" class="form-control" id="service-port" value="80" min="1" max="65535">
+                                        <div class="form-text">Le port sur lequel le service sera accessible</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="service-target-port" class="form-label">Port Cible (Container)</label>
+                                        <input type="number" class="form-control" id="service-target-port" value="80" min="1" max="65535">
+                                        <div class="form-text">Le port sur lequel l'application écoute dans le container</div>
                                     </div>
                                 </div>
-                                <div class="mb-3">
-                                    <label for="service-port" class="form-label">Port du Service</label>
-                                    <input type="number" class="form-control" id="service-port" value="80" min="1" max="65535">
-                                    <div class="form-text">Le port sur lequel le service sera accessible</div>
+                            </div>
+                            
+                            <div id="vscode-deployment-options" class="d-none">
+                                <div class="alert alert-primary">
+                                    <p><i class="bi bi-laptop"></i> <strong>VS Code Online</strong></p>
+                                    <p>Un environnement de développement complet dans votre navigateur avec:</p>
+                                    <ul>
+                                        <li>Interface VS Code complète</li>
+                                        <li>Extensions pré-installées: Python, Docker, YAML, Git</li>
+                                        <li>Terminal intégré avec accès root</li>
+                                    </ul>
+                                    <p class="mb-0"><small>Mot de passe par défaut: <code>labondemand</code></small></p>
                                 </div>
+                                
                                 <div class="mb-3">
-                                    <label for="service-target-port" class="form-label">Port Cible (Container)</label>
-                                    <input type="number" class="form-control" id="service-target-port" value="80" min="1" max="65535">
-                                    <div class="form-text">Le port sur lequel l'application écoute dans le container</div>
+                                    <label for="vscode-namespace" class="form-label">Namespace</label>
+                                    <input type="text" class="form-control" id="vscode-namespace" value="default">
                                 </div>
                             </div>
                             
