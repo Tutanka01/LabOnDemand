@@ -48,6 +48,67 @@
                         <div id="create-pod-result" class="mt-3"></div>
                     </div>
                 </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h2>Création de Déploiement</h2>
+                    </div>
+                    <div class="card-body">
+                        <form id="create-deployment-form">
+                            <div class="mb-3">
+                                <label for="deployment-name" class="form-label">Nom du Déploiement</label>
+                                <input type="text" class="form-control" id="deployment-name" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="deployment-image" class="form-label">Image Docker</label>
+                                <input type="text" class="form-control" id="deployment-image" value="nginx" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="deployment-replicas" class="form-label">Nombre de réplicas</label>
+                                <input type="number" class="form-control" id="deployment-replicas" value="1" min="1" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="deployment-namespace" class="form-label">Namespace</label>
+                                <input type="text" class="form-control" id="deployment-namespace" value="default">
+                            </div>
+                            
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="create-service" checked>
+                                <label class="form-check-label" for="create-service">Créer un service</label>
+                            </div>
+                            
+                            <div id="service-options" class="service-config mb-4 p-3 border rounded">
+                                <h5>Configuration du Service</h5>
+                                <div class="mb-3">
+                                    <label for="service-type" class="form-label">Type de Service</label>
+                                    <select class="form-select" id="service-type">
+                                        <option value="ClusterIP" selected>ClusterIP</option>
+                                        <option value="NodePort">NodePort</option>
+                                        <option value="LoadBalancer">LoadBalancer</option>
+                                    </select>
+                                    <div class="form-text">
+                                        ClusterIP: Service interne uniquement<br>
+                                        NodePort: Accessible via le port du nœud<br>
+                                        LoadBalancer: Expose le service avec une IP externe
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="service-port" class="form-label">Port du Service</label>
+                                    <input type="number" class="form-control" id="service-port" value="80" min="1" max="65535">
+                                    <div class="form-text">Le port sur lequel le service sera accessible</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="service-target-port" class="form-label">Port Cible (Container)</label>
+                                    <input type="number" class="form-control" id="service-target-port" value="80" min="1" max="65535">
+                                    <div class="form-text">Le port sur lequel l'application écoute dans le container</div>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">Créer Déploiement</button>
+                        </form>
+                        <div id="create-deployment-result" class="mt-3"></div>
+                    </div>
+                </div>
             </div>
 
             <div class="col-md-6">
@@ -71,6 +132,18 @@
                         <div id="pods-list">Chargement...</div>
                     </div>
                 </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h2>Déploiements</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <button id="refresh-deployments" class="btn btn-secondary">Rafraîchir</button>
+                        </div>
+                        <div id="deployments-list">Chargement...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -89,6 +162,48 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
                     <button type="button" class="btn btn-danger" id="confirm-delete">Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modèle pour la suppression de déploiement -->
+    <div class="modal fade" id="deleteDeploymentModal" tabindex="-1" aria-labelledby="deleteDeploymentModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteDeploymentModalLabel">Confirmer la suppression</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    Êtes-vous sûr de vouloir supprimer ce déploiement?
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="confirm-delete-deployment">Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modèle pour les détails du déploiement -->
+    <div class="modal fade" id="deploymentDetailsModal" tabindex="-1" aria-labelledby="deploymentDetailsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deploymentDetailsModalLabel">Détails du déploiement</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="deployment-details-content">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Chargement...</span>
+                        </div>
+                        <p>Chargement des détails...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                 </div>
             </div>
         </div>
