@@ -27,7 +27,7 @@ graph TD
 
     %% --- External Layer ---
     User["Utilisateur"]:::external
-    DNS["DNS<br/>(*.lab.domain.com)"]:::external
+    DNS["DNS<br/>(*.lab.makhal.fr)"]:::external
     User -- "DNS Lookup" --> DNS
 
     %% --- HA Layer with Keepalived ---
