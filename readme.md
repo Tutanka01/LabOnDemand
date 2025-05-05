@@ -10,9 +10,8 @@ Le projet se compose de trois parties principales :
 2. **Interface Frontend (HTML/JavaScript)** : Permet aux utilisateurs d'interagir avec l'API
 3. **Base de données (MariaDB)** : Stocke les informations relatives aux laboratoires et utilisateurs
 
-![Diagramme](Diagrammes/Diagramme-API.drawio.png)
-
 ## Future de l'application
+
 A terme l'application devra ressembler au schéma ci-dessous :
 ```mermaid
 graph TD
