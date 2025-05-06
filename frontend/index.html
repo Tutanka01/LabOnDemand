@@ -3,355 +3,264 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LabOnDemand Dashboard</title>
-    <link rel="stylesheet" href="css/styles.css">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <title>LabOnDemand - Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Ajout de Font Awesome pour les icônes -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div class="container">
-        <header class="bg-primary text-white p-4 mb-4 rounded">
-            <h1>LabOnDemand</h1>
-            <p>Interface de gestion des laboratoires virtuels Kubernetes</p>
-        </header>
+    <header>
+        <div class="container header-content">
+            <div class="logo">
+                <i class="fas fa-cubes logo-icon"></i> <!-- Icône simple pour le logo -->
+                LabOnDemand <span class="uppa-tag">UPPA</span>
+            </div>
+            <div class="user-info">
+                <!-- L'API ne supportant pas encore le login, nous le désactivons -->
+                <span id="api-status">Vérification de l'API...</span>
+                <!-- <span>Bonjour, Enseignant <i class="fas fa-user-circle"></i></span>
+                <button class="logout-btn"><i class="fas fa-sign-out-alt"></i> Déconnexion</button> -->
+            </div>
+        </div>
+    </header>
 
-        <div class="row">
-            <div class="col-md-6">
-                <div class="card mb-4">
-                    <div class="card-header bg-info text-white">
-                        <h2>Statut du système</h2>
-                    </div>
-                    <div class="card-body">
-                        <div id="api-status">Chargement...</div>
-                    </div>
-                </div>
+    <main class="container">
+        <!-- Section Dashboard Principal -->
+        <section id="dashboard-view" class="view active-view">
+            <h1><i class="fas fa-tachometer-alt"></i> Votre Tableau de Bord</h1>
+            <p class="subtitle">Gérez vos environnements actifs et lancez de nouveaux laboratoires.</p>
 
-                <div class="card mb-4">
-                    <div class="card-header bg-info text-white">
-                        <h2>Création de Pod</h2>
-                    </div>
-                    <div class="card-body">
-                        <form id="create-pod-form">
-                            <div class="mb-3">
-                                <label for="pod-name" class="form-label">Nom du Pod</label>
-                                <input type="text" class="form-control" id="pod-name" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="pod-image" class="form-label">Image Docker</label>
-                                <input type="text" class="form-control" id="pod-image" value="nginx" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="pod-namespace" class="form-label">Namespace</label>
-                                <input type="text" class="form-control" id="pod-namespace" value="default">
-                            </div>
-                            <button type="submit" class="btn btn-primary">Créer Pod</button>
-                        </form>
-                        <div id="create-pod-result" class="mt-3"></div>
-                    </div>
-                </div>
-
-                <div class="card mb-4">
-                    <div class="card-header bg-info text-white">
-                        <h2>Création de Déploiement</h2>
-                    </div>
-                    <div class="card-body">
-                        <form id="create-deployment-form">
-                            <div class="mb-3">
-                                <label for="deployment-type" class="form-label">Type de déploiement</label>
-                                <select class="form-select" id="deployment-type">
-                                    <option value="custom" selected>Déploiement personnalisé</option>
-                                    <option value="vscode">VS Code Online</option>
-                                    <option value="jupyter">Jupyter Notebook</option>
-                                </select>
-                            </div>
-                            
-                            <div id="deployment-type-info" class="mb-3 alert alert-info d-none">
-                                <i class="bi bi-info-circle"></i> <span id="deployment-type-description"></span>
-                            </div>
-
-                            <div class="mb-3">
-                                <label for="deployment-name" class="form-label">Nom du Déploiement</label>
-                                <input type="text" class="form-control" id="deployment-name" required>
-                            </div>
-                            
-                            <div id="custom-deployment-options">
-                                <div class="mb-3">
-                                    <label for="deployment-image" class="form-label">Image Docker</label>
-                                    <input type="text" class="form-control" id="deployment-image" value="nginx" required>
-                                </div>
-                                <div class="mb-3">
-                                    <label for="deployment-replicas" class="form-label">Nombre de réplicas</label>
-                                    <input type="number" class="form-control" id="deployment-replicas" value="1" min="1" required>
-                                </div>
-                                <div class="mb-3">
-                                    <label for="deployment-namespace" class="form-label">Namespace</label>
-                                    <input type="text" class="form-control" id="deployment-namespace" value="default">
-                                </div>
-                                
-                                <!-- Options de ressources -->
-                                <div class="mb-4 resource-options">
-                                    <h5><i class="bi bi-cpu"></i> Limites de ressources</h5>
-                                    <div class="row">
-                                        <div class="col-md-6 mb-3">
-                                            <label for="cpu-preset" class="form-label">CPU</label>
-                                            <select class="form-select" id="cpu-preset">
-                                                <option value="very-low">Très faible (0.1 CPU)</option>
-                                                <option value="low">Faible (0.25 CPU)</option>
-                                                <option value="medium" selected>Moyen (0.5 CPU)</option>
-                                                <option value="high">Élevé (1 CPU)</option>
-                                                <option value="very-high">Très élevé (2 CPU)</option>
-                                            </select>
-                                            <div class="form-text">
-                                                Puissance de calcul allouée au déploiement
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6 mb-3">
-                                            <label for="memory-preset" class="form-label">Mémoire</label>
-                                            <select class="form-select" id="memory-preset">
-                                                <option value="very-low">Très faible (128 Mi)</option>
-                                                <option value="low">Faible (256 Mi)</option>
-                                                <option value="medium" selected>Moyen (512 Mi)</option>
-                                                <option value="high">Élevé (1 Gi)</option>
-                                                <option value="very-high">Très élevé (2 Gi)</option>
-                                            </select>
-                                            <div class="form-text">
-                                                Mémoire RAM allouée au déploiement
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="mb-3 form-check">
-                                    <input type="checkbox" class="form-check-input" id="create-service" checked>
-                                    <label class="form-check-label" for="create-service">Créer un service</label>
-                                </div>
-                                
-                                <div id="service-options" class="service-config mb-4 p-3 border rounded">
-                                    <h5>Configuration du Service</h5>
-                                    <div class="mb-3">
-                                        <label for="service-type" class="form-label">Type de Service</label>
-                                        <select class="form-select" id="service-type">
-                                            <option value="ClusterIP" selected>ClusterIP</option>
-                                            <option value="NodePort">NodePort</option>
-                                            <option value="LoadBalancer">LoadBalancer</option>
-                                        </select>
-                                        <div class="form-text">
-                                            ClusterIP: Service interne uniquement<br>
-                                            NodePort: Accessible via le port du nœud<br>
-                                            LoadBalancer: Expose le service avec une IP externe
-                                        </div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="service-port" class="form-label">Port du Service</label>
-                                        <input type="number" class="form-control" id="service-port" value="80" min="1" max="65535">
-                                        <div class="form-text">Le port sur lequel le service sera accessible</div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="service-target-port" class="form-label">Port Cible (Container)</label>
-                                        <input type="number" class="form-control" id="service-target-port" value="80" min="1" max="65535">
-                                        <div class="form-text">Le port sur lequel l'application écoute dans le container</div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div id="vscode-deployment-options" class="d-none">
-                                <div class="alert alert-primary">
-                                    <p><i class="bi bi-laptop"></i> <strong>VS Code Online</strong></p>
-                                    <p>Un environnement de développement complet dans votre navigateur avec:</p>
-                                    <ul>
-                                        <li>Interface VS Code complète</li>
-                                        <li>Extensions pré-installées: Python, Docker, YAML, Git</li>
-                                        <li>Terminal intégré avec accès root</li>
-                                    </ul>
-                                    <p class="mb-0"><small>Mot de passe par défaut: <code>labondemand</code></small></p>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="vscode-namespace" class="form-label">Namespace</label>
-                                    <input type="text" class="form-control" id="vscode-namespace" value="default">
-                                </div>
-                                
-                                <!-- Options de ressources pour VS Code -->
-                                <div class="mb-4 resource-options">
-                                    <h5><i class="bi bi-cpu"></i> Limites de ressources</h5>
-                                    <div class="alert alert-warning">
-                                        <small><i class="bi bi-exclamation-triangle"></i> VS Code nécessite un minimum de ressources pour fonctionner correctement.</small>
-                                    </div>
-                                    <div class="row">
-                                        <div class="col-md-6 mb-3">
-                                            <label for="vscode-cpu-preset" class="form-label">CPU</label>
-                                            <select class="form-select" id="vscode-cpu-preset">
-                                                <option value="low">Faible (0.25 CPU)</option>
-                                                <option value="medium" selected>Moyen (0.5 CPU)</option>
-                                                <option value="high">Élevé (1 CPU)</option>
-                                                <option value="very-high">Très élevé (2 CPU)</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-6 mb-3">
-                                            <label for="vscode-memory-preset" class="form-label">Mémoire</label>
-                                            <select class="form-select" id="vscode-memory-preset">
-                                                <option value="low">Faible (256 Mi)</option>
-                                                <option value="medium" selected>Moyen (512 Mi)</option>
-                                                <option value="high">Élevé (1 Gi)</option>
-                                                <option value="very-high">Très élevé (2 Gi)</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div id="jupyter-deployment-options" class="d-none">
-                                <div class="alert alert-success">
-                                    <p><i class="bi bi-journal-code"></i> <strong>Jupyter Notebook</strong></p>
-                                    <p>Un environnement d'analyse de données et machine learning avec:</p>
-                                    <ul>
-                                        <li>Interface Jupyter Lab complète</li>
-                                        <li>Bibliothèques pré-installées: NumPy, Pandas, Matplotlib, TensorFlow, PyTorch</li>
-                                        <li>Support pour la visualisation des données avec Plotly</li>
-                                        <li>Extensions pour Git et collaboration</li>
-                                    </ul>
-                                    <p class="mb-0"><small>Accès direct sans mot de passe pour faciliter l'utilisation</small></p>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label for="jupyter-namespace" class="form-label">Namespace</label>
-                                    <input type="text" class="form-control" id="jupyter-namespace" value="default">
-                                </div>
-                                
-                                <!-- Options de ressources pour Jupyter -->
-                                <div class="mb-4 resource-options">
-                                    <h5><i class="bi bi-cpu"></i> Limites de ressources</h5>
-                                    <div class="alert alert-warning">
-                                        <small><i class="bi bi-exclamation-triangle"></i> Jupyter avec les bibliothèques de machine learning nécessite des ressources plus importantes pour fonctionner efficacement.</small>
-                                    </div>
-                                    <div class="row">
-                                        <div class="col-md-6 mb-3">
-                                            <label for="jupyter-cpu-preset" class="form-label">CPU</label>
-                                            <select class="form-select" id="jupyter-cpu-preset">
-                                                <option value="low">Faible (0.25 CPU)</option>
-                                                <option value="medium" selected>Moyen (0.5 CPU)</option>
-                                                <option value="high">Élevé (1 CPU)</option>
-                                                <option value="very-high">Très élevé (2 CPU)</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-6 mb-3">
-                                            <label for="jupyter-memory-preset" class="form-label">Mémoire</label>
-                                            <select class="form-select" id="jupyter-memory-preset">
-                                                <option value="medium">Moyen (512 Mi)</option>
-                                                <option value="high" selected>Élevé (1 Gi)</option>
-                                                <option value="very-high">Très élevé (2 Gi)</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <button type="submit" class="btn btn-primary">Créer Déploiement</button>
-                        </form>
-                        <div id="create-deployment-result" class="mt-3"></div>
-                    </div>
-                </div>
+            <div class="actions">
+                <button id="show-launch-view-btn" class="btn btn-primary">
+                    <i class="fas fa-plus-circle"></i> Lancer un Nouveau Laboratoire
+                </button>
             </div>
 
-            <div class="col-md-6">
-                <div class="card mb-4">
-                    <div class="card-header bg-info text-white">
-                        <h2>Namespaces</h2>
-                    </div>
-                    <div class="card-body">
+            <h2><i class="fas fa-rocket"></i> Laboratoires Actifs</h2>
+            <div id="active-labs-list" class="card-grid">
+                <!-- Les labs actifs seront ajoutés ici par JS -->
+                <div class="no-labs-message">
+                    <i class="fas fa-info-circle"></i> Vous n'avez aucun laboratoire actif pour le moment.
+                </div>
+            </div>
+            
+            <!-- Section pour les listes Kubernetes (masquée par défaut) -->
+            <div class="collapsible-section">
+                <div class="collapsible-header" id="k8s-section-toggle">
+                    <h2><i class="fas fa-server"></i> Informations Kubernetes</h2>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div id="k8s-resources" class="collapsible-content k8s-section">
+                    <div class="k8s-resource-panel">
+                        <h3><i class="fas fa-project-diagram"></i> Namespaces</h3>
                         <div id="namespaces-list">Chargement...</div>
                     </div>
-                </div>
-
-                <div class="card mb-4">
-                    <div class="card-header bg-info text-white">
-                        <h2>Pods</h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <button id="refresh-pods" class="btn btn-secondary">Rafraîchir</button>
+                    
+                    <div class="k8s-resource-panel">
+                        <h3><i class="fas fa-cube"></i> Pods</h3>
+                        <div class="action-buttons">
+                            <button id="refresh-pods" class="btn btn-secondary"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
                         </div>
                         <div id="pods-list">Chargement...</div>
                     </div>
-                </div>
-
-                <div class="card mb-4">
-                    <div class="card-header bg-info text-white">
-                        <h2>Déploiements</h2>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <button id="refresh-deployments" class="btn btn-secondary">Rafraîchir</button>
+                    
+                    <div class="k8s-resource-panel">
+                        <h3><i class="fas fa-layer-group"></i> Déploiements</h3>
+                        <div class="action-buttons">
+                            <button id="refresh-deployments" class="btn btn-secondary"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
                         </div>
                         <div id="deployments-list">Chargement...</div>
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
+        </section>
 
-    <!-- Modèle pour la suppression de pod -->
-    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
+        <!-- Section Catalogue pour Lancer -->
+        <section id="launch-view" class="view">
+            <button class="btn btn-secondary back-btn" data-target="dashboard-view"><i class="fas fa-arrow-left"></i> Retour</button>
+            <h1><i class="fas fa-th-large"></i> Choisir un Service</h1>
+            <p class="subtitle">Sélectionnez le type d'environnement que vous souhaitez lancer.</p>
+            <div class="card-grid service-catalog">
+                <div class="card service-card" data-service="JupyterLab" data-icon="fa-brands fa-python" data-deployment-type="jupyter">
+                    <i class="fab fa-python service-icon"></i>
+                    <h3>JupyterLab</h3>
+                    <p>Environnement interactif pour data science (Python, R).</p>
+                </div>
+                <div class="card service-card" data-service="VSCode Web" data-icon="fa-solid fa-code" data-deployment-type="vscode">
+                    <i class="fas fa-code service-icon"></i>
+                    <h3>VSCode Web</h3>
+                    <p>IDE complet dans votre navigateur.</p>
+                </div>
+                <div class="card service-card" data-service="Custom" data-icon="fa-solid fa-cube" data-deployment-type="custom">
+                    <i class="fas fa-cube service-icon"></i>
+                    <h3>Personnalisé</h3>
+                    <p>Déploiement d'image Docker personnalisée.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section Configuration (Modale ou vue dédiée) -->
+        <section id="config-view" class="view">
+             <button class="btn btn-secondary back-btn" data-target="launch-view"><i class="fas fa-arrow-left"></i> Retour</button>
+            <h1><i class="fas fa-cogs"></i> Configurer <span id="config-service-name"></span></h1>
+            <p class="subtitle">Ajustez les paramètres de votre nouvel environnement.</p>
+
+            <form id="config-form" class="config-form card">
+                <input type="hidden" id="service-type" value="">
+                <input type="hidden" id="service-icon-class" value="">
+                <input type="hidden" id="deployment-type" value="">
+
+                <div class="form-group">
+                    <label for="deployment-name"><i class="fas fa-tag"></i> Nom du déploiement</label>
+                    <input type="text" id="deployment-name" name="deployment-name" required placeholder="Entrez un nom unique">
+                    <small>Ce nom sera utilisé pour identifier votre laboratoire</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="namespace"><i class="fas fa-project-diagram"></i> Namespace</label>
+                    <input type="text" id="namespace" name="namespace" value="default">
+                    <small>Namespace Kubernetes où sera déployé votre environnement</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="cpu"><i class="fas fa-microchip"></i> Processeur (vCPU)</label>
+                     <select id="cpu" name="cpu">
+                        <option value="very-low">0.1 vCPU (Très faible)</option>
+                        <option value="low">0.25 vCPU (Faible)</option>
+                        <option value="medium" selected>0.5 vCPU (Standard)</option>
+                        <option value="high">1 vCPU (Performant)</option>
+                        <option value="very-high">2 vCPU (Très performant)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="ram"><i class="fas fa-memory"></i> Mémoire (RAM)</label>
+                     <select id="ram" name="ram">
+                        <option value="very-low">128 Mi (Très faible)</option>
+                        <option value="low">256 Mi (Faible)</option>
+                        <option value="medium" selected>512 Mi (Standard)</option>
+                        <option value="high">1 Gi (Performant)</option>
+                        <option value="very-high">2 Gi (Très performant)</option>
+                    </select>
+                </div>
+
+                <!-- Options spécifiques pour les déploiements personnalisés -->
+                <div id="custom-deployment-options" style="display: none;">
+                    <div class="form-group">
+                        <label for="deployment-image"><i class="fas fa-box"></i> Image Docker</label>
+                        <input type="text" id="deployment-image" name="deployment-image" value="nginx">
+                        <small>Image Docker à déployer (ex: nginx, postgres:13, etc.)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="deployment-replicas"><i class="fas fa-copy"></i> Nombre de réplicas</label>
+                        <input type="number" id="deployment-replicas" name="deployment-replicas" value="1" min="1">
+                        <small>Nombre d'instances à déployer</small>
+                    </div>
+                    
+                    <div class="form-group service-config">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="create-service" checked>
+                            Créer un service pour accéder à ce déploiement
+                        </label>
+                        
+                        <div id="service-options">
+                            <div class="form-group">
+                                <label for="service-type-select"><i class="fas fa-network-wired"></i> Type de Service</label>
+                                <select id="service-type-select" name="service-type-select">
+                                    <option value="ClusterIP">ClusterIP (interne)</option>
+                                    <option value="NodePort" selected>NodePort (accès externe)</option>
+                                    <option value="LoadBalancer">LoadBalancer (avec équilibrage)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="service-port"><i class="fas fa-plug"></i> Port du Service</label>
+                                <input type="number" id="service-port" name="service-port" value="80" min="1" max="65535">
+                                <small>Port sur lequel le service sera accessible</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="service-target-port"><i class="fas fa-bullseye"></i> Port Cible (Container)</label>
+                                <input type="number" id="service-target-port" name="service-target-port" value="80" min="1" max="65535">
+                                <small>Port sur lequel l'application écoute dans le container</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group dataset-group" id="jupyter-options" style="display: none;"> <!-- Options spécifiques Jupyter -->
+                    <label><i class="fas fa-database"></i> Datasets à inclure</label>
+                    <div class="checkbox-group">
+                        <label><input type="checkbox" name="dataset" value="TP1_Data"> Données TP1</label>
+                        <label><input type="checkbox" name="dataset" value="Projet_Stats"> Données Projet Stats</label>
+                        <label><input type="checkbox" name="dataset" value="Demo_Images"> Images Démo</label>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary btn-launch">
+                        <i class="fas fa-rocket"></i> Lancer l'Environnement
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Section Statut / Confirmation -->
+        <section id="status-view" class="view">
+            <div id="status-content" class="card status-card">
+                <!-- Contenu injecté par JS -->
+            </div>
+            <div class="status-actions">
+                <button class="btn btn-secondary back-btn" data-target="dashboard-view"><i class="fas fa-check-circle"></i> Terminé</button>
+            </div>
+        </section>
+
+        <!-- Modales pour les opérations K8s -->
+        <div class="modal" id="delete-modal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="deleteModalLabel">Confirmer la suppression</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h3>Confirmer la suppression</h3>
+                    <span class="close-modal">&times;</span>
                 </div>
                 <div class="modal-body">
-                    Êtes-vous sûr de vouloir supprimer ce pod?
+                    <p>Êtes-vous sûr de vouloir supprimer cet élément?</p>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-danger" id="confirm-delete">Supprimer</button>
+                    <button class="btn btn-secondary" id="cancel-delete">Annuler</button>
+                    <button class="btn btn-danger" id="confirm-delete">Supprimer</button>
                 </div>
             </div>
         </div>
-    </div>
-
-    <!-- Modèle pour la suppression de déploiement -->
-    <div class="modal fade" id="deleteDeploymentModal" tabindex="-1" aria-labelledby="deleteDeploymentModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
+        
+        <div class="modal" id="deployment-details-modal">
+            <div class="modal-content modal-lg">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="deleteDeploymentModalLabel">Confirmer la suppression</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    Êtes-vous sûr de vouloir supprimer ce déploiement?
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-danger" id="confirm-delete-deployment">Supprimer</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modèle pour les détails du déploiement -->
-    <div class="modal fade" id="deploymentDetailsModal" tabindex="-1" aria-labelledby="deploymentDetailsModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="deploymentDetailsModalLabel">Détails du déploiement</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h3>Détails du déploiement</h3>
+                    <span class="close-modal">&times;</span>
                 </div>
                 <div class="modal-body" id="deployment-details-content">
-                    <div class="text-center">
-                        <div class="spinner-border" role="status">
-                            <span class="visually-hidden">Chargement...</span>
-                        </div>
+                    <div class="loading-spinner">
+                        <i class="fas fa-spinner fa-spin"></i>
                         <p>Chargement des détails...</p>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    <button class="btn btn-secondary close-modal-btn">Fermer</button>
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="js/main.js"></script>
+    <footer>
+        <div class="container">
+            © 2025 LabOnDemand - Université de Pau et des Pays de l'Adour
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
 </body>
 </html>

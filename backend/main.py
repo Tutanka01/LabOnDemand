@@ -3,6 +3,7 @@ import uvicorn # Importé juste pour pouvoir le lancer depuis ce fichier si beso
 from kubernetes import client, config
 import os
 import re
+import datetime
 from dotenv import load_dotenv
 
 # Charger les variables d'environnement depuis le fichier .env
@@ -294,13 +295,109 @@ async def delete_deployment(namespace: str, name: str, delete_service: bool = Tr
             raise HTTPException(status_code=404, detail=f"Déploiement {name} non trouvé dans le namespace {namespace}")
         raise HTTPException(status_code=e.status, detail=f"Erreur lors de la suppression du déploiement: {e.reason} - {e.body}")
 
-# Creer un deployment avec un service optionnel
+# Fonction utilitaire pour créer automatiquement des namespaces s'ils n'existent pas
+async def ensure_namespace_exists(namespace_name):
+    """
+    Vérifie si un namespace existe et le crée s'il n'existe pas
+    """
+    try:
+        v1 = client.CoreV1Api()
+        try:
+            v1.read_namespace(namespace_name)
+            print(f"Le namespace {namespace_name} existe déjà.")
+            return True
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                # Le namespace n'existe pas, on le crée
+                namespace_manifest = {
+                    "apiVersion": "v1",
+                    "kind": "Namespace",
+                    "metadata": {
+                        "name": namespace_name,
+                        "labels": {
+                            "managed-by": "labondemand",
+                            "created-at": datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+                        }
+                    }
+                }
+                v1.create_namespace(namespace_manifest)
+                print(f"Namespace {namespace_name} créé avec succès.")
+                return True
+            else:
+                raise
+    except Exception as e:
+        print(f"Erreur lors de la vérification/création du namespace {namespace_name}: {e}")
+        return False
+
+# Fonction pour déterminer le namespace en fonction du type de déploiement
+def get_namespace_for_deployment_type(deployment_type, user_namespace=None):
+    """
+    Retourne le namespace approprié pour un type de déploiement
+    Si user_namespace est fourni, il sera utilisé comme préfixe
+    """
+    if user_namespace:
+        # Si l'utilisateur a spécifié un namespace (cas des enseignants ou admins)
+        return user_namespace
+    
+    # Sinon, on utilise un namespace dédié par type de service
+    if deployment_type == "jupyter":
+        return "labondemand-jupyter"
+    elif deployment_type == "vscode":
+        return "labondemand-vscode"
+    else:
+        return "labondemand-custom"
+
+# Labels standard à appliquer à tous les déploiements gérés par LabOnDemand
+def get_labondemand_labels(deployment_type, additional_labels=None):
+    """
+    Retourne un dictionnaire de labels standard pour les ressources gérées par LabOnDemand
+    """
+    labels = {
+        "managed-by": "labondemand",
+        "app-type": deployment_type,
+        "created-at": datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    }
+    
+    # Ajouter les labels supplémentaires s'il y en a
+    if additional_labels:
+        labels.update(additional_labels)
+        
+    return labels
+
+# Fonction pour récupérer uniquement les déploiements gérés par LabOnDemand
+@app.get("/api/v1/get-labondemand-deployments")
+async def get_labondemand_deployments():
+    """
+    Récupère uniquement les déploiements créés par LabOnDemand dans tous les namespaces
+    """
+    try:
+        apps_v1 = client.AppsV1Api()
+        deployments = apps_v1.list_deployment_for_all_namespaces(
+            label_selector="managed-by=labondemand"
+        )
+        
+        result = []
+        for dep in deployments.items:
+            result.append({
+                "name": dep.metadata.name,
+                "namespace": dep.metadata.namespace,
+                "labels": dep.metadata.labels,
+                "type": dep.metadata.labels.get("app-type", "unknown")
+            })
+        
+        return {"deployments": result}
+    except client.exceptions.ApiException as e:
+        raise HTTPException(status_code=e.status, detail=f"Erreur Kubernetes: {e.reason}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des déploiements: {str(e)}")
+
+# Creer un deployment avec un service optionnel (VERSION MISE À JOUR)
 @app.post("/api/v1/create-deployment")
 async def create_deployment(
     name: str, 
     image: str, 
     replicas: int = 1, 
-    namespace: str = "default", 
+    namespace: str = None,  # Namespace devient optionnel
     create_service: bool = False,
     service_port: int = 80,
     service_target_port: int = 80,
@@ -309,18 +406,25 @@ async def create_deployment(
     cpu_request: str = "100m",
     cpu_limit: str = "500m",
     memory_request: str = "128Mi",
-    memory_limit: str = "512Mi"
+    memory_limit: str = "512Mi",
+    user_id: str = None,  # Futur support pour une authentification
+    additional_labels: dict = None
 ):
-    # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
+    # Valider et formater le nom pour qu'il soit conforme aux règles Kubernetes
     name = validate_k8s_name(name)
-    namespace = validate_k8s_name(namespace)
+    
+    # Déterminer le namespace approprié
+    effective_namespace = get_namespace_for_deployment_type(deployment_type, namespace)
+    
+    # S'assurer que le namespace existe
+    await ensure_namespace_exists(effective_namespace)
     
     # Valider le type de service
     valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
     if service_type not in valid_service_types:
         raise HTTPException(status_code=400, detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}")
     
-    # Valider les formats des ressources
+    # Valider les formats des ressources (code existant)
     try:
         # Valider le format des CPU
         if not re.match(r'^(\d+m|[0-9]*\.?[0-9]+)$', cpu_request):
@@ -336,6 +440,9 @@ async def create_deployment(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
+    # Préparer les labels standards
+    labels = get_labondemand_labels(deployment_type, additional_labels)
+    
     # Adapter les paramètres selon le type de déploiement
     if deployment_type == "vscode":
         # Pour VS Code Online, on utilise l'image spécifique et les paramètres appropriés
@@ -348,8 +455,6 @@ async def create_deployment(
         cpu_request = max_resource(cpu_request, "200m")
         memory_request = max_resource(memory_request, "256Mi")
         
-        # Le backend ne devrait pas remplacer les limites de ressources choisies par l'utilisateur
-        # sauf si elles sont inférieures aux minimums requis
         # Définir les minimums pour VS Code
         min_cpu_limit = "500m"
         min_memory_limit = "512Mi"
@@ -378,12 +483,15 @@ async def create_deployment(
         memory_limit = max_resource(memory_limit, min_memory_limit)
     
     try:
-        # Créer le deployment
+        # Créer le deployment avec les labels LabOnDemand
         apps_v1 = client.AppsV1Api()
         dep_manifest = {
             "apiVersion": "apps/v1",
             "kind": "Deployment",
-            "metadata": {"name": name},
+            "metadata": {
+                "name": name,
+                "labels": labels
+            },
             "spec": {
                 "replicas": replicas,
                 "selector": {
@@ -391,7 +499,10 @@ async def create_deployment(
                 },
                 "template": {
                     "metadata": {
-                        "labels": {"app": name}
+                        "labels": {
+                            "app": name,
+                            **labels  # Inclure les labels LabOnDemand
+                        }
                     },
                     "spec": {
                         "containers": [{
@@ -431,10 +542,10 @@ async def create_deployment(
             }
         }
         
-        apps_v1.create_namespaced_deployment(namespace, dep_manifest)
+        apps_v1.create_namespaced_deployment(effective_namespace, dep_manifest)
         
         # Créer le service si demandé
-        result_message = f"Deployment {name} créé dans le namespace {namespace} avec l'image {image}"
+        result_message = f"Deployment {name} créé dans le namespace {effective_namespace} avec l'image {image}"
         result_message += f" (CPU: {cpu_request}-{cpu_limit}, RAM: {memory_request}-{memory_limit})"
         
         if create_service:
@@ -444,7 +555,10 @@ async def create_deployment(
                 "kind": "Service",
                 "metadata": {
                     "name": f"{name}-service",
-                    "labels": {"app": name}
+                    "labels": {
+                        "app": name,
+                        **labels  # Inclure les labels LabOnDemand
+                    }
                 },
                 "spec": {
                     "selector": {"app": name},
@@ -462,7 +576,7 @@ async def create_deployment(
                 # Kubernetes assigne automatiquement un nodePort si non spécifié
                 pass
                 
-            created_service = core_v1.create_namespaced_service(namespace, service_manifest)
+            created_service = core_v1.create_namespaced_service(effective_namespace, service_manifest)
             service_port_info = ""
             
             # Récupérer le nodePort s'il est disponible
@@ -491,6 +605,7 @@ async def create_deployment(
         return {
             "message": result_message, 
             "deployment_type": deployment_type,
+            "namespace": effective_namespace,
             "resources": {
                 "cpu_request": cpu_request,
                 "cpu_limit": cpu_limit,

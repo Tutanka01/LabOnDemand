@@ -21,6 +21,28 @@
     --transition-speed: 0.3s;
 }
 
+:root {
+    /* Couleurs de l'UPPA et du thème */
+    --uppa-blue: #003A70;
+    --uppa-green: #99CC33;
+    --text-dark: #333333;
+    --text-light: #FFFFFF;
+    --light-blue: #E6F0F9;
+    --grey-bg: #F5F7FA;
+    --grey-border: #DEE2E6;
+    --shadow-color: rgba(0, 58, 112, 0.1);
+    
+    /* Couleurs fonctionnelles */
+    --success-color: #28a745;
+    --warning-color: #ffc107;
+    --error-color: #dc3545;
+    --disabled-color: #adb5bd;
+
+    --font-main: 'Poppins', sans-serif;
+    --border-radius: 8px;
+    --transition-speed: 0.3s;
+}
+
 /* Reset et Base */
 * {
     box-sizing: border-box;
@@ -274,7 +296,15 @@ main {
     list-style: none;
     padding-left: 0;
 }
-.lab-details li { margin-bottom: 5px; }
+.lab-details li { 
+    margin-bottom: 8px; 
+    display: flex;
+    align-items: flex-start;
+}
+.lab-details li i {
+    margin-top: 3px;
+    width: 16px;
+}
 .lab-actions {
     margin-top: 15px;
     display: flex;
@@ -338,6 +368,33 @@ main {
     accent-color: var(--uppa-green); /* Style moderne checkbox */
 }
 
+.checkbox-label {
+    font-weight: 500;
+    color: var(--uppa-blue);
+    margin-bottom: 15px;
+    display: block;
+}
+
+.checkbox-label input[type="checkbox"] {
+    margin-right: 8px;
+    accent-color: var(--uppa-green);
+}
+
+.service-config {
+    margin-top: 15px;
+    padding: 15px;
+    border: 1px solid var(--grey-border);
+    border-radius: var(--border-radius);
+    background-color: #f8f9fa;
+}
+
+small {
+    display: block;
+    margin-top: 5px;
+    color: #666;
+    font-size: 0.8rem;
+}
+
 .form-actions {
     text-align: right;
     margin-top: 30px;
@@ -372,15 +429,211 @@ main {
     margin-top: 20px;
 }
 
+/* K8s Resources Section */
+.k8s-section {
+    margin-top: 0; /* Réajusté pour éviter un espace excessif */
+}
+
+.k8s-resource-panel {
+    background-color: var(--text-light);
+    border-radius: var(--border-radius);
+    padding: 20px;
+    box-shadow: 0 5px 15px var(--shadow-color);
+    margin-bottom: 25px;
+}
+
+.k8s-resource-panel h2 {
+    margin-top: 0;
+    display: flex;
+    align-items: center;
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+}
+
+.action-buttons {
+    margin-bottom: 15px;
+}
+
+/* Tables pour les ressources K8s */
+.k8s-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+    box-shadow: 0 2px 5px var(--shadow-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.k8s-table th, .k8s-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--grey-border);
+}
+
+.k8s-table th {
+    background-color: var(--uppa-blue);
+    color: var(--text-light);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
+}
+
+.k8s-table td {
+    vertical-align: middle;
+}
+
+.k8s-table tr:hover {
+    background-color: rgba(153, 204, 51, 0.05);
+}
+
+.k8s-table .action-cell {
+    display: flex;
+    gap: 5px;
+}
+
+.k8s-table .btn {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+}
+
+.list-group {
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.list-group-item {
+    padding: 15px;
+    background-color: var(--text-light);
+    border-bottom: 1px solid var(--grey-border);
+    display: flex;
+    align-items: center;
+}
+
+.list-group-item i {
+    margin-right: 10px;
+    font-size: 1.1em;
+    width: 20px;
+    text-align: center;
+}
+
+.list-group-item:last-child {
+    border-bottom: none;
+}
+
+/* Modales */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.show {
+    display: flex;
+}
+
+.modal-content {
+    background-color: var(--text-light);
+    border-radius: var(--border-radius);
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+    position: relative;
+    animation: modalFadeIn 0.3s;
+}
+
+.modal-content.modal-lg {
+    max-width: 800px;
+}
+
+.modal-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--grey-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+}
+
+.modal-body {
+    padding: 20px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid var(--grey-border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.close-modal {
+    color: #aaa;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close-modal:hover {
+    color: var(--text-dark);
+}
+
+.loading-spinner {
+    text-align: center;
+    padding: 30px;
+}
+
+.loading-spinner i {
+    font-size: 2rem;
+    color: var(--uppa-blue);
+    animation: spin 1.5s linear infinite;
+}
+
+@keyframes modalFadeIn {
+    from {opacity: 0; transform: translateY(-30px);}
+    to {opacity: 1; transform: translateY(0);}
+}
+
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
 
+/* API Status */
+#api-status {
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: 4px;
+    transition: background-color 0.3s;
+}
+
+#api-status.online {
+    background-color: var(--uppa-green);
+    color: var(--uppa-blue);
+}
+
+#api-status.offline {
+    background-color: var(--error-color);
+    color: var(--text-light);
+}
+
 /* Footer */
 footer {
     background-color: var(--uppa-blue);
-    color: var(--text-light);
+    color: var (--text-light);
     text-align: center;
     padding: 15px 0;
     margin-top: 40px; /* Espace avant le footer */
@@ -395,4 +648,111 @@ footer {
     .user-info { margin-top: 10px; }
     .card-grid { grid-template-columns: 1fr; } /* 1 colonne sur mobile */
     .config-form { max-width: 100%; }
+}
+
+/* Styles pour les sections collapsibles */
+.collapsible-section {
+    margin-top: 40px;
+}
+
+.collapsible-header {
+    background-color: var(--text-light);
+    border-radius: var(--border-radius);
+    padding: 15px 20px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 5px var(--shadow-color);
+    transition: background-color 0.3s;
+}
+
+.collapsible-header:hover {
+    background-color: var(--light-blue);
+}
+
+.collapsible-header h2 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    font-size: 1.5rem;
+}
+
+.toggle-icon {
+    transition: transform 0.3s ease;
+    font-size: 1.2rem;
+    margin-right: 0;
+}
+
+.collapsible-header.active .toggle-icon {
+    transform: rotate(180deg);
+}
+
+.collapsible-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s ease-out;
+    padding: 0 1px; /* Évite le rétrécissement quand max-height est 0 */
+}
+
+.collapsible-content.active {
+    max-height: 2000px; /* Valeur suffisamment grande pour contenir tout le contenu */
+    transition: max-height 0.6s ease-in;
+    padding: 20px;
+    background-color: white;
+    border-bottom-left-radius: var(--border-radius);
+    border-bottom-right-radius: var(--border-radius);
+    box-shadow: 0 2px 5px var(--shadow-color);
+    margin-bottom: 20px;
+}
+
+/* Style pour la réponse API */
+.api-response {
+    background-color: var(--light-blue);
+    padding: 15px;
+    border-radius: var(--border-radius);
+    margin-top: 15px;
+    text-align: left;
+    font-size: 0.9rem;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Badges et étiquettes pour les types de déploiements et namespaces */
+.namespace-type,
+.type-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: var(--border-radius);
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.namespace-type.jupyter,
+.type-badge.jupyter {
+    background-color: #F37626;
+    color: white;
+}
+
+.namespace-type.vscode,
+.type-badge.vscode {
+    background-color: #007ACC;
+    color: white;
+}
+
+.namespace-type.custom,
+.type-badge.custom {
+    background-color: #6c757d;
+    color: white;
+}
+
+/* Style pour mettre en évidence les namespaces LabOnDemand */
+.list-group-item[data-managed="labondemand"] {
+    border-left: 3px solid var(--uppa-green);
+    background-color: rgba(153, 204, 51, 0.05);
 }
