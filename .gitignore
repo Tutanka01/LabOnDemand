@@ -65,3 +65,4 @@ kubeconfig.yaml
 *.dtmp
 
 *.bkp
+kubeconfig.yaml.cloud

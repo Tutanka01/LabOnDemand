@@ -352,13 +352,29 @@ document.addEventListener('DOMContentLoaded', () => {
             modalContent.innerHTML = `
                 <h3>Déploiement: ${data.deployment.name}</h3>
                 <div class="deployment-details">
-                    <div class="deployment-info">
-                        <h4>Informations générales</h4>
+                    <div class="deployment-info">                        <h4>Informations générales</h4>
                         <ul>
                             <li><strong>Namespace:</strong> ${data.deployment.namespace}</li>
                             <li><strong>Image:</strong> ${data.deployment.image || 'N/A'}</li>
-                            <li><strong>Réplicas:</strong> ${data.deployment.replicas} (${data.deployment.available_replicas || 0} disponible(s))</li>
+                            <li>
+                                <strong>Réplicas:</strong> ${data.deployment.replicas} 
+                                <span class="replica-status ${data.deployment.available_replicas > 0 ? 'ready' : 'pending'}">
+                                    (${data.deployment.available_replicas || 0} disponible(s))
+                                </span>
+                            </li>
                         </ul>
+                        
+                        ${data.deployment.available_replicas > 0 ? `
+                            <div class="app-availability ready">
+                                <i class="fas fa-check-circle app-availability-icon"></i>
+                                <span class="app-availability-text">L'application est prête à être utilisée</span>
+                            </div>
+                        ` : `
+                            <div class="app-availability pending">
+                                <i class="fas fa-hourglass-half app-availability-icon"></i>
+                                <span class="app-availability-text">L'application est en cours d'initialisation</span>
+                            </div>
+                        `}
                     </div>
                     
                     <div class="access-section">
@@ -690,8 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         accessUrl = `http://${deploymentName}-service:${servicePort}/`;
                     }
                 }
-                
-                // Ajouter le lab au dashboard
+                  // Ajouter le lab au dashboard avec l'état "en préparation"
                 addLabCard({
                     id: labId,
                     name: serviceName,
@@ -700,23 +715,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     ram: ramValues[ram]?.request || '128Mi',
                     datasets: datasets,
                     link: accessUrl,
-                    namespace: namespace
+                    namespace: namespace,
+                    ready: false // Le déploiement commence toujours en état non prêt
                 });
 
                 // Mettre à jour la liste des déploiements
                 fetchAndRenderDeployments();
-                
-                // Afficher la réussite
+                  // Afficher la réussite du déploiement initial (pas de l'application)
                 statusContent.innerHTML = `
-                    <i class="fas fa-check-circle status-icon success"></i>
-                    <h2>${serviceName} Lancé !</h2>
-                    <p>Votre environnement est prêt. L'API a répondu avec le message suivant :</p>
+                    <i class="fas fa-circle-notch fa-spin status-icon"></i>
+                    <h2>${serviceName} est en cours de préparation</h2>
+                    <p>Votre environnement a été déployé avec succès, mais les conteneurs sont toujours en cours de démarrage.</p>
+                    
+                    <div class="app-availability pending">
+                        <i class="fas fa-hourglass-half app-availability-icon"></i>
+                        <span class="app-availability-text">L'application est en cours d'initialisation. Veuillez patienter...</span>
+                    </div>
+                    
+                    <p>Vous serez notifié quand votre environnement sera prêt à être utilisé.</p>
                     <div class="api-response">${data.message}</div>
                     
                     ${accessUrl ? `
-                        <p style="margin-top: 15px;">Vous pouvez accéder à votre service via :</p>
-                        <a href="${accessUrl}" target="_blank" class="access-link">
+                        <p style="margin-top: 15px;">Une fois prêt, vous pourrez accéder à votre service via :</p>
+                        <a class="access-link disabled">
                             <i class="fas fa-link"></i> ${accessUrl}
+                            <span class="status-badge">En attente</span>
                         </a>
                     ` : ''}
                 `;
@@ -784,6 +807,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const card = document.createElement('div');
         card.classList.add('card', 'lab-card');
+        // Ajouter une classe pour l'état initial (pending ou ready)
+        card.classList.add(labDetails.ready ? 'lab-ready' : 'lab-pending');
         card.id = labDetails.id;
         card.dataset.namespace = labDetails.namespace;
 
@@ -792,8 +817,11 @@ document.addEventListener('DOMContentLoaded', () => {
             datasetsHtml = `<li><i class="fas fa-database"></i> <span>Datasets: ${labDetails.datasets.join(', ')}</span></li>`;
         }
 
-        card.innerHTML = `
-            <h3><i class="${labDetails.icon}"></i> ${labDetails.name}</h3>
+        // Déterminer l'indicateur d'état à afficher
+        const statusIndicator = labDetails.ready 
+            ? '<span class="status-indicator ready"><i class="fas fa-check-circle"></i> Prêt</span>'
+            : '<span class="status-indicator pending"><i class="fas fa-spinner fa-spin"></i> En préparation...</span>';        card.innerHTML = `
+            <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
             <ul class="lab-details">
                 <li><i class="fas fa-tag"></i> <span>Nom: ${labDetails.id}</span></li>
                 <li><i class="fas fa-project-diagram"></i> <span>Namespace: ${labDetails.namespace}</span></li>
@@ -801,10 +829,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 <li><i class="fas fa-memory"></i> <span>RAM: ${labDetails.ram}</span></li>
                 ${datasetsHtml}
             </ul>
+            ${!labDetails.ready ? `
+                <div class="app-availability pending" id="app-status-${labDetails.id}">
+                    <i class="fas fa-hourglass-half app-availability-icon"></i>
+                    <span class="app-availability-text">L'application est en cours d'initialisation</span>
+                </div>
+            ` : `
+                <div class="app-availability ready" id="app-status-${labDetails.id}">
+                    <i class="fas fa-check-circle app-availability-icon"></i>
+                    <span class="app-availability-text">L'application est prête à être utilisée</span>
+                </div>
+            `}
             <div class="lab-actions">
-                <a href="${labDetails.link}" target="_blank" class="btn btn-primary" id="access-btn-${labDetails.id}"><i class="fas fa-external-link-alt"></i> Accéder</a>
-                <button class="btn btn-secondary btn-details" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}"><i class="fas fa-info-circle"></i> Détails</button>
-                <button class="btn btn-danger stop-lab-btn" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}"><i class="fas fa-stop-circle"></i> Arrêter</button>
+                <a href="${labDetails.link}" target="_blank" class="btn btn-primary ${labDetails.ready ? '' : 'disabled'}" id="access-btn-${labDetails.id}">
+                    <i class="fas fa-external-link-alt"></i> ${labDetails.ready ? 'Accéder' : 'En préparation...'}
+                </a>
+                <button class="btn btn-secondary btn-details" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
+                    <i class="fas fa-info-circle"></i> Détails
+                </button>
+                <button class="btn btn-danger stop-lab-btn" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
+                    <i class="fas fa-stop-circle"></i> Arrêter
+                </button>
             </div>
         `;
 
@@ -828,6 +873,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (labDetails.link.includes('<IP_DU_NOEUD>') || labDetails.link.includes('<IP_EXTERNE>')) {
             fetchDeploymentAccessUrl(labDetails.namespace, labDetails.id);
         }
+        
+        // Si le déploiement n'est pas prêt, démarrer les vérifications périodiques
+        if (!labDetails.ready) {
+            checkDeploymentReadiness(labDetails.namespace, labDetails.id);
+        }
     }
     
     // Fonction pour récupérer et mettre à jour l'URL d'accès à un déploiement
@@ -849,6 +899,123 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (error) {
             console.error(`Erreur lors de la récupération de l'URL d'accès pour ${name}:`, error);
+        }
+    }
+    
+    // Map pour stocker les timers de vérification des déploiements
+    const deploymentCheckTimers = new Map();
+    
+    // Fonction pour vérifier périodiquement si un déploiement est prêt
+    async function checkDeploymentReadiness(namespace, name, attempts = 0) {
+        // Limiter à 60 tentatives (5 minutes si intervalle = 5s)
+        const maxAttempts = 60;
+        
+        try {
+            // Récupérer les détails du déploiement
+            const response = await fetch(`${API_V1}/get-deployment-details/${namespace}/${name}`);
+            if (!response.ok) {
+                throw new Error('Impossible de récupérer les détails du déploiement');
+            }
+            
+            const data = await response.json();
+            const available = data.deployment.available_replicas > 0;
+            const podsReady = data.pods.every(pod => pod.status === 'Running');
+            
+            console.log(`Vérification déploiement ${name}: available=${available}, podsReady=${podsReady}, tentative=${attempts+1}/${maxAttempts}`);
+            
+            // Si le déploiement est disponible et au moins un pod est prêt
+            if (available && podsReady) {
+                console.log(`Déploiement ${name} prêt !`);
+                updateLabCardStatus(name, true, data);
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
+                return;
+            }
+            
+            // Continuer à vérifier sauf si max atteint
+            if (attempts < maxAttempts) {
+                const timerId = setTimeout(() => {
+                    checkDeploymentReadiness(namespace, name, attempts + 1);
+                }, 5000); // Vérifier toutes les 5 secondes
+                
+                deploymentCheckTimers.set(`${namespace}-${name}`, timerId);
+            } else {
+                console.log(`Nombre maximal de tentatives atteint pour ${name}`);
+                // Informer l'utilisateur qu'il pourrait y avoir un problème
+                updateLabCardStatus(name, false, data, true);
+            }
+        } catch (error) {
+            console.error(`Erreur lors de la vérification du déploiement ${name}:`, error);
+            // Continuer à vérifier sauf si max atteint
+            if (attempts < maxAttempts) {
+                const timerId = setTimeout(() => {
+                    checkDeploymentReadiness(namespace, name, attempts + 1);
+                }, 5000);
+                deploymentCheckTimers.set(`${namespace}-${name}`, timerId);
+            }
+        }
+    }
+      // Fonction pour mettre à jour l'affichage d'un lab card en fonction de son état
+    function updateLabCardStatus(deploymentId, isReady, deploymentData, timeout = false) {
+        const card = document.getElementById(deploymentId);
+        if (!card) return;
+        
+        // Mettre à jour les classes de la carte
+        if (isReady) {
+            card.classList.remove('lab-pending');
+            card.classList.add('lab-ready');
+            // Ajouter temporairement une classe pour mettre en évidence le changement
+            card.classList.add('status-changed');
+            setTimeout(() => card.classList.remove('status-changed'), 2000);
+        } else if (timeout) {
+            card.classList.remove('lab-pending');
+            card.classList.add('lab-error');
+        }
+        
+        // Récupérer et mettre à jour l'indicateur d'état
+        const statusIndicator = card.querySelector('.status-indicator');
+        if (statusIndicator) {
+            if (isReady) {
+                statusIndicator.className = 'status-indicator ready';
+                statusIndicator.innerHTML = '<i class="fas fa-check-circle"></i> Prêt';
+            } else if (timeout) {
+                statusIndicator.className = 'status-indicator error';
+                statusIndicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Problème de démarrage';
+            }
+        }
+        
+        // Mettre à jour l'indicateur de disponibilité de l'application
+        const appStatus = document.getElementById(`app-status-${deploymentId}`);
+        if (appStatus) {
+            if (isReady) {
+                appStatus.className = 'app-availability ready';
+                appStatus.innerHTML = `
+                    <i class="fas fa-check-circle app-availability-icon"></i>
+                    <span class="app-availability-text">L'application est prête à être utilisée</span>
+                `;
+            } else if (timeout) {
+                appStatus.className = 'app-availability error';
+                appStatus.innerHTML = `
+                    <i class="fas fa-exclamation-triangle app-availability-icon"></i>
+                    <span class="app-availability-text">Problème de démarrage de l'application</span>
+                `;
+            }
+        }
+        
+        // Mettre à jour le bouton d'accès
+        const accessBtn = document.getElementById(`access-btn-${deploymentId}`);
+        if (accessBtn) {
+            if (isReady) {
+                accessBtn.classList.remove('disabled');
+                accessBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Accéder';
+                
+                // Si des URLs d'accès sont disponibles, mettre à jour l'URL du bouton
+                if (deploymentData && deploymentData.access_urls && deploymentData.access_urls.length > 0) {
+                    accessBtn.href = deploymentData.access_urls[0].url;
+                }
+            } else if (timeout) {
+                accessBtn.innerHTML = '<i class="fas fa-exclamation-circle"></i> Vérifier les détails';
+            }
         }
     }
 
@@ -927,22 +1094,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (detailsResponse.ok) {
                             const detailsData = await detailsResponse.json();
                             
-                            // Déterminer le type et l'icône basés sur l'image ou le type
-                            let deploymentType = deployment.type || 'custom';
-                            let serviceName = 'Personnalisé';
-                            let serviceIcon = 'fa-solid fa-cube';
+                            // Déterminer l'icône et le nom du service selon le type
+                            let serviceIcon = "fa-cube"; // Icône par défaut
+                            let serviceName = "Application"; // Nom par défaut
                             
-                            if (deploymentType === 'jupyter' || (detailsData.deployment.image && detailsData.deployment.image.includes('jupyter'))) {
-                                deploymentType = 'jupyter';
-                                serviceName = 'JupyterLab';
-                                serviceIcon = 'fa-brands fa-python';
-                            } else if (deploymentType === 'vscode' || (detailsData.deployment.image && detailsData.deployment.image.includes('vscode'))) {
-                                deploymentType = 'vscode';
-                                serviceName = 'VSCode Web';
-                                serviceIcon = 'fa-solid fa-code';
+                            if (deployment.type === "jupyter") {
+                                serviceIcon = "fa-brands fa-python";
+                                serviceName = "Jupyter Notebook";
+                            } else if (deployment.type === "vscode") {
+                                serviceIcon = "fa-solid fa-code";
+                                serviceName = "VS Code";
                             }
                             
-                            // Extraire l'URL d'accès
+                            // Déterminer l'URL d'accès
                             let accessUrl = '';
                             if (detailsData.access_urls && detailsData.access_urls.length > 0) {
                                 accessUrl = detailsData.access_urls[0].url;
@@ -951,7 +1115,11 @@ document.addEventListener('DOMContentLoaded', () => {
                                 accessUrl = `http://${deployment.name}-service`;
                             }
                             
-                            // Ajouter la carte
+                            // Vérifier si le déploiement est réellement prêt
+                            const isReady = detailsData.deployment.available_replicas > 0 && 
+                                          detailsData.pods.some(pod => pod.status === 'Running');
+                            
+                            // Ajouter la carte avec l'état de disponibilité correct
                             addLabCard({
                                 id: deployment.name,
                                 name: serviceName,
@@ -959,7 +1127,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 cpu: 'N/A', // Ces informations ne sont pas directement disponibles
                                 ram: 'N/A',
                                 link: accessUrl,
-                                namespace: deployment.namespace
+                                namespace: deployment.namespace,
+                                ready: isReady // Indiquer si le déploiement est prêt
                             });
                         }
                     } catch (error) {

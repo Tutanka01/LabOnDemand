@@ -1,0 +1,78 @@
+/* Styles spécifiques pour les indicateurs de statut d'application */
+.app-availability {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    animation: pulseStatus 2s infinite;
+}
+
+.app-availability.pending {
+    background-color: #fff8e1;
+    color: #f57c00;
+    border: 1px solid #ffe0b2;
+}
+
+.app-availability.ready {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #c8e6c9;
+    animation: none;
+}
+
+.app-availability.error {
+    background-color: #ffebee;
+    color: #c62828;
+    border: 1px solid #ffcdd2;
+    animation: none;
+}
+
+.app-availability-icon {
+    font-size: 1rem;
+}
+
+.app-availability-text {
+    font-size: 0.9rem;
+}
+
+/* Animation de pulsation pour l'état "en attente" */
+@keyframes pulseStatus {
+    0% {
+        opacity: 0.7;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.7;
+    }
+}
+
+/* Style pour le lien d'accès à l'application */
+.access-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    margin-top: 12px;
+    background-color: #f5f5f5;
+    border-radius: 6px;
+    color: #0277bd;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.access-link:not(.disabled):hover {
+    background-color: #e3f2fd;
+}
+
+.access-link.disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    color: #78909c;
+}
