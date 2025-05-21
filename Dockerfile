@@ -16,7 +16,6 @@ RUN apt-get update && \
 
 # Copie des fichiers du projet
 COPY requirements.txt .
-COPY kubeconfig.yaml /root/.kube/config
 COPY backend/ /app/backend/
 # Ne copiez PAS le fichier .env dans l'image !
 

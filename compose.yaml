@@ -9,6 +9,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./.env:/app/.env  # Monter le fichier .env comme un volume pour qu'il soit accessible
+      - ./kubeconfig.yaml:/root/.kube/config:ro # Monter kubeconfig.yaml en lecture seule
     env_file:
       - ./.env  # Utiliser le fichier .env pour injecter les variables d'environnement
     environment:
