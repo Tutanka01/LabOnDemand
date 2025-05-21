@@ -187,7 +187,7 @@ Une fois démarré, l'application sera accessible aux adresses suivantes (par d�
 ## 📁 Structure des Fichiers
 
 ```
-└── tutanka01-labondemand/
+└── LabOnDemand /
     ├── readme.md           # Ce fichier
     ├── compose.yaml        # Configuration Docker Compose
     ├── Dockerfile          # Dockerfile pour l'API backend
@@ -240,4 +240,4 @@ Ce projet est sous licence [GNU General Public License v3.0](LICENSE) - voir le 
 
 ---
 
-© 2025 LabOnDemand - Créé avec ❤️ pour simplifier le déploiement d'environnements d'apprentissage.
+© 2025 LabOnDemand - Créé avec ❤️ par Mohamad El Akhal.
