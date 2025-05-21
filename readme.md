@@ -1,9 +1,19 @@
 # LabOnDemand ✨
 
+<div align="center">
+    <h2 align="center"><a href="https://makhal.fr"><img alt="pangolin" src="Diagrammes/Images/banner-projet.jpeg" width="400" /></a></h2>
+</div>
+
 **LabOnDemand** est une plateforme open-source de gestion de laboratoires virtuels, conçue pour permettre aux étudiants et professeurs de créer et gérer facilement des environnements de travail isolés sur Kubernetes. Déployez des instances VS Code, Jupyter Notebooks, ou vos propres applications conteneurisées en quelques clics !
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-3.0.en.html)
 <!-- Ajoutez d'autres badges ici (build status, etc.) quand ils seront pertinents -->
+
+## 📹 Présentation du Projet
+
+Regardez notre vidéo de présentation qui explique les principales fonctionnalités et l'utilisation de LabOnDemand :
+
+[![LabOnDemand Video](https://img.shields.io/badge/Vidéo-Présentation%20du%20Projet-red)](Diagrammes/Video/LabOnDemand.mp4)
 
 ## 🚀 Fonctionnalités Clés
 
@@ -119,19 +129,19 @@ graph TD
     ```
 
 2.  **Configuration Kubernetes :**
-    *   **⚠️ Sécurité Importante :** Le `Dockerfile` actuel copie `kubeconfig.yaml` dans l'image de l'API. **CECI N'EST PAS SÉCURISÉ POUR LA PRODUCTION.**
+    *   **⚠️ Configuration et Accès au Cluster :** L'application nécessite l'accès à un cluster Kubernetes via un fichier `kubeconfig`.
         *   **Pour le développement local avec Docker Compose :**
-            Le `Dockerfile` copie `kubeconfig.yaml` vers `/root/.kube/config` dans l'image. Assurez-vous que votre fichier `kubeconfig.yaml` est à la racine du projet.
-            Alternativement, vous pouvez monter votre `kubeconfig` local via un volume dans `compose.yaml` :
+            Le fichier `kubeconfig.yaml` est monté comme un volume en lecture seule dans le conteneur API via `compose.yaml` :
             ```yaml
             # Dans compose.yaml, pour le service 'api':
             volumes:
               - ./backend:/app/backend
               - ./.env:/app/.env
-              - ~/.kube/config:/root/.kube/config:ro # Montez votre kubeconfig local en lecture seule
+              - ./kubeconfig.yaml:/root/.kube/config:ro # Montez votre kubeconfig local en lecture seule
             ```
-            Si vous utilisez cette méthode de montage, supprimez la ligne `COPY kubeconfig.yaml /root/.kube/config` du `Dockerfile` de l'API.
+            Assurez-vous que votre fichier `kubeconfig.yaml` est valide et situé à la racine du projet.
         *   **Pour un déploiement en cluster (Production) :** L'API devrait utiliser un **ServiceAccount Kubernetes** avec les permissions RBAC appropriées. Ne jamais embarquer un `kubeconfig` avec des droits étendus dans une image.
+        *   **Besoin d'aide pour créer un cluster Kubernetes ?** Consultez notre tutoriel sur [Comment installer un cluster Kubernetes](https://makhal.fr/posts/k8s/k8s1-3/) qui vous guidera à travers le processus d'installation.
 
 3.  **Fichier d'Environnement :**
     Créez un fichier `.env` à la racine du projet à partir de l'exemple (s'il n'y a pas de `.env.example`, créez-le) :
@@ -207,74 +217,27 @@ Une fois démarré, l'application sera accessible aux adresses suivantes (par d�
 
 ## 💡 Développement et Maintenance
 
-### Étendre le Backend
+### Contribution au Projet
 
-1.  Ajoutez de nouveaux endpoints ou modifiez ceux existants dans `backend/main.py`.
-2.  Utilisez le client Python Kubernetes pour interagir avec votre cluster.
-3.  N'oubliez pas d'ajouter des modèles Pydantic pour la validation des données d'entrée/sortie.
+Nous encourageons les contributions au projet LabOnDemand ! Voici comment vous pouvez participer :
 
-### Modifier le Frontend
+1. **Fork** le dépôt GitHub
+2. **Créez une branche** pour votre fonctionnalité ou correction
+3. **Commitez vos changements** avec des messages clairs
+4. **Faites une Pull Request** vers le dépôt principal
 
-1.  Le frontend est en HTML, CSS vanilla et JavaScript vanilla.
-2.  Les appels API sont gérés dans `frontend/script.js`.
-3.  Modifiez `frontend/index.html` pour la structure et `frontend/style.css` (et les CSS dans `frontend/css/`) pour l'apparence.
+### Ressources et Documentation Supplémentaires
 
-### Personnaliser les Images des Laboratoires
+Pour vous aider dans votre utilisation et développement avec LabOnDemand, voici quelques ressources additionnelles :
 
-1.  Créez un nouveau Dockerfile dans `dockerfiles/` (par exemple, `dockerfiles/mon_app/Dockerfile`).
-2.  Référencez cette nouvelle image dans la fonction `get_deployment_templates()` du backend (`backend/main.py`) et mettez à jour le frontend si nécessaire.
-3.  Pensez à pousser vos images Docker personnalisées sur un registre (Docker Hub, GHCR, etc.) si elles doivent être accessibles par le cluster Kubernetes.
+* **[Installation d'un Cluster Kubernetes](https://makhal.fr/posts/k8s/k8s1-3/)** - Guide détaillé pour mettre en place votre propre cluster Kubernetes
+* **[Documentation Kubernetes Officielle](https://kubernetes.io/fr/docs/home/)** - Référence complète pour l'utilisation de Kubernetes
+* **[FastAPI Documentation](https://fastapi.tiangolo.com/)** - Documentation de FastAPI, utilisé pour le backend de l'application
 
-### Dépannage
+## 📝 Licence
 
-*   **Logs Docker :** `docker compose logs -f <nom_du_service>` (ex: `docker compose logs -f api`)
-*   **Logs Kubernetes :** `kubectl logs -n <namespace> <nom_du_pod>`
-*   **Erreurs API :** Vérifiez la console du navigateur et la documentation Swagger UI (`/docs`).
-
-## 🗺️ Roadmap & Fonctionnalités Futures
-
-Nous avons de grandes ambitions pour LabOnDemand ! Voici quelques idées pour l'avenir :
-
-*   🔐 **Authentification & Autorisation :**
-    *   Système de connexion pour utilisateurs (OAuth2/OIDC).
-    *   Rôles (étudiant, professeur, admin) avec permissions distinctes.
-*   💾 **Persistance des Données :**
-    *   Support des `PersistentVolumeClaims` pour sauvegarder le travail.
-    *   Montage de datasets spécifiques pour les environnements (ex: Jupyter).
-*   📊 **Gestion des Ressources & Quotas :**
-    *   Limites par utilisateur/groupe (CPU, mémoire, nombre de labs).
-    *   Nettoyage automatique des labs inactifs.
-*   🌐 **Networking Avancé :**
-    *   Intégration complète avec un Ingress Controller pour des URLs personnalisées (ex: `monlab.lab.makhal.fr`).
-    *   Support des `NetworkPolicies` pour l'isolation.
-*   🧩 **Templates Améliorés :**
-    *   Permettre la configuration de variables d'environnement et de ports spécifiques par template.
-    *   Interface pour que les administrateurs/professeurs créent leurs propres templates.
-*   ⚙️ **Interface d'Administration :**
-    *   Gestion des utilisateurs, templates globaux, quotas.
-    *   Monitoring de l'utilisation des ressources.
-*   🖥️ **Améliorations UX :**
-    *   Visualisation des logs des pods et accès terminal depuis l'interface.
-
-## 🙌 Contribuer
-
-Les contributions sont les bienvenues ! Que ce soit pour signaler un bug, proposer une fonctionnalité, ou soumettre du code, votre aide est précieuse.
-
-1.  **Signaler des Problèmes (Issues) :**
-    Utilisez l'onglet "Issues" du dépôt GitHub pour signaler des bugs ou suggérer des améliorations. Veuillez fournir autant de détails que possible.
-2.  **Proposer des Modifications (Pull Requests) :**
-    *   Forkez le dépôt.
-    *   Créez une nouvelle branche pour votre fonctionnalité ou correction (`git checkout -b feature/ma-super-feature` ou `fix/corriger-ce-bug`).
-    *   Faites vos modifications et commitez-les avec des messages clairs.
-    *   Poussez votre branche vers votre fork (`git push origin feature/ma-super-feature`).
-    *   Ouvrez une Pull Request vers la branche `main` (ou `develop` si elle existe) du dépôt original.
-
-N'hésitez pas à discuter des changements majeurs dans une Issue avant de commencer le développement.
-
-## 📜 Licence
-
-Ce projet est sous licence GNU General Public License v3.0. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
+Ce projet est sous licence [GNU General Public License v3.0](LICENSE) - voir le fichier LICENSE pour plus de détails.
 
 ---
 
-Fait avec ❤️ et ☕ par Mohamad El Akhal
+© 2025 LabOnDemand - Créé avec ❤️ pour simplifier le déploiement d'environnements d'apprentissage.
