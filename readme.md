@@ -1,18 +1,35 @@
-# LabOnDemand
+# LabOnDemand ✨
 
-LabOnDemand est une solution de gestion de laboratoires virtuels permettant aux étudiants et professeurs de créer des environnements de travail isolés sur Kubernetes.
+**LabOnDemand** est une plateforme open-source de gestion de laboratoires virtuels, conçue pour permettre aux étudiants et professeurs de créer et gérer facilement des environnements de travail isolés sur Kubernetes. Déployez des instances VS Code, Jupyter Notebooks, ou vos propres applications conteneurisées en quelques clics !
 
-## Architecture du projet
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-3.0.en.html)
+<!-- Ajoutez d'autres badges ici (build status, etc.) quand ils seront pertinents -->
 
-Le projet se compose de trois parties principales :
+## 🚀 Fonctionnalités Clés
 
-1. **API Backend (FastAPI/Python)** : Gère les interactions avec Kubernetes
-2. **Interface Frontend (HTML/JavaScript)** : Permet aux utilisateurs d'interagir avec l'API
-3. **Base de données (MariaDB)** : Stocke les informations relatives aux laboratoires et utilisateurs
+*   **Déploiement Facile :** Interface web intuitive pour lancer des environnements pré-configurés (VS Code, Jupyter) ou des images Docker personnalisées.
+*   **Gestion Kubernetes Simplifiée :** Interagit avec l'API Kubernetes pour créer déploiements, services et gérer les ressources (CPU/Mémoire).
+*   **Isolation :** Chaque laboratoire est déployé dans son propre namespace (optionnel) pour une meilleure organisation et isolation.
+*   **Configuration des Ressources :** Préréglages de CPU/Mémoire pour adapter les environnements aux besoins spécifiques.
+*   **Accès Simplifié :** Exposition automatique des services via NodePort (configurable pour d'autres types).
+*   **Visualisation :** Tableau de bord pour suivre les laboratoires actifs, les namespaces, pods et déploiements Kubernetes gérés par l'application.
+*   **Templates :** Support pour des templates de déploiement (VS Code, Jupyter, personnalisés) avec des images Docker dédiées.
+*   **Validation Intégrée :** Formatage et validation des noms pour la conformité Kubernetes.
+*   **Scalabilité :** Prêt pour une architecture haute disponibilité (voir schéma futur).
 
-## Future de l'application
+## 🏗️ Architecture du Projet
 
-A terme l'application devra ressembler au schéma ci-dessous :
+LabOnDemand est structuré autour de trois composants principaux :
+
+1.  **Backend API (FastAPI/Python)** : Le cerveau de l'application. Il gère la logique métier, les interactions avec l'API Kubernetes et expose les endpoints pour le frontend.
+2.  **Frontend (HTML/JavaScript/CSS)** : L'interface utilisateur web, permettant aux utilisateurs d'interagir avec l'API pour gérer leurs laboratoires.
+3.  **Base de Données (MariaDB)** : Utilisée pour stocker les informations relatives aux laboratoires, utilisateurs (fonctionnalité future), et configurations.
+4.  **Proxy NGINX** : Sert le frontend statique et redirige les appels API vers le backend FastAPI.
+
+##  visionary Architecture (Objectif à Terme)
+
+L'objectif est de faire évoluer LabOnDemand vers une solution robuste et hautement disponible :
+
 ```mermaid
 graph TD
     %% --- Style Definitions ---
@@ -40,8 +57,7 @@ graph TD
             HAProxy1["<b>HAProxy 1 (MASTER)</b><br/>Actif - Détient la VIP<br/><i>Keepalived</i>"]:::haproxy
             HAProxy2["<b>HAProxy 2 (BACKUP)</b><br/>Passif - Prêt à prendre le relais<br/><i>Keepalived</i>"]:::haproxy
         end
-        %% !! Label VRRP sans icône !!
-        HAProxy1 <-- "VRRP Heartbeat" --> HAProxy2 
+        HAProxy1 <-- "VRRP Heartbeat" --> HAProxy2
     end
 
     DNS -- "Virtual IP" --> VIP
@@ -51,179 +67,214 @@ graph TD
     %% --- Kubernetes Cluster Layer ---
     subgraph "Kubernetes Cluster (3 Nodes)"
         direction TB
-
         subgraph "Worker Nodes"
              direction LR
              Node1["K8s Node 1<br/>(Worker)"]:::k8snode
              Node2["K8s Node 2<br/>(Worker)"]:::k8snode
              Node3["K8s Node 3<br/>(Worker)"]:::k8snode
         end
-
         IngressSvc["Ingress Controller Service<br/>(Type: NodePort)"]:::k8ssvc
-
         subgraph "Ingress Controller Pods"
             direction LR
              IngressPod1["Ingress Pod 1"]:::k8singress
              IngressPod2["Ingress Pod 2"]:::k8singress
         end
-
         AppSvc["Application Service<br/>(Type: ClusterIP)"]:::k8ssvc
-
         subgraph "Application Pods (ex: VSCode)"
             direction LR
              AppPod1["App Pod 1"]:::k8sapp
              AppPod2["App Pod 2"]:::k8sapp
         end
-
-        %% --- Traffic Flow inside K8s (Labels ultra-simplifiés) ---
-        %% !! Labels sans numéro ni HTML !!
-        HAProxy1 -- "Forward to NodePort" --> Node1 
+        HAProxy1 -- "Forward to NodePort" --> Node1
         HAProxy1 -- "Forward to NodePort" --> Node2
         HAProxy1 -- "Forward to NodePort" --> Node3
-
         Node1 -- "Kube-proxy routes" --> IngressSvc
         Node2 -- "Kube-proxy routes" --> IngressSvc
         Node3 -- "Kube-proxy routes" --> IngressSvc
-
         IngressSvc -- "Selects Ingress Pod" --> IngressPod1
         IngressSvc -- "Selects Ingress Pod" --> IngressPod2
-
         IngressPod1 -- "Routes by Rule" --> AppSvc
         IngressPod2 -- "Routes by Rule" --> AppSvc
-
         AppSvc -- "Selects App Pod" --> AppPod1
         AppSvc -- "Selects App Pod" --> AppPod2
-
     end
 ```
 
-## Fonctionnalités actuelles
-
-- Affichage des namespaces Kubernetes
-- Affichage des pods en cours d'exécution
-- Création de nouveaux pods à partir d'images Docker
-- Création d'environnements VS Code accessibles par navigateur
-- Configuration des ressources (CPU/Mémoire) selon les besoins
-- Interface utilisateur web intuitive pour gérer les ressources
-- Support pour les services Kubernetes avec NodePort
-
-## Fonctionnalités techniques
-
-- Gestion complète des déploiements et services Kubernetes
-- Support des templates de déploiement (VS Code, déploiements personnalisés)
-- Préréglages de ressources (CPU et mémoire) pour simplifier la configuration
-- Exposition automatique des services via NodePort
-- Validation et formatage des noms conformes à Kubernetes
-- Vérification de l'état des pods et des déploiements
-
-## Mise en place du projet
+## 🛠️ Mise en Place (Développement Local)
 
 ### Prérequis
 
-- Docker et Docker Compose pour le développement local
-- Un cluster Kubernetes fonctionnel
-- Helm pour l'installation de l'Ingress Controller
-- Un fichier kubeconfig.yaml valide pour l'accès au cluster Kubernetes
+*   **Docker & Docker Compose :** Pour construire et lancer les services localement.
+*   **Cluster Kubernetes Fonctionnel :** Minikube, Kind, K3s, ou un cluster distant.
+*   **`kubectl` :** Configuré pour interagir avec votre cluster.
+*   **Helm (Optionnel, mais recommandé) :** Pour l'installation de l'Ingress Controller.
+*   **Fichier `kubeconfig` :** Un fichier `kubeconfig` valide pour l'accès à votre cluster Kubernetes.
 
-### Installation et configuration
+### Configuration Initiale
 
-1. Clonez ce dépôt
-2. Créez un fichier `.env` à la racine (voir `.env.example`)
-3. Placez votre fichier `kubeconfig.yaml` à la racine du projet
+1.  **Clonez le dépôt :**
+    ```bash
+    git clone <URL_DU_DEPOT_LABONDEMAND>
+    cd LabOnDemand
+    ```
 
-### Installation de l'Ingress Controller NGINX
+2.  **Configuration Kubernetes :**
+    *   **⚠️ Sécurité Importante :** Le `Dockerfile` actuel copie `kubeconfig.yaml` dans l'image de l'API. **CECI N'EST PAS SÉCURISÉ POUR LA PRODUCTION.**
+        *   **Pour le développement local avec Docker Compose :**
+            Le `Dockerfile` copie `kubeconfig.yaml` vers `/root/.kube/config` dans l'image. Assurez-vous que votre fichier `kubeconfig.yaml` est à la racine du projet.
+            Alternativement, vous pouvez monter votre `kubeconfig` local via un volume dans `compose.yaml` :
+            ```yaml
+            # Dans compose.yaml, pour le service 'api':
+            volumes:
+              - ./backend:/app/backend
+              - ./.env:/app/.env
+              - ~/.kube/config:/root/.kube/config:ro # Montez votre kubeconfig local en lecture seule
+            ```
+            Si vous utilisez cette méthode de montage, supprimez la ligne `COPY kubeconfig.yaml /root/.kube/config` du `Dockerfile` de l'API.
+        *   **Pour un déploiement en cluster (Production) :** L'API devrait utiliser un **ServiceAccount Kubernetes** avec les permissions RBAC appropriées. Ne jamais embarquer un `kubeconfig` avec des droits étendus dans une image.
 
-Pour exposer correctement les services, installez l'Ingress Controller NGINX avec Helm :
+3.  **Fichier d'Environnement :**
+    Créez un fichier `.env` à la racine du projet à partir de l'exemple (s'il n'y a pas de `.env.example`, créez-le) :
+    ```bash
+    cp .env.example .env # Ou créez .env manuellement
+    ```
+    Modifiez `.env` avec vos configurations (ports, identifiants de base de données) :
+    ```dotenv
+    # Exemple de .env
+    API_PORT=8000
+    FRONTEND_PORT=80
+    DB_PORT=3306
+    DB_ROOT_PASSWORD=supersecretrootpassword
+    DB_USER=labondemand
+    DB_PASSWORD=labondemandpassword
+    DB_NAME=labondemand
+    # DEBUG_MODE=True # Décommentez pour le mode debug de FastAPI/Uvicorn
+    ```
+
+4.  **(Optionnel) Installation de l'Ingress Controller NGINX :**
+    Si vous souhaitez utiliser un Ingress pour exposer vos services (recommandé pour une utilisation plus avancée que NodePort) :
+    ```bash
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+    helm repo update
+    helm install nginx-ingress ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+    ```
+
+### Démarrage de l'Application
+
+Lancez l'ensemble des services avec Docker Compose :
 
 ```bash
-helm install nginx-ingress ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+docker compose up -d --build
 ```
 
-### Démarrage de l'application
+Une fois démarré, l'application sera accessible aux adresses suivantes (par défaut) :
 
-Lancez l'application avec Docker Compose :
+*   **Frontend LabOnDemand :** [http://localhost](http://localhost) (ou `http://localhost:${FRONTEND_PORT}`)
+*   **API LabOnDemand :** [http://localhost:8000](http://localhost:8000) (ou `http://localhost:${API_PORT}`)
+*   **Documentation API (Swagger UI) :** [http://localhost:8000/docs](http://localhost:8000/docs)
+*   **Documentation API (ReDoc) :** [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
-```bash
-docker compose up -d
+## 📁 Structure des Fichiers
+
+```
+└── tutanka01-labondemand/
+    ├── readme.md           # Ce fichier
+    ├── compose.yaml        # Configuration Docker Compose
+    ├── Dockerfile          # Dockerfile pour l'API backend
+    ├── LICENSE             # Licence du projet
+    ├── requirements.txt    # Dépendances Python pour le backend
+    ├── .env.example        # Modèle pour le fichier .env (À CRÉER SI MANQUANT)
+    ├── backend/
+    │   └── main.py         # Logique de l'API FastAPI et interaction Kubernetes
+    ├── Diagrammes/         # Schémas d'architecture
+    │   ├── Diagramme-API.drawio
+    │   └── diagramme.md
+    ├── dockerfiles/        # Dockerfiles pour les images des laboratoires
+    │   ├── jupyter/
+    │   │   └── Dockerfile
+    │   └── vscode/
+    │       └── Dockerfile
+    ├── frontend/           # Fichiers de l'interface utilisateur web
+    │   ├── index.html
+    │   ├── script.js
+    │   ├── style.css
+    │   └── css/
+    │       ├── app-status.css
+    │       └── lab-status.css
+    └── nginx/
+        └── nginx.conf      # Configuration du proxy NGINX
 ```
 
-L'application sera accessible aux adresses suivantes :
-- Frontend : http://localhost
-- API : http://localhost:8000
-- Documentation API (Swagger) : http://localhost:8000/docs
+## 💡 Développement et Maintenance
 
-## Architecture détaillée
+### Étendre le Backend
 
-### Backend (FastAPI/Python)
+1.  Ajoutez de nouveaux endpoints ou modifiez ceux existants dans `backend/main.py`.
+2.  Utilisez le client Python Kubernetes pour interagir avec votre cluster.
+3.  N'oubliez pas d'ajouter des modèles Pydantic pour la validation des données d'entrée/sortie.
 
-Le backend est développé avec FastAPI et communique avec l'API Kubernetes pour gérer les ressources du cluster. Il offre les fonctionnalités suivantes :
+### Modifier le Frontend
 
-- Création/suppression de déploiements et services
-- Gestion des ressources des conteneurs (CPU, mémoire)
-- Récupération des informations sur les pods, déploiements et services
-- Templates prédéfinis (VS Code, etc.)
-- Préréglages de ressources adaptés à différents cas d'usage
+1.  Le frontend est en HTML, CSS vanilla et JavaScript vanilla.
+2.  Les appels API sont gérés dans `frontend/script.js`.
+3.  Modifiez `frontend/index.html` pour la structure et `frontend/style.css` (et les CSS dans `frontend/css/`) pour l'apparence.
 
-### Frontend (HTML/JavaScript)
+### Personnaliser les Images des Laboratoires
 
-L'interface utilisateur permet de :
+1.  Créez un nouveau Dockerfile dans `dockerfiles/` (par exemple, `dockerfiles/mon_app/Dockerfile`).
+2.  Référencez cette nouvelle image dans la fonction `get_deployment_templates()` du backend (`backend/main.py`) et mettez à jour le frontend si nécessaire.
+3.  Pensez à pousser vos images Docker personnalisées sur un registre (Docker Hub, GHCR, etc.) si elles doivent être accessibles par le cluster Kubernetes.
 
-- Visualiser l'état des pods et déploiements
-- Créer de nouveaux environnements à partir de templates
-- Configurer les ressources avec des préréglages simples
-- Consulter les détails des déploiements et accéder aux services exposés
+### Dépannage
 
-### Proxy NGINX
+*   **Logs Docker :** `docker compose logs -f <nom_du_service>` (ex: `docker compose logs -f api`)
+*   **Logs Kubernetes :** `kubectl logs -n <namespace> <nom_du_pod>`
+*   **Erreurs API :** Vérifiez la console du navigateur et la documentation Swagger UI (`/docs`).
 
-NGINX sert de proxy inverse pour :
-- Servir le frontend statique
-- Rediriger les requêtes API vers le backend FastAPI
-- Gérer les chemins d'accès et les en-têtes HTTP
+## 🗺️ Roadmap & Fonctionnalités Futures
 
-## Structure des fichiers
+Nous avons de grandes ambitions pour LabOnDemand ! Voici quelques idées pour l'avenir :
 
-- `backend/` : Code source de l'API Python (FastAPI)
-  - `main.py` : Points d'entrée de l'API et logique Kubernetes
-- `frontend/` : Interface utilisateur
-  - `index.html` : Structure principale de l'interface
-  - `js/main.js` : Logique JavaScript et appels API
-  - `css/` : Styles de l'interface
-- `nginx/` : Configuration du serveur web
-- `dockerfiles/` : Dockerfiles spécifiques (comme pour VS Code)
-- `Dockerfile` : Construction de l'image pour l'API
-- `compose.yaml` : Configuration des services Docker
+*   🔐 **Authentification & Autorisation :**
+    *   Système de connexion pour utilisateurs (OAuth2/OIDC).
+    *   Rôles (étudiant, professeur, admin) avec permissions distinctes.
+*   💾 **Persistance des Données :**
+    *   Support des `PersistentVolumeClaims` pour sauvegarder le travail.
+    *   Montage de datasets spécifiques pour les environnements (ex: Jupyter).
+*   📊 **Gestion des Ressources & Quotas :**
+    *   Limites par utilisateur/groupe (CPU, mémoire, nombre de labs).
+    *   Nettoyage automatique des labs inactifs.
+*   🌐 **Networking Avancé :**
+    *   Intégration complète avec un Ingress Controller pour des URLs personnalisées (ex: `monlab.lab.makhal.fr`).
+    *   Support des `NetworkPolicies` pour l'isolation.
+*   🧩 **Templates Améliorés :**
+    *   Permettre la configuration de variables d'environnement et de ports spécifiques par template.
+    *   Interface pour que les administrateurs/professeurs créent leurs propres templates.
+*   ⚙️ **Interface d'Administration :**
+    *   Gestion des utilisateurs, templates globaux, quotas.
+    *   Monitoring de l'utilisation des ressources.
+*   🖥️ **Améliorations UX :**
+    *   Visualisation des logs des pods et accès terminal depuis l'interface.
 
-## Développement et maintenance
+## 🙌 Contribuer
 
-### Extension du backend
+Les contributions sont les bienvenues ! Que ce soit pour signaler un bug, proposer une fonctionnalité, ou soumettre du code, votre aide est précieuse.
 
-Pour ajouter de nouvelles fonctionnalités au backend :
-1. Implémentez de nouveaux endpoints dans `backend/main.py`
-2. Suivez le modèle existant pour la validation des entrées
-3. Utilisez l'API client Kubernetes pour interagir avec le cluster
+1.  **Signaler des Problèmes (Issues) :**
+    Utilisez l'onglet "Issues" du dépôt GitHub pour signaler des bugs ou suggérer des améliorations. Veuillez fournir autant de détails que possible.
+2.  **Proposer des Modifications (Pull Requests) :**
+    *   Forkez le dépôt.
+    *   Créez une nouvelle branche pour votre fonctionnalité ou correction (`git checkout -b feature/ma-super-feature` ou `fix/corriger-ce-bug`).
+    *   Faites vos modifications et commitez-les avec des messages clairs.
+    *   Poussez votre branche vers votre fork (`git push origin feature/ma-super-feature`).
+    *   Ouvrez une Pull Request vers la branche `main` (ou `develop` si elle existe) du dépôt original.
 
-### Modification du frontend
+N'hésitez pas à discuter des changements majeurs dans une Issue avant de commencer le développement.
 
-Le frontend utilise JavaScript vanille et Bootstrap pour l'interface :
-1. Les appels API sont centralisés dans `frontend/js/main.js`
-2. Les templates de déploiement peuvent être étendus depuis l'API
+## 📜 Licence
 
-### Personnalisation des images
+Ce projet est sous licence GNU General Public License v3.0. Voir le fichier [LICENSE](LICENSE) pour plus de détails.
 
-Pour ajouter de nouveaux templates d'environnements :
-1. Créez un nouveau Dockerfile dans le dossier `dockerfiles/`
-2. Ajoutez le template dans la fonction `get_deployment_templates()` du backend
-3. Mettez à jour l'interface pour prendre en charge le nouveau template
+---
 
-### Résolution des problèmes
-
-En cas de problèmes avec les ressources (comme l'erreur du préréglage VS Code) :
-1. Vérifiez les limitations définies dans le backend (`main.py`)
-2. Assurez-vous que le frontend passe correctement les paramètres au backend
-3. Consultez les logs Docker pour plus d'informations sur les erreurs
-
-## Personnalisation des configurations
-
-### Ressources des conteneurs
-
-Les préréglages de ressources sont définis dans la fonction `get_resource_presets()` et peuvent être modifiés selon les besoins.
+Fait avec ❤️ et ☕ par Mohamad El Akhal
