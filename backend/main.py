@@ -17,7 +17,7 @@ config.load_kube_config()
 app = FastAPI(
     title="LabOnDemand API",
     description="API pour gérer le déploiement de laboratoires à la demande.",
-    version="0.5.1",
+    version="0.6.1",
 )
 
 # Fonction pour valider et formater les noms Kubernetes

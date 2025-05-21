@@ -1,10 +1,10 @@
 /* Importation de la police */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
-/* Variables de couleurs (Inspirées UPPA + Modernes) */
+/* Variables de couleurs (Inspirées labondemand + Modernes) */
 :root {
-    --uppa-blue: #003A70; /* Bleu marine profond */
-    --uppa-green: #99CC33; /* Vert anis dynamique */
+    --labondemand-blue: #003A70; /* Bleu marine profond */
+    --labondemand-green: #99CC33; /* Vert anis dynamique */
     --light-blue: #E6F0FF; /* Bleu très clair pour fonds légers */
     --text-dark: #333333;
     --text-light: #FFFFFF;
@@ -22,9 +22,9 @@
 }
 
 :root {
-    /* Couleurs de l'UPPA et du thème */
-    --uppa-blue: #003A70;
-    --uppa-green: #99CC33;
+    /* Couleurs de l'labondemand et du thème */
+    --labondemand-blue: #003A70;
+    --labondemand-green: #99CC33;
     --text-dark: #333333;
     --text-light: #FFFFFF;
     --light-blue: #E6F0F9;
@@ -68,7 +68,7 @@ body {
 }
 
 h1, h2, h3 {
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
     margin-bottom: 0.8em;
     font-weight: 600;
 }
@@ -83,7 +83,7 @@ p.subtitle {
 }
 
 a {
-    color: var(--uppa-green);
+    color: var(--labondemand-green);
     text-decoration: none;
     transition: color var(--transition-speed);
 }
@@ -97,7 +97,7 @@ i { /* Icônes */
 
 /* Header */
 header {
-    background-color: var(--uppa-blue);
+    background-color: var(--labondemand-blue);
     color: var(--text-light);
     padding: 15px 0;
     box-shadow: 0 2px 10px var(--shadow-color);
@@ -116,15 +116,15 @@ header {
     align-items: center;
 }
 .logo-icon {
-    color: var(--uppa-green);
+    color: var(--labondemand-green);
     font-size: 1.5em; /* Icône plus grande */
     margin-right: 12px;
 }
-.uppa-tag {
+.labondemand-tag {
     font-weight: 300;
     font-size: 0.7em;
-    background-color: var(--uppa-green);
-    color: var(--uppa-blue);
+    background-color: var(--labondemand-green);
+    color: var(--labondemand-blue);
     padding: 2px 6px;
     border-radius: 4px;
     margin-left: 8px;
@@ -141,8 +141,8 @@ header {
 }
 .logout-btn {
     background: none;
-    border: 1px solid var(--uppa-green);
-    color: var(--uppa-green);
+    border: 1px solid var(--labondemand-green);
+    color: var(--labondemand-green);
     padding: 8px 15px;
     border-radius: var(--border-radius);
     cursor: pointer;
@@ -150,8 +150,8 @@ header {
     font-family: var(--font-main);
 }
 .logout-btn:hover {
-    background-color: var(--uppa-green);
-    color: var(--uppa-blue);
+    background-color: var(--labondemand-green);
+    color: var(--labondemand-blue);
 }
 
 /* Main Content */
@@ -192,8 +192,8 @@ main {
 }
 
 .btn-primary {
-    background-color: var(--uppa-green);
-    color: var(--uppa-blue);
+    background-color: var(--labondemand-green);
+    color: var(--labondemand-blue);
     box-shadow: 0 4px 8px rgba(153, 204, 51, 0.3);
 }
 .btn-primary:hover {
@@ -248,7 +248,7 @@ main {
 .service-card {
     text-align: center;
     cursor: pointer;
-    border-left: 5px solid var(--uppa-blue); /* Accent de couleur */
+    border-left: 5px solid var(--labondemand-blue); /* Accent de couleur */
 }
 .service-card.disabled {
     cursor: not-allowed;
@@ -262,11 +262,11 @@ main {
 
 .service-icon {
     font-size: 3rem;
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
     margin-bottom: 15px;
 }
 .service-card h3 {
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
     margin-bottom: 10px;
 }
 .service-card p {
@@ -282,7 +282,7 @@ main {
     display: flex;
     flex-direction: column;
     gap: 15px;
-    border-left: 5px solid var(--uppa-green); /* Vert pour actif */
+    border-left: 5px solid var(--labondemand-green); /* Vert pour actif */
 }
 .lab-card h3 {
     display: flex;
@@ -315,7 +315,7 @@ main {
     background-color: var(--light-blue);
     padding: 20px;
     border-radius: var(--border-radius);
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
     text-align: center;
     grid-column: 1 / -1; /* Prend toute la largeur de la grille */
     margin-top: 20px;
@@ -334,9 +334,9 @@ main {
     display: block;
     margin-bottom: 8px;
     font-weight: 500;
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
 }
-.form-group label i { color: var(--uppa-green); } /* Icône en vert */
+.form-group label i { color: var(--labondemand-green); } /* Icône en vert */
 
 .form-group input[type="text"],
 .form-group input[type="number"],
@@ -365,19 +365,19 @@ main {
 }
 .checkbox-group input[type="checkbox"] {
     margin-right: 10px;
-    accent-color: var(--uppa-green); /* Style moderne checkbox */
+    accent-color: var(--labondemand-green); /* Style moderne checkbox */
 }
 
 .checkbox-label {
     font-weight: 500;
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
     margin-bottom: 15px;
     display: block;
 }
 
 .checkbox-label input[type="checkbox"] {
     margin-right: 8px;
-    accent-color: var(--uppa-green);
+    accent-color: var(--labondemand-green);
 }
 
 .service-config {
@@ -412,7 +412,7 @@ small {
     margin-bottom: 20px;
 }
 .status-card .status-icon.success { color: var(--success-color); }
-.status-card .status-icon.loading { color: var(--uppa-blue); animation: spin 1.5s linear infinite; }
+.status-card .status-icon.loading { color: var(--labondemand-blue); animation: spin 1.5s linear infinite; }
 .status-card h2 { margin-bottom: 15px; }
 .status-card p { margin-bottom: 20px; }
 .access-link {
@@ -423,7 +423,7 @@ small {
     font-weight: 500;
     word-break: break-all;
 }
-.access-link i { color: var(--uppa-green); }
+.access-link i { color: var(--labondemand-green); }
 .status-actions {
     text-align: center;
     margin-top: 20px;
@@ -471,7 +471,7 @@ small {
 }
 
 .k8s-table th {
-    background-color: var(--uppa-blue);
+    background-color: var(--labondemand-blue);
     color: var(--text-light);
     font-weight: 500;
     text-transform: uppercase;
@@ -598,7 +598,7 @@ small {
 
 .loading-spinner i {
     font-size: 2rem;
-    color: var(--uppa-blue);
+    color: var(--labondemand-blue);
     animation: spin 1.5s linear infinite;
 }
 
@@ -621,8 +621,8 @@ small {
 }
 
 #api-status.online {
-    background-color: var(--uppa-green);
-    color: var(--uppa-blue);
+    background-color: var(--labondemand-green);
+    color: var(--labondemand-blue);
 }
 
 #api-status.offline {
@@ -632,7 +632,7 @@ small {
 
 /* Footer */
 footer {
-    background-color: var(--uppa-blue);
+    background-color: var(--labondemand-blue);
     color: var (--text-light);
     text-align: center;
     padding: 15px 0;
@@ -753,6 +753,6 @@ footer {
 
 /* Style pour mettre en évidence les namespaces LabOnDemand */
 .list-group-item[data-managed="labondemand"] {
-    border-left: 3px solid var(--uppa-green);
+    border-left: 3px solid var(--labondemand-green);
     background-color: rgba(153, 204, 51, 0.05);
 }
