@@ -45,7 +45,10 @@ def create_session(user_id: int, username: str, role: UserRole) -> str:
     return session_id
 
 def get_session_data(session_id: str = Depends(cookie_security)) -> SessionData:
+    print(f"[Session] Vérification de la session avec ID: {session_id[:10] if session_id else 'None'}...")
+    
     if not session_id:
+        print("[Session] Aucun ID de session fourni dans les cookies")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session non fournie",
@@ -56,12 +59,19 @@ def get_session_data(session_id: str = Depends(cookie_security)) -> SessionData:
     session_data = session_store.get(session_id)
     
     if not session_data:
+        print(f"[Session] Session introuvable ou expirée: {session_id[:10]}...")
+        # Afficher toutes les sessions actives pour le débogage
+        print("[Session] Sessions actives:")
+        for sid, data in session_store.sessions.items():
+            print(f"  - {sid[:10]}... (expire le {data['expiry']})")
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session invalide ou expirée",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    print(f"[Session] Session valide trouvée pour l'utilisateur: {session_data.get('username', 'inconnu')}")
     return SessionData(**session_data)
 
 def delete_session(session_id: str) -> bool:
@@ -69,13 +79,26 @@ def delete_session(session_id: str) -> bool:
 
 # Authentification utilisateur
 def authenticate_user(db: Session, username: str, password: str):
+    # Ajouter des logs de debug pour comprendre le processus d'authentification
+    print(f"Tentative d'authentification pour l'utilisateur: {username}")
+    
     user = db.query(User).filter(User.username == username).first()
     if not user:
+        print(f"Échec d'authentification: Utilisateur '{username}' non trouvé")
         return False
-    if not verify_password(password, user.hashed_password):
+    
+    # Vérifier le mot de passe
+    print(f"Utilisateur trouvé. Vérification du mot de passe...")
+    password_valid = verify_password(password, user.hashed_password)
+    if not password_valid:
+        print(f"Échec d'authentification: Mot de passe incorrect pour '{username}'")
         return False
+    
     if not user.is_active:
+        print(f"Échec d'authentification: Compte '{username}' inactif")
         return False
+    
+    print(f"Authentification réussie pour l'utilisateur: {username}")
     return user
 
 # Vérifier les permissions utilisateur

@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List, Optional
 
 # Importations locales pour l'authentification
-from .database import Base, engine
+from .database import Base, engine, get_db
+from sqlalchemy.orm import Session
 from .session import setup_session_handler
 from .auth_router import router as auth_router
 from .security import get_current_user, is_admin, is_teacher_or_admin
@@ -27,6 +28,7 @@ app = FastAPI(
     title="LabOnDemand API",
     description="API pour gérer le déploiement de laboratoires à la demande.",
     version="0.7.0",
+    debug=True,
 )
 
 # Configuration CORS pour permettre les requêtes depuis le frontend
@@ -57,6 +59,55 @@ from .lab_router import router as lab_router
 
 app.include_router(auth_router)
 app.include_router(lab_router)
+
+# Endpoint de diagnostic pour vérifier l'authentification
+@app.post("/api/v1/diagnostic/test-auth")
+async def test_auth(request: Request, db: Session = Depends(get_db)):
+    """
+    Endpoint de diagnostic pour tester l'authentification
+    Ne pas utiliser en production!
+    """
+    try:
+        body = await request.json()
+        username = body.get("username")
+        password = body.get("password")
+        
+        if not username or not password:
+            return {
+                "success": False,
+                "message": "Le nom d'utilisateur et le mot de passe sont requis",
+                "details": None
+            }
+        
+        from .security import authenticate_user
+        user = authenticate_user(db, username, password)
+        
+        if user:
+            return {
+                "success": True,
+                "message": "Authentification réussie",
+                "details": {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "role": user.role.value,
+                    "is_active": user.is_active
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Échec de l'authentification",
+                "details": None
+            }
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return {
+            "success": False,
+            "message": f"Erreur lors de l'authentification: {str(e)}",
+            "details": tb
+        }
 
 # Fonction pour valider et formater les noms Kubernetes
 def validate_k8s_name(name):

@@ -33,25 +33,31 @@ def setup_session_handler(app: FastAPI):
         
         # Démarrer la tâche de nettoyage en arrière-plan
         asyncio.create_task(cleanup_expired_sessions())
-    
     @app.middleware("http")
     async def session_middleware(request: Request, call_next):
+        # Log pour le débogage
+        print(f"[Session Middleware] Traitement de la requête: {request.method} {request.url.path}")
+        
         response = await call_next(request)
         
         # Si la réponse est un JSONResponse et qu'elle contient un session_id dans les headers
         if isinstance(response, JSONResponse) and "session_id" in response.headers:
             session_id = response.headers.pop("session_id")
+            print(f"[Session Middleware] Session ID trouvé dans les headers: {session_id[:10]}...")
             
             # Créer un cookie pour la session
             response.set_cookie(
                 key="session_id",
                 value=session_id,
                 httponly=True,  # Toujours true pour la sécurité
-                secure=SECURE_COOKIES,  # True en production, False en dev local
+                secure=False,    # Temporairement mis à False pour déboguer
                 samesite="lax",
                 max_age=SESSION_EXPIRY_HOURS * 3600,  # En secondes
                 path="/",
-                domain=COOKIE_DOMAIN  # None pour le domaine courant
+                domain=None      # Pour s'assurer que le cookie est envoyé au domaine courant
             )
+            print(f"[Session Middleware] Cookie session_id créé (expiration: {SESSION_EXPIRY_HOURS}h)")
+        else:
+            print(f"[Session Middleware] Pas de session_id dans les headers ou réponse non JSON")
         
         return response

@@ -19,8 +19,11 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
     """
     Connecte un utilisateur et crée une session
     """
+    print(f"[Login] Tentative de connexion pour l'utilisateur: {user_credentials.username}")
+    
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
     if not user:
+        print(f"[Login] Échec d'authentification pour {user_credentials.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nom d'utilisateur ou mot de passe incorrect",
@@ -28,7 +31,9 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
         )
     
     # Créer une session pour l'utilisateur
+    print(f"[Login] Authentification réussie pour {user_credentials.username}, création d'une session...")
     session_id = create_session(user.id, user.username, user.role)
+    print(f"[Login] Session créée avec ID: {session_id[:10]}...")
     
     # Créer la réponse
     resp = LoginResponse(
@@ -38,6 +43,19 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
     
     # Ajouter l'ID de session aux headers pour que le middleware puisse créer le cookie
     response.headers["session_id"] = session_id
+    print(f"[Login] ID de session ajouté aux headers de réponse")
+    
+    # Ajouter le cookie directement (en plus du middleware)
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        secure=False,  # Temporairement false pour déboguer
+        samesite="lax",
+        max_age=24 * 3600,  # 24 heures
+        path="/",
+    )
+    print(f"[Login] Cookie session_id créé directement dans la réponse")
     
     return resp
 
