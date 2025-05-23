@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .session import setup_session_handler
 from .auth_router import router as auth_router
 from .security import get_current_user, is_admin, is_teacher_or_admin
-from .models import User, UserRole
+from .models import User, UserRole, Lab
 
 # Charger les variables d'environnement depuis le fichier .env
 load_dotenv()
