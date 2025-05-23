@@ -68,6 +68,13 @@ function initAuthUI() {
 }
 
 function loadMainScript() {
+    // Vérifier si le script est déjà chargé dans la page
+    const scriptAlreadyExists = document.querySelector('script[src="script.js"]');
+    if (scriptAlreadyExists) {
+        console.log("Le script principal est déjà chargé");
+        return;
+    }
+    
     // Charger dynamiquement le script principal
     const script = document.createElement('script');
     script.src = 'script.js';

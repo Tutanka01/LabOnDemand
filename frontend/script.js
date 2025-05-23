@@ -80,22 +80,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // --- Vérifie la connexion avec l'API ---
-    async function checkApiStatus() {
+    // --- Vérifie la connexion avec l'API ---    async function checkApiStatus() {
         try {
+            console.log("Tentative de connexion à l'API:", `${API_V1}/status`);
             const response = await fetch(`${API_V1}/status`);
+            console.log("Réponse API reçue:", response.status, response.statusText);
             if (response.ok) {
                 const data = await response.json();
+                console.log("Données API:", data);
                 apiStatusEl.textContent = `API v${data.version} connectée`;
                 apiStatusEl.classList.add('online');
                 apiStatusEl.classList.remove('offline');
                 return true;
             } else {
-                throw new Error('Réponse API non OK');
+                throw new Error(`Réponse API non OK: ${response.status} ${response.statusText}`);
             }
         } catch (error) {
             console.error('Erreur de connexion à l\'API:', error);
-            apiStatusEl.textContent = 'API non disponible';
+            apiStatusEl.textContent = `API non disponible (${error.message})`;
             apiStatusEl.classList.add('offline');
             apiStatusEl.classList.remove('online');
             return false;
