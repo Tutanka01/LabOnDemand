@@ -2,6 +2,8 @@
 // Point d'entrée avec gestion d'authentification pour l'application LabOnDemand
 import authManager from './js/auth.js';
 
+console.log("index-auth.js chargé");
+
 // Fonction principale
 async function main() {
     // Vérifier l'authentification
@@ -74,12 +76,21 @@ function loadMainScript() {
         console.log("Le script principal est déjà chargé");
         return;
     }
-    
-    // Charger dynamiquement le script principal
+      // Charger dynamiquement le script principal
     const script = document.createElement('script');
     script.src = 'script.js';
     script.type = 'module';
-    document.body.appendChild(script);
+    
+    // Ajouter un gestionnaire d'événements pour surveiller le chargement du script
+    script.onload = function() {
+        console.log("Script principal chargé avec succès");
+    };
+    
+    script.onerror = function() {
+        console.error("Erreur lors du chargement du script principal");
+    };
+    
+    document.head.appendChild(script);
 }
 
 // Démarrer l'application au chargement du document
