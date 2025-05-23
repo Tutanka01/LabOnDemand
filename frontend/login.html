@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LabOnDemand - Connexion</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/login.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Ajout de Font Awesome pour les icônes -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <div class="login-container">
+            <div class="login-logo">
+                <i class="fas fa-cubes logo-icon"></i> LabOnDemand
+            </div>
+            
+            <div id="error-message" class="error-message">
+                <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
+            </div>
+            
+            <div class="info-message">
+                <i class="fas fa-info-circle"></i> Connectez-vous pour accéder à vos laboratoires
+            </div>
+            
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label for="username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
+                    <input type="text" id="username" name="username" required autocomplete="username">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password"><i class="fas fa-lock"></i> Mot de passe</label>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                </div>
+                      <button type="submit" class="btn-login">
+                <i class="fas fa-sign-in-alt"></i> Connexion
+            </button>
+        </form>
+        
+        <div class="login-links">
+            <a href="register.html">Pas encore inscrit ? Créer un compte</a>
+        </div>
+            
+        <div class="login-footer">
+            LabOnDemand &copy; 2023-2025 | Développé avec <i class="fas fa-heart"></i>
+        </div>
+        </div>
+    </div>
+      <!-- Charger le script de login -->
+    <script src="js/login.js"></script>
+</body>
+</html>

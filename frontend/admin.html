@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Administration des utilisateurs - LabOnDemand</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Ajout de Font Awesome pour les icônes -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Styles spécifiques pour l'administration -->
+    <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+    <div class="main-container">
+        <!-- En-tête avec le menu de navigation -->
+        <header>
+            <div class="logo">
+                <i class="fas fa-cubes"></i> LabOnDemand
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="index.html"><i class="fas fa-home"></i> Accueil</a></li>
+                    <li class="admin-only active"><a href="admin.html"><i class="fas fa-users-cog"></i> Administration</a></li>
+                </ul>
+            </nav>
+            <div class="user-info">
+                <span id="username-display"><i class="fas fa-user-circle"></i> <span id="current-username">Utilisateur</span></span>
+                <div class="user-role" id="user-role">
+                    <span class="role-badge">Rôle</span>
+                </div>
+                <button id="logout-btn" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> Déconnexion
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <div class="page-header">
+                <h1><i class="fas fa-users-cog"></i> Administration des utilisateurs</h1>
+                <button id="add-user-btn" class="action-btn">
+                    <i class="fas fa-user-plus"></i> Ajouter un utilisateur
+                </button>
+            </div>
+
+            <div class="notification-container">
+                <div id="error-message" class="notification error">
+                    <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
+                    <button class="close-btn"><i class="fas fa-times"></i></button>
+                </div>
+                <div id="success-message" class="notification success">
+                    <i class="fas fa-check-circle"></i> <span id="success-text"></span>
+                    <button class="close-btn"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+
+            <div class="filter-container">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="search-input" placeholder="Rechercher un utilisateur...">
+                </div>
+                <div class="filter-options">
+                    <label>Filtrer par rôle:</label>
+                    <select id="role-filter">
+                        <option value="all">Tous</option>
+                        <option value="student">Étudiants</option>
+                        <option value="teacher">Enseignants</option>
+                        <option value="admin">Administrateurs</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="users-table-container">
+                <table class="users-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Nom d'utilisateur</th>
+                            <th>Email</th>
+                            <th>Nom complet</th>
+                            <th>Rôle</th>
+                            <th>Statut</th>
+                            <th>Date de création</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-table-body">
+                        <!-- Le contenu sera rempli dynamiquement par JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination">
+                <button id="prev-page" class="pagination-btn" disabled>
+                    <i class="fas fa-chevron-left"></i> Précédent
+                </button>
+                <span id="page-info">Page 1 sur 1</span>
+                <button id="next-page" class="pagination-btn" disabled>
+                    Suivant <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal pour l'ajout/modification d'utilisateur -->
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title"><i class="fas fa-user-plus"></i> Ajouter un utilisateur</h2>
+                <button class="close-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="user-form">
+                    <input type="hidden" id="user-id">
+                    
+                    <div class="form-group">
+                        <label for="modal-username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
+                        <input type="text" id="modal-username" required minlength="3" maxlength="50">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="modal-email"><i class="fas fa-envelope"></i> Email</label>
+                        <input type="email" id="modal-email" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="modal-full-name"><i class="fas fa-id-card"></i> Nom complet</label>
+                        <input type="text" id="modal-full-name">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="modal-password"><i class="fas fa-lock"></i> Mot de passe</label>
+                        <input type="password" id="modal-password" minlength="8">
+                        <small id="password-hint">Minimum 8 caractères. Laissez vide pour ne pas modifier le mot de passe.</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="modal-role"><i class="fas fa-user-tag"></i> Rôle</label>
+                        <select id="modal-role" required>
+                            <option value="student">Étudiant</option>
+                            <option value="teacher">Enseignant</option>
+                            <option value="admin">Administrateur</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="modal-is-active" checked>
+                        <label for="modal-is-active">Compte actif</label>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="button" class="btn-cancel close-modal">Annuler</button>
+                        <button type="submit" class="btn-save">Enregistrer</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de confirmation de suppression -->
+    <div id="delete-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-exclamation-triangle"></i> Confirmation</h2>
+                <button class="close-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p>Êtes-vous sûr de vouloir supprimer l'utilisateur <span id="delete-user-name"></span> ?</p>
+                <p class="warning">Cette action est irréversible.</p>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn-cancel close-modal">Annuler</button>
+                    <button type="button" id="confirm-delete" class="btn-delete">Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/admin.js"></script>
+</body>
+</html>

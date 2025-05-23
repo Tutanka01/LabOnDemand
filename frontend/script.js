@@ -1,4 +1,11 @@
-document.addEventListener('DOMContentLoaded', () => {
+// Importation du gestionnaire d'authentification
+import authManager from './js/auth.js';
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Vérifier l'authentification avant de continuer
+    const isAuthenticated = await authManager.init();
+    if (!isAuthenticated) return; // L'utilisateur sera redirigé vers la page de connexion
+    
     // --- Éléments DOM et variables globales ---
     const views = document.querySelectorAll('.view');
     const showLaunchViewBtn = document.getElementById('show-launch-view-btn');
@@ -20,6 +27,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const apiStatusEl = document.getElementById('api-status');
     const k8sSectionToggle = document.getElementById('k8s-section-toggle');
     const k8sResources = document.getElementById('k8s-resources');
+    const userGreeting = document.getElementById('user-greeting');
+    const logoutBtn = document.getElementById('logout-btn');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -34,6 +43,41 @@ document.addEventListener('DOMContentLoaded', () => {
             k8sSectionToggle.classList.toggle('active');
             k8sResources.classList.toggle('active');
         });
+    }    // --- Initialiser les informations utilisateur ---
+    function initUserInfo() {
+        // Mettre à jour le message de bienvenue
+        userGreeting.textContent = `Bonjour, ${authManager.getUserDisplayName()}`;
+        
+        // Ajouter une icône selon le rôle
+        let roleIcon = '';
+        switch (authManager.getUserRole()) {
+            case 'admin':
+                roleIcon = '<i class="fas fa-user-shield"></i>';
+                break;
+            case 'teacher':
+                roleIcon = '<i class="fas fa-chalkboard-teacher"></i>';
+                break;
+            case 'student':
+                roleIcon = '<i class="fas fa-user-graduate"></i>';
+                break;
+            default:
+                roleIcon = '<i class="fas fa-user"></i>';
+        }
+        userGreeting.innerHTML += ` ${roleIcon}`;
+        
+        // Configurer le bouton de déconnexion
+        logoutBtn.addEventListener('click', async () => {
+            await authManager.logout();
+        });
+        
+        // Ajuster l'interface selon le rôle
+        if (authManager.isAdmin() || authManager.isTeacher()) {
+            // Afficher la section Kubernetes pour les admins et enseignants
+            document.querySelector('.collapsible-section').style.display = 'block';
+        } else {
+            // Masquer la section Kubernetes pour les étudiants
+            document.querySelector('.collapsible-section').style.display = 'none';
+        }
     }
 
     // --- Vérifie la connexion avec l'API ---
