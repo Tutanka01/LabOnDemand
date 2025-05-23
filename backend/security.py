@@ -8,10 +8,19 @@ import os
 import json
 import base64
 
-from .database import get_db
-from .models import User, UserRole
-from .schemas import SessionData
-from .session_store import session_store
+# Gestion des importations pour fonctionner à la fois comme module et comme script
+try:
+    # Pour l'utilisation comme module dans l'application
+    from .database import get_db
+    from .models import User, UserRole
+    from .schemas import SessionData
+    from .session_store import session_store
+except ImportError:
+    # Pour l'utilisation comme script direct
+    from database import get_db
+    from models import User, UserRole
+    from schemas import SessionData
+    from session_store import session_store
 
 # Configuration du contexte de hachage de mot de passe
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

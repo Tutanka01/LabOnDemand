@@ -3,7 +3,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
 
-from .database import Base
+# Changement d'importation relative à absolue pour fonctionner à la fois comme module et script
+try:
+    # Pour l'utilisation comme module dans l'application
+    from .database import Base
+except ImportError:
+    # Pour l'utilisation comme script direct
+    from database import Base
 
 # Définition de l'énumération pour les rôles
 class UserRole(enum.Enum):

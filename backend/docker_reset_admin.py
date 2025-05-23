@@ -1,27 +1,46 @@
 #!/usr/bin/env python3
-# filepath: c:\Users\zhiri\Nextcloud\mo\Projects\LabOnDemand\backend\reset_admin.py
 """
-Script pour réinitialiser le compte administrateur
-Ce script supprime l'admin existant et en crée un nouveau avec des identifiants connus
+Script pour réinitialiser le compte administrateur dans un environnement Docker
+Ce script crée ou met à jour l'utilisateur admin avec des identifiants connus
 """
-from sqlalchemy.orm import sessionmaker
 import os
 import sys
-from pathlib import Path
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+from passlib.context import CryptContext
 
-# Ajout du répertoire parent au path
-sys.path.insert(0, str(Path(__file__).parent))
+# Configuration de la base de données
+DB_USER = os.getenv("DB_USER", "labondemand")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "3306")
+DB_NAME = os.getenv("DB_NAME", "labondemand")
 
-from database import engine
-from models import User, UserRole
-from security import get_password_hash
+# Construction de l'URL de connexion
+SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+# Création du moteur de base de données et de la session
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Configuration du contexte de hachage de mot de passe
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def get_password_hash(password):
+    """Crée un hash du mot de passe"""
+    return pwd_context.hash(password)
 
 def reset_admin_account():
     """
     Réinitialise le compte administrateur avec des identifiants connus
     """
+    from backend.models import User, UserRole, Base
+    
+    # S'assurer que les tables existent
+    Base.metadata.create_all(bind=engine)
+    
     # Créer une session
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
     
     try:
@@ -80,5 +99,9 @@ def reset_admin_account():
 
 if __name__ == "__main__":
     print("=== Réinitialisation du compte administrateur ===")
+    # Ajouter le répertoire parent au path pour résoudre les imports
+    import sys
+    sys.path.insert(0, '/app')
+    
     reset_admin_account()
     print("=== Opération terminée ===")
