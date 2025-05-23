@@ -1,10 +1,20 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Response, Request
 import uvicorn # Importé juste pour pouvoir le lancer depuis ce fichier si besoin
 from kubernetes import client, config
 import os
 import re
 import datetime
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, Any, List, Optional
+
+# Importations locales pour l'authentification
+from .database import Base, engine, get_db
+from sqlalchemy.orm import Session
+from .session import setup_session_handler
+from .auth_router import router as auth_router
+from .security import get_current_user, is_admin, is_teacher_or_admin
+from .models import User, UserRole, Lab
 
 # Charger les variables d'environnement depuis le fichier .env
 load_dotenv()
@@ -17,8 +27,87 @@ config.load_kube_config()
 app = FastAPI(
     title="LabOnDemand API",
     description="API pour gérer le déploiement de laboratoires à la demande.",
-    version="0.6.1",
+    version="0.7.0",
+    debug=True,
 )
+
+# Configuration CORS pour permettre les requêtes depuis le frontend
+origins = [
+    "http://localhost",
+    "http://localhost:8000",
+    "http://127.0.0.1",
+    "http://127.0.0.1:8000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Configuration du middleware de session
+setup_session_handler(app)
+
+# Création des tables de base de données au démarrage
+Base.metadata.create_all(bind=engine)
+
+# Inclusion des routeurs
+from .auth_router import router as auth_router
+from .lab_router import router as lab_router
+
+app.include_router(auth_router)
+app.include_router(lab_router)
+
+# Endpoint de diagnostic pour vérifier l'authentification
+@app.post("/api/v1/diagnostic/test-auth")
+async def test_auth(request: Request, db: Session = Depends(get_db)):
+    """
+    Endpoint de diagnostic pour tester l'authentification
+    Ne pas utiliser en production!
+    """
+    try:
+        body = await request.json()
+        username = body.get("username")
+        password = body.get("password")
+        
+        if not username or not password:
+            return {
+                "success": False,
+                "message": "Le nom d'utilisateur et le mot de passe sont requis",
+                "details": None
+            }
+        
+        from .security import authenticate_user
+        user = authenticate_user(db, username, password)
+        
+        if user:
+            return {
+                "success": True,
+                "message": "Authentification réussie",
+                "details": {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "role": user.role.value,
+                    "is_active": user.is_active
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Échec de l'authentification",
+                "details": None
+            }
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return {
+            "success": False,
+            "message": f"Erreur lors de l'authentification: {str(e)}",
+            "details": tb
+        }
 
 # Fonction pour valider et formater les noms Kubernetes
 def validate_k8s_name(name):
@@ -83,33 +172,33 @@ async def read_root():
 async def get_status():
     return {"status": "API en cours d'exécution", "version": app.version}
 
-# Lister les pods Kubernetes en format liste
+# Lister les pods Kubernetes en format liste (admin uniquement)
 @app.get("/api/v1/get-pods")
-async def get_pods():
+async def get_pods(current_user: User = Depends(get_current_user), is_admin_user: bool = Depends(is_admin)):
     v1 = client.CoreV1Api()
     ret = v1.list_pod_for_all_namespaces(watch=False)
     pods = [{"name": pod.metadata.name, "namespace": pod.metadata.namespace, "ip": pod.status.pod_ip} for pod in ret.items]
     return {"pods": pods}
 
-# Lister les namespaces Kubernetes
+# Lister les namespaces Kubernetes (admin ou enseignant)
 @app.get("/api/v1/get-namespaces")
-async def get_namespaces():
+async def get_namespaces(current_user: User = Depends(get_current_user), is_teacher: bool = Depends(is_teacher_or_admin)):
     v1 = client.CoreV1Api()
     ret = v1.list_namespace(watch=False)
     namespaces = [ns.metadata.name for ns in ret.items]
     return {"namespaces": namespaces}
 
-# Lister les deployments Kubernetes
+# Lister les deployments Kubernetes (admin ou enseignant)
 @app.get("/api/v1/get-deployments")
-async def get_deployments():
+async def get_deployments(current_user: User = Depends(get_current_user), is_teacher: bool = Depends(is_teacher_or_admin)):
     v1 = client.AppsV1Api()
     ret = v1.list_deployment_for_all_namespaces(watch=False)
     deployments = [{"name": dep.metadata.name, "namespace": dep.metadata.namespace} for dep in ret.items]
     return {"deployments": deployments}
 
-# Obtenir les détails d'un déploiement, incluant le service et les pods associés
+# Obtenir les détails d'un déploiement, incluant le service et les pods associés (authentifié)
 @app.get("/api/v1/get-deployment-details/{namespace}/{name}")
-async def get_deployment_details(namespace: str, name: str):
+async def get_deployment_details(namespace: str, name: str, current_user: User = Depends(get_current_user)):
     # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
@@ -214,18 +303,18 @@ async def get_deployment_details(namespace: str, name: str):
             raise HTTPException(status_code=404, detail=f"Déploiement {name} non trouvé dans le namespace {namespace}")
         raise HTTPException(status_code=e.status, detail=f"Erreur lors de la récupération des détails: {e.reason}")
 
-# Lister les pods d'un namespace spécifique
+# Lister les pods d'un namespace spécifique (admin ou enseignant)
 @app.get("/api/v1/get-pods/{namespace}")
-async def get_pods_by_namespace(namespace: str):
+async def get_pods_by_namespace(namespace: str, current_user: User = Depends(get_current_user), is_teacher: bool = Depends(is_teacher_or_admin)):
     namespace = validate_k8s_name(namespace)
     v1 = client.CoreV1Api()
     ret = v1.list_namespaced_pod(namespace, watch=False)
     pods = [{"name": pod.metadata.name, "ip": pod.status.pod_ip} for pod in ret.items]
     return {"namespace": namespace, "pods": pods}
 
-# Create new pod with an image and name
+# Create new pod with an image and name (admin uniquement)
 @app.post("/api/v1/create-pod")
-async def create_pod(name: str, image: str, namespace: str = "default"):
+async def create_pod(name: str, image: str, namespace: str = "default", current_user: User = Depends(get_current_user), is_admin_user: bool = Depends(is_admin)):
     # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
     name = validate_k8s_name(name)
     namespace = validate_k8s_name(namespace)
@@ -247,9 +336,9 @@ async def create_pod(name: str, image: str, namespace: str = "default"):
 ## Comment creer le pod ?
 # curl -X POST "http://127.0.0.1:8000/api/v1/create-pod?name=mon-pod&image=nginx"
 
-# Supprimer un pod specifique
+# Supprimer un pod specifique (admin uniquement)
 @app.delete("/api/v1/delete-pod/{namespace}/{name}")
-async def delete_pod(namespace: str, name: str):
+async def delete_pod(namespace: str, name: str, current_user: User = Depends(get_current_user), is_admin_user: bool = Depends(is_admin)):
     # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
@@ -264,9 +353,15 @@ async def delete_pod(namespace: str, name: str):
 ## Comment supprimer le pod ?
 # curl -X DELETE "http://localhost:8000/api/v1/delete-pod/default/mon-pod"
 
-# Supprimer un déploiement et son service associé
+# Supprimer un déploiement et son service associé (admin ou enseignant)
 @app.delete("/api/v1/delete-deployment/{namespace}/{name}")
-async def delete_deployment(namespace: str, name: str, delete_service: bool = True):
+async def delete_deployment(
+    namespace: str, 
+    name: str, 
+    delete_service: bool = True,
+    current_user: User = Depends(get_current_user),
+    is_teacher: bool = Depends(is_teacher_or_admin)
+):
     # Valider et formater les noms pour qu'ils soient conformes aux règles Kubernetes
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
@@ -364,9 +459,9 @@ def get_labondemand_labels(deployment_type, additional_labels=None):
         
     return labels
 
-# Fonction pour récupérer uniquement les déploiements gérés par LabOnDemand
+# Fonction pour récupérer uniquement les déploiements gérés par LabOnDemand (authentifié)
 @app.get("/api/v1/get-labondemand-deployments")
-async def get_labondemand_deployments():
+async def get_labondemand_deployments(current_user: User = Depends(get_current_user)):
     """
     Récupère uniquement les déploiements créés par LabOnDemand dans tous les namespaces
     """
@@ -407,8 +502,8 @@ async def create_deployment(
     cpu_limit: str = "500m",
     memory_request: str = "128Mi",
     memory_limit: str = "512Mi",
-    user_id: str = None,  # Futur support pour une authentification
-    additional_labels: dict = None
+    additional_labels: dict = None,
+    current_user: User = Depends(get_current_user)  # Utilisateur connecté requis
 ):
     # Valider et formater le nom pour qu'il soit conforme aux règles Kubernetes
     name = validate_k8s_name(name)
@@ -442,6 +537,20 @@ async def create_deployment(
     
     # Préparer les labels standards
     labels = get_labondemand_labels(deployment_type, additional_labels)
+      # Ajouter l'ID et le rôle de l'utilisateur aux labels
+    if additional_labels is None:
+        additional_labels = {}
+    additional_labels["user-id"] = str(current_user.id)
+    additional_labels["user-role"] = current_user.role.value
+    
+    # Vérifier les permissions selon le rôle
+    if current_user.role == UserRole.student:
+        # Les étudiants ne peuvent créer que certains types de déploiements et avec des limites
+        if deployment_type not in ["jupyter", "vscode"]:
+            raise HTTPException(
+                status_code=403,
+                detail="Les étudiants ne peuvent créer que des environnements Jupyter ou VS Code"
+            )
     
     # Adapter les paramètres selon le type de déploiement
     if deployment_type == "vscode":
@@ -483,6 +592,23 @@ async def create_deployment(
         memory_limit = max_resource(memory_limit, min_memory_limit)
     
     try:
+        # Créer le laboratoire dans la base de données
+        lab_data = {
+            "name": name,
+            "description": f"Labo {deployment_type} créé le {datetime.datetime.now().strftime('%Y-%m-%d')}",
+            "lab_type": deployment_type,
+            "k8s_namespace": effective_namespace,
+            "deployment_name": name,
+            "service_name": f"{name}-service" if create_service else None,
+            "owner_id": current_user.id
+        }
+        
+        # Ajouter à la base de données
+        db = next(get_db())
+        new_lab = Lab(**lab_data)
+        db.add(new_lab)
+        db.commit()
+        
         # Créer le deployment avec les labels LabOnDemand
         apps_v1 = client.AppsV1Api()
         dep_manifest = {
@@ -616,9 +742,9 @@ async def create_deployment(
     except client.exceptions.ApiException as e:
         raise HTTPException(status_code=e.status, detail=f"Erreur lors de la création: {e.reason} - {e.body}")
 
-# Récupérer les templates disponibles
+# Récupérer les templates disponibles (authentifié)
 @app.get("/api/v1/get-deployment-templates")
-async def get_deployment_templates():
+async def get_deployment_templates(current_user: User = Depends(get_current_user)):
     templates = [
         {
             "id": "custom",
@@ -645,10 +771,37 @@ async def get_deployment_templates():
     ]
     return {"templates": templates}
 
-# Récupérer les options de ressources prédéfinies
+# Récupérer les options de ressources prédéfinies (authentifié)
 @app.get("/api/v1/get-resource-presets")
-async def get_resource_presets():
-    presets = {
+async def get_resource_presets(current_user: User = Depends(get_current_user)):
+    # Les présets dépendent du rôle de l'utilisateur
+    student_presets = {
+        "cpu": [
+            {"label": "Faible (0.25 CPU)", "request": "250m", "limit": "500m"},
+            {"label": "Moyen (0.5 CPU)", "request": "500m", "limit": "1000m"}
+        ],
+        "memory": [
+            {"label": "Faible (256 Mi)", "request": "256Mi", "limit": "512Mi"},
+            {"label": "Moyen (512 Mi)", "request": "512Mi", "limit": "1Gi"}
+        ]
+    }
+    
+    teacher_presets = {
+        "cpu": [
+            {"label": "Très faible (0.1 CPU)", "request": "100m", "limit": "200m"},
+            {"label": "Faible (0.25 CPU)", "request": "250m", "limit": "500m"},
+            {"label": "Moyen (0.5 CPU)", "request": "500m", "limit": "1000m"},
+            {"label": "Élevé (1 CPU)", "request": "1000m", "limit": "2000m"}
+        ],
+        "memory": [
+            {"label": "Très faible (128 Mi)", "request": "128Mi", "limit": "256Mi"},
+            {"label": "Faible (256 Mi)", "request": "256Mi", "limit": "512Mi"},
+            {"label": "Moyen (512 Mi)", "request": "512Mi", "limit": "1Gi"},
+            {"label": "Élevé (1 Gi)", "request": "1Gi", "limit": "2Gi"}
+        ]
+    }
+    
+    admin_presets = {
         "cpu": [
             {"label": "Très faible (0.1 CPU)", "request": "100m", "limit": "200m"},
             {"label": "Faible (0.25 CPU)", "request": "250m", "limit": "500m"},
@@ -664,7 +817,14 @@ async def get_resource_presets():
             {"label": "Très élevé (2 Gi)", "request": "2Gi", "limit": "4Gi"}
         ]
     }
-    return presets
+    
+    # Retourne les présets en fonction du rôle
+    if current_user.role == UserRole.admin:
+        return admin_presets
+    elif current_user.role == UserRole.teacher:
+        return teacher_presets
+    else:
+        return student_presets
 
 # Point d'entrée pour lancer l'API directement
 if __name__ == "__main__":

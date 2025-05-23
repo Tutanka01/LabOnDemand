@@ -10,20 +10,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Ajout de Font Awesome pour les icônes -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">    <!-- Charger les scripts au format module -->
+    <script type="module" src="index-auth.js"></script>
+    <script type="module" src="script.js"></script>
 </head>
-<body>
-    <header>
+<body>    <header>
         <div class="container header-content">
             <div class="logo">
                 <i class="fas fa-cubes logo-icon"></i> <!-- Icône simple pour le logo -->
                 LabOnDemand
             </div>
             <div class="user-info">
-                <!-- L'API ne supportant pas encore le login, nous le désactivons -->
                 <span id="api-status">Vérification de l'API...</span>
-                <!-- <span>Bonjour, Enseignant <i class="fas fa-user-circle"></i></span>
-                <button class="logout-btn"><i class="fas fa-sign-out-alt"></i> Déconnexion</button> -->
+                <span id="user-greeting">Chargement... <i class="fas fa-user-circle"></i></span>
+                <button id="logout-btn" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Déconnexion</button>
             </div>
         </div>
     </header>
@@ -259,9 +259,8 @@
     <footer>
         <div class="container">
             © 2025 LabOnDemand - Université de Pau et des Pays de l'Adour
-        </div>
-    </footer>
+        </div>    </footer>
 
-    <script src="script.js"></script>
+    <!-- Le script principal (script.js) est chargé dynamiquement par index-auth.js -->
 </body>
 </html>

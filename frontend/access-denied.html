@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LabOnDemand - Accès refusé</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .access-denied-container {
+            max-width: 500px;
+            margin: 100px auto;
+            text-align: center;
+            padding: 30px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .access-denied-icon {
+            font-size: 4rem;
+            color: #ef4444;
+            margin-bottom: 20px;
+        }
+        
+        .access-denied-title {
+            font-size: 2rem;
+            margin-bottom: 20px;
+            color: #1f2937;
+        }
+        
+        .access-denied-message {
+            margin-bottom: 30px;
+            color: #4b5563;
+            font-size: 1.1rem;
+            line-height: 1.5;
+        }
+        
+        .countdown-container {
+            background-color: #f9fafb;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 30px;
+        }
+        
+        .countdown {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2563eb;
+        }
+        
+        .login-now-btn {
+            background-color: #2563eb;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .login-now-btn:hover {
+            background-color: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+    <div class="access-denied-container">
+        <div class="access-denied-icon">
+            <i class="fas fa-lock"></i>
+        </div>
+        <h1 class="access-denied-title">Accès refusé</h1>
+        <p class="access-denied-message">
+            Vous devez être connecté pour accéder à cette page. Vous allez être redirigé vers la page de connexion dans quelques instants.
+        </p>
+        
+        <div class="countdown-container">
+            Redirection dans <span id="countdown" class="countdown">5</span> secondes...
+        </div>
+        
+        <button id="login-now" class="login-now-btn">
+            <i class="fas fa-sign-in-alt"></i> Se connecter maintenant
+        </button>
+    </div>
+    
+    <script src="js/redirect.js"></script>
+</body>
+</html>
