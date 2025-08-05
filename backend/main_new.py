@@ -4,7 +4,6 @@ Principe KISS : configuration simple et routage centralisé
 """
 import os
 import uvicorn
-from datetime import datetime
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -12,7 +11,6 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .database import Base, engine, get_db
 from .session import setup_session_handler
-from .error_handlers import global_exception_handler
 
 # Initialiser Kubernetes
 settings.init_kubernetes()
@@ -24,9 +22,6 @@ app = FastAPI(
     version=settings.API_VERSION,
     debug=settings.DEBUG_MODE,
 )
-
-# Ajouter le gestionnaire d'erreurs global
-app.add_exception_handler(Exception, global_exception_handler)
 
 # Configuration CORS
 app.add_middleware(
@@ -47,9 +42,11 @@ Base.metadata.create_all(bind=engine)
 
 # Routeurs d'authentification et de laboratoires
 from .auth_router import router as auth_router
+from .lab_router import router as lab_router
 from .k8s_router import router as k8s_router
 
 app.include_router(auth_router)
+app.include_router(lab_router)
 app.include_router(k8s_router)
 
 # ============= ENDPOINTS DE BASE =============
@@ -67,31 +64,6 @@ async def get_status():
         "version": app.version,
         "debug": settings.DEBUG_MODE
     }
-
-@app.get("/api/v1/health")
-async def health_check(db: Session = Depends(get_db)):
-    """Vérification de santé de l'API"""
-    try:
-        # Test de connexion DB
-        db.execute("SELECT 1")
-        
-        # Test des tables
-        from .models import User
-        user_count = db.query(User).count()
-        
-        return {
-            "status": "healthy",
-            "database": "connected",
-            "users": user_count,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "database": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
 
 # ============= ENDPOINT DE DIAGNOSTIC =============
 

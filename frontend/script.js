@@ -33,6 +33,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
     const API_V1 = `${API_BASE_URL}/api/v1`;
+    
+    console.log('LabOnDemand Script - Corrections de filtrage des déploiements et gestion d\'erreurs améliorée');
 
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
@@ -107,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const namespacesListEl = document.getElementById('namespaces-list');
         
         try {
-            const response = await fetch(`${API_V1}/get-namespaces`);
+            const response = await fetch(`${API_V1}/k8s/namespaces`);
             if (!response.ok) throw new Error('Erreur lors de la récupération des namespaces');
             
             const data = await response.json();
@@ -157,7 +159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const podsListEl = document.getElementById('pods-list');
         
         try {
-            const response = await fetch(`${API_V1}/get-pods`);
+            const response = await fetch(`${API_V1}/k8s/pods`);
             if (!response.ok) throw new Error('Erreur lors de la récupération des pods');
             
             const data = await response.json();
@@ -211,7 +213,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     
                     if (confirm(`Êtes-vous sûr de vouloir supprimer le pod ${name} ?`)) {
                         try {
-                            const response = await fetch(`${API_V1}/delete-pod/${namespace}/${name}`, {
+                            const response = await fetch(`${API_V1}/k8s/pods/${namespace}/${name}`, {
                                 method: 'DELETE'
                             });
                             
@@ -239,8 +241,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const deploymentsListEl = document.getElementById('deployments-list');
         
         try {
-            // Utiliser le nouvel endpoint qui ne récupère que les déploiements LabOnDemand
-            const response = await fetch(`${API_V1}/get-labondemand-deployments`);
+            // Utiliser l'endpoint spécialisé qui ne récupère que les déploiements LabOnDemand
+            const response = await fetch(`${API_V1}/k8s/deployments/labondemand`);
             if (!response.ok) throw new Error('Erreur lors de la récupération des déploiements');
             
             const data = await response.json();
@@ -323,7 +325,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     
                     if (confirm(`Êtes-vous sûr de vouloir supprimer le déploiement ${name} ?`)) {
                         try {
-                            const response = await fetch(`${API_V1}/delete-deployment/${namespace}/${name}?delete_service=true`, {
+                            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}?delete_service=true`, {
                                 method: 'DELETE'
                             });
                             
@@ -364,7 +366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
         
         try {
-            const response = await fetch(`${API_V1}/get-deployment-details/${namespace}/${name}`);
+            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
             
             if (!response.ok) {
                 const errorData = await response.json();
@@ -664,7 +666,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             statusActions.style.display = 'none'; // Cacher le bouton "Terminé" pendant le chargement
 
             try {
-                // Construire les paramètres d'URL
+                // Construire les paramètres d'URL pour l'endpoint POST
                 const params = new URLSearchParams({
                     name: deploymentName,
                     image: image,
@@ -682,8 +684,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
                 
                 // Appel API pour créer le déploiement
-                const response = await fetch(`${API_V1}/create-deployment?${params.toString()}`, {
-                    method: 'POST'
+                const response = await fetch(`${API_V1}/k8s/deployments?${params.toString()}`, {
+                    method: 'POST',
+                    credentials: 'include'
                 });
                 
                 let data;
@@ -698,7 +701,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 
                 if (!response.ok) {
-                    throw new Error(data.detail || 'Erreur lors de la création du déploiement');
+                    // Gestion d'erreur améliorée
+                    let errorMessage = 'Erreur lors de la création du déploiement';
+                    
+                    if (data && data.detail) {
+                        if (typeof data.detail === 'string') {
+                            errorMessage = data.detail;
+                        } else if (Array.isArray(data.detail)) {
+                            // Si c'est un tableau d'erreurs de validation
+                            errorMessage = data.detail.map(err => {
+                                if (typeof err === 'string') return err;
+                                if (err.msg) return `${err.loc ? err.loc.join('.') + ': ' : ''}${err.msg}`;
+                                return JSON.stringify(err);
+                            }).join(', ');
+                        } else {
+                            // Si c'est un objet complexe
+                            errorMessage = JSON.stringify(data.detail);
+                        }
+                    }
+                    
+                    throw new Error(errorMessage);
                 }
                 
                 // Construire les infos du lab à ajouter au dashboard
@@ -727,7 +749,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!accessUrl && nodePort) {
                     // Si on n'a pas d'URL complète mais on a un NodePort, tenter de récupérer les détails
                     try {
-                        const detailsResponse = await fetch(`${API_V1}/get-deployment-details/${namespace}/${deploymentName}`);
+                        const detailsResponse = await fetch(`${API_V1}/k8s/deployments/${namespace}/${deploymentName}/details`);
                         if (detailsResponse.ok) {
                             const detailsData = await detailsResponse.json();
                             if (detailsData.access_urls && detailsData.access_urls.length > 0) {
@@ -805,15 +827,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- Manage Active Labs ---
     async function refreshActiveLabs() {
         try {
-            // Récupérer la liste des déploiements LabOnDemand
-            const response = await fetch(`${API_V1}/get-labondemand-deployments`);
+            // Récupérer la liste des déploiements LabOnDemand uniquement
+            const response = await fetch(`${API_V1}/k8s/deployments/labondemand`);
             if (!response.ok) throw new Error('Erreur lors de la récupération des déploiements');
             
             const data = await response.json();
             const deployments = data.deployments || [];
             
-            // Filtrer pour exclure les déploiements dans le namespace "default"
-            const filteredDeployments = deployments.filter(dep => dep.namespace !== 'default');
+            // Plus besoin de filtrer puisque l'endpoint ne retourne que les déploiements LabOnDemand
+            const filteredDeployments = deployments;
             
             // Supprimer les labCards pour les déploiements qui n'existent plus
             const labCards = document.querySelectorAll('.lab-card');
@@ -821,17 +843,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const deploymentId = card.id;
                 const deploymentNamespace = card.dataset.namespace;
                 
-                // Vérifier si le déploiement existe encore et n'est pas dans le namespace "default"
+                // Vérifier si le déploiement existe encore
                 const deploymentExists = filteredDeployments.some(d => 
                     d.name === deploymentId && d.namespace === deploymentNamespace
                 );
                 
                 if (!deploymentExists) {
+                    console.log(`Suppression de la carte obsolète: ${deploymentId} (namespace: ${deploymentNamespace})`);
+                    
+                    // Arrêter les timers de vérification s'ils existent
+                    const timerKey = `${deploymentNamespace}-${deploymentId}`;
+                    if (deploymentCheckTimers.has(timerKey)) {
+                        clearTimeout(deploymentCheckTimers.get(timerKey));
+                        deploymentCheckTimers.delete(timerKey);
+                        console.log(`Timer de vérification arrêté pour ${deploymentId}`);
+                    }
+                    
                     card.remove();
                 }
             });
             
             // Vérifier si la liste est vide
+            const noLabsMessage = document.querySelector('.no-labs-message');
             if (activeLabsList.children.length === 0 || 
                 (activeLabsList.children.length === 1 && activeLabsList.children[0].classList.contains('no-labs-message'))) {
                 if (noLabsMessage) noLabsMessage.style.display = 'block';
@@ -927,7 +960,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Fonction pour récupérer et mettre à jour l'URL d'accès à un déploiement
     async function fetchDeploymentAccessUrl(namespace, name) {
         try {
-            const response = await fetch(`${API_V1}/get-deployment-details/${namespace}/${name}`);
+            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
             
             if (!response.ok) {
                 throw new Error('Impossible de récupérer les détails du déploiement');
@@ -939,7 +972,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const accessBtn = document.getElementById(`access-btn-${name}`);
                 if (accessBtn) {
                     accessBtn.href = accessUrl;
+                    console.log(`URL d'accès récupérée pour ${name}: ${accessUrl}`);
                 }
+            } else {
+                console.warn(`Aucune URL d'accès disponible pour ${name}`);
             }
         } catch (error) {
             console.error(`Erreur lors de la récupération de l'URL d'accès pour ${name}:`, error);
@@ -956,9 +992,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         try {
             // Récupérer les détails du déploiement
-            const response = await fetch(`${API_V1}/get-deployment-details/${namespace}/${name}`);
+            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
+            
+            // Si le déploiement n'existe pas (404), arrêter les vérifications et supprimer la carte
+            if (response.status === 404) {
+                console.warn(`Déploiement ${name} non trouvé (404). Suppression de la carte et arrêt des vérifications.`);
+                
+                // Nettoyer le timer
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
+                
+                // Supprimer la carte du laboratoire
+                const card = document.getElementById(name);
+                if (card) {
+                    card.remove();
+                    console.log(`Carte de laboratoire ${name} supprimée car le déploiement n'existe plus.`);
+                }
+                
+                // Vérifier si la liste est maintenant vide
+                const noLabsMessage = document.querySelector('.no-labs-message');
+                if (activeLabsList.children.length === 0) {
+                    if (noLabsMessage) noLabsMessage.style.display = 'block';
+                }
+                
+                return;
+            }
+            
+            // Si erreur 500, arrêter aussi les vérifications après quelques tentatives
+            if (response.status === 500) {
+                console.error(`Erreur serveur 500 pour le déploiement ${name}. Tentative ${attempts+1}/${maxAttempts}`);
+                
+                if (attempts >= 5) { // Arrêter après 5 tentatives pour les erreurs 500
+                    console.error(`Arrêt des vérifications pour ${name} après erreurs 500 répétées`);
+                    clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                    deploymentCheckTimers.delete(`${namespace}-${name}`);
+                    updateLabCardStatus(name, false, null, true);
+                    return;
+                }
+            }
+            
             if (!response.ok) {
-                throw new Error('Impossible de récupérer les détails du déploiement');
+                throw new Error(`Erreur ${response.status}: ${response.statusText}`);
             }
             
             const data = await response.json();
@@ -987,15 +1061,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.log(`Nombre maximal de tentatives atteint pour ${name}`);
                 // Informer l'utilisateur qu'il pourrait y avoir un problème
                 updateLabCardStatus(name, false, data, true);
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
             }
         } catch (error) {
             console.error(`Erreur lors de la vérification du déploiement ${name}:`, error);
-            // Continuer à vérifier sauf si max atteint
-            if (attempts < maxAttempts) {
+            // Continuer à vérifier sauf si max atteint ET si ce n'est pas une erreur 404
+            if (attempts < maxAttempts && !error.message.includes('404')) {
                 const timerId = setTimeout(() => {
                     checkDeploymentReadiness(namespace, name, attempts + 1);
                 }, 5000);
                 deploymentCheckTimers.set(`${namespace}-${name}`, timerId);
+            } else {
+                // Arrêter les vérifications en cas d'erreur persistante
+                console.error(`Arrêt des vérifications pour ${name} après ${attempts} tentatives`);
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
             }
         }
     }
@@ -1055,7 +1136,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 
                 // Si des URLs d'accès sont disponibles, mettre à jour l'URL du bouton
                 if (deploymentData && deploymentData.access_urls && deploymentData.access_urls.length > 0) {
-                    accessBtn.href = deploymentData.access_urls[0].url;
+                    const accessUrl = deploymentData.access_urls[0].url;
+                    accessBtn.href = accessUrl;
+                    console.log(`URL d'accès mise à jour pour ${deploymentId}: ${accessUrl}`);
+                } else {
+                    console.warn(`Aucune URL d'accès trouvée pour ${deploymentId}`);
                 }
             } else if (timeout) {
                 accessBtn.innerHTML = '<i class="fas fa-exclamation-circle"></i> Vérifier les détails';
@@ -1068,7 +1153,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (confirm(`Êtes-vous sûr de vouloir arrêter le laboratoire "${labId}" ?`)) {
             try {
                 // Appel API pour supprimer le déploiement
-                const response = await fetch(`${API_V1}/delete-deployment/${namespace}/${labId}?delete_service=true`, {
+                const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${labId}?delete_service=true`, {
                     method: 'DELETE'
                 });
                 
@@ -1111,8 +1196,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('delete-modal').classList.remove('show');
     });
 
+    // --- Fonction pour nettoyer tous les timers ---
+    function clearAllDeploymentTimers() {
+        console.log('Nettoyage de tous les timers de vérification des déploiements');
+        for (const [key, timerId] of deploymentCheckTimers.entries()) {
+            clearTimeout(timerId);
+            console.log(`Timer nettoyé pour: ${key}`);
+        }
+        deploymentCheckTimers.clear();
+    }
+
     // --- Initialisation ---
     async function init() {
+        // Nettoyer tous les timers existants au démarrage
+        clearAllDeploymentTimers();
+        
         initUserInfo();
         // Vérifier la connexion à l'API
         const apiConnected = await checkApiStatus();
@@ -1125,18 +1223,46 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             
             // Récupérer les déploiements existants pour les afficher comme labs actifs
-            const response = await fetch(`${API_V1}/get-labondemand-deployments`);
+            const response = await fetch(`${API_V1}/k8s/deployments/labondemand`);
             if (response.ok) {
                 const data = await response.json();
                 const deployments = data.deployments || [];
                 
-                // Filtrer pour exclure les déploiements dans le namespace "default"
-                const filteredDeployments = deployments.filter(dep => dep.namespace !== 'default');
+                console.log(`Trouvé ${deployments.length} déploiements LabOnDemand`);
+                console.log(`Déploiements:`, deployments);
                 
                 // Pour chaque déploiement, récupérer les détails et créer une carte
-                for (const deployment of filteredDeployments) {
+                for (const deployment of deployments) {
+                    // Vérifier si une carte existe déjà pour ce déploiement
+                    const existingCard = document.getElementById(deployment.name);
+                    if (existingCard) {
+                        console.log(`Carte existante trouvée pour ${deployment.name}, ignorée.`);
+                        continue;
+                    }
+                    console.log(`Traitement du déploiement:`, {
+                        name: deployment.name,
+                        namespace: deployment.namespace,
+                        type: deployment.type,
+                        labels: deployment.labels
+                    });
+                    
+                    // Protection supplémentaire contre les namespaces système
+                    if (deployment.namespace.includes('system') || 
+                        deployment.namespace === 'kube-public' || 
+                        deployment.namespace === 'kube-node-lease') {
+                        console.log(`Ignoré déploiement système ${deployment.name}`);
+                        continue;
+                    }
+                    
+                    // Vérifier que nous avons un déploiement valide avec un nom et un type
+                    if (!deployment.name || !deployment.type) {
+                        console.error(`Déploiement invalide:`, deployment);
+                        continue;
+                    }
+                    
                     try {
-                        const detailsResponse = await fetch(`${API_V1}/get-deployment-details/${deployment.namespace}/${deployment.name}`);
+                        console.log(`Récupération des détails pour ${deployment.namespace}/${deployment.name}`);
+                        const detailsResponse = await fetch(`${API_V1}/k8s/deployments/${deployment.namespace}/${deployment.name}/details`);
                         if (detailsResponse.ok) {
                             const detailsData = await detailsResponse.json();
                             
@@ -1166,6 +1292,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                                           detailsData.pods.some(pod => pod.status === 'Running');
                             
                             // Ajouter la carte avec l'état de disponibilité correct
+                            console.log(`Ajout de la carte pour ${deployment.name}`, {
+                                serviceName, serviceIcon, accessUrl, isReady
+                            });
                             addLabCard({
                                 id: deployment.name,
                                 name: serviceName,
@@ -1176,6 +1305,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 namespace: deployment.namespace,
                                 ready: isReady // Indiquer si le déploiement est prêt
                             });
+                        } else {
+                            console.error(`Erreur lors de la récupération des détails pour ${deployment.name}:`, detailsResponse.status);
                         }
                     } catch (error) {
                         console.error(`Erreur lors de la récupération des détails pour ${deployment.name}:`, error);
@@ -1191,6 +1322,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (refreshDeploymentsBtn) {
                 refreshDeploymentsBtn.addEventListener('click', fetchAndRenderDeployments);
             }
+            
+            // Mettre en place un nettoyage périodique des cartes obsolètes (toutes les 30 secondes)
+            setInterval(refreshActiveLabs, 30000);
         } else {
             // Si l'API n'est pas accessible, afficher un message dans chaque section
             ['namespaces-list', 'pods-list', 'deployments-list'].forEach(id => {
@@ -1210,6 +1344,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (noLabsMessage) noLabsMessage.style.display = 'none';
         }
     }
+
+    // Nettoyer les timers lors du déchargement de la page
+    window.addEventListener('beforeunload', () => {
+        console.log('Nettoyage des timers de vérification...');
+        deploymentCheckTimers.forEach((timerId, key) => {
+            clearTimeout(timerId);
+            console.log(`Timer nettoyé pour ${key}`);
+        });
+        deploymentCheckTimers.clear();
+    });
 
     // Initialiser l'application
     init();

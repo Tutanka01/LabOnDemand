@@ -284,6 +284,20 @@ main {
     gap: 15px;
     border-left: 5px solid var(--labondemand-green); /* Vert pour actif */
 }
+
+/* États des lab cards */
+.lab-card.lab-pending {
+    border-left-color: var(--warning-color); /* Orange pour en attente */
+}
+
+.lab-card.lab-ready {
+    border-left-color: var(--success-color); /* Vert pour prêt */
+}
+
+.lab-card.lab-error {
+    border-left-color: var(--error-color); /* Rouge pour erreur */
+    background-color: #fff5f5; /* Fond légèrement rouge */
+}
 .lab-card h3 {
     display: flex;
     align-items: center;
@@ -742,6 +756,71 @@ footer {
 .namespace-type.vscode,
 .type-badge.vscode {
     background-color: #007ACC;
+    color: white;
+}
+
+/* Indicateurs de statut */
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.status-indicator.ready {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.status-indicator.pending {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.status-indicator.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Indicateurs de disponibilité d'application */
+.app-availability {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: var(--border-radius);
+    margin: 10px 0;
+    font-size: 0.9rem;
+}
+
+.app-availability.ready {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.app-availability.pending {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+.app-availability.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.app-availability-icon {
+    font-size: 1.1rem;
+}
+
+.app-availability-text {
+    flex: 1;
+}
     color: white;
 }
 
