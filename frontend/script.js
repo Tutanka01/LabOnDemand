@@ -34,9 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
     const API_V1 = `${API_BASE_URL}/api/v1`;
     
-    // Version du script pour forcer le rafraîchissement du cache
-    const SCRIPT_VERSION = '1.1.0';
-    console.log(`LabOnDemand Script v${SCRIPT_VERSION} - Corrections de filtrage des déploiements`);
+    console.log('LabOnDemand Script - Corrections de filtrage des déploiements et gestion d\'erreurs améliorée');
 
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
@@ -845,17 +843,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const deploymentId = card.id;
                 const deploymentNamespace = card.dataset.namespace;
                 
-                // Vérifier si le déploiement existe encore et n'est pas dans le namespace "default"
+                // Vérifier si le déploiement existe encore
                 const deploymentExists = filteredDeployments.some(d => 
                     d.name === deploymentId && d.namespace === deploymentNamespace
                 );
                 
                 if (!deploymentExists) {
+                    console.log(`Suppression de la carte obsolète: ${deploymentId} (namespace: ${deploymentNamespace})`);
+                    
+                    // Arrêter les timers de vérification s'ils existent
+                    const timerKey = `${deploymentNamespace}-${deploymentId}`;
+                    if (deploymentCheckTimers.has(timerKey)) {
+                        clearTimeout(deploymentCheckTimers.get(timerKey));
+                        deploymentCheckTimers.delete(timerKey);
+                        console.log(`Timer de vérification arrêté pour ${deploymentId}`);
+                    }
+                    
                     card.remove();
                 }
             });
             
             // Vérifier si la liste est vide
+            const noLabsMessage = document.querySelector('.no-labs-message');
             if (activeLabsList.children.length === 0 || 
                 (activeLabsList.children.length === 1 && activeLabsList.children[0].classList.contains('no-labs-message'))) {
                 if (noLabsMessage) noLabsMessage.style.display = 'block';
@@ -963,7 +972,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const accessBtn = document.getElementById(`access-btn-${name}`);
                 if (accessBtn) {
                     accessBtn.href = accessUrl;
+                    console.log(`URL d'accès récupérée pour ${name}: ${accessUrl}`);
                 }
+            } else {
+                console.warn(`Aucune URL d'accès disponible pour ${name}`);
             }
         } catch (error) {
             console.error(`Erreur lors de la récupération de l'URL d'accès pour ${name}:`, error);
@@ -981,8 +993,46 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             // Récupérer les détails du déploiement
             const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
+            
+            // Si le déploiement n'existe pas (404), arrêter les vérifications et supprimer la carte
+            if (response.status === 404) {
+                console.warn(`Déploiement ${name} non trouvé (404). Suppression de la carte et arrêt des vérifications.`);
+                
+                // Nettoyer le timer
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
+                
+                // Supprimer la carte du laboratoire
+                const card = document.getElementById(name);
+                if (card) {
+                    card.remove();
+                    console.log(`Carte de laboratoire ${name} supprimée car le déploiement n'existe plus.`);
+                }
+                
+                // Vérifier si la liste est maintenant vide
+                const noLabsMessage = document.querySelector('.no-labs-message');
+                if (activeLabsList.children.length === 0) {
+                    if (noLabsMessage) noLabsMessage.style.display = 'block';
+                }
+                
+                return;
+            }
+            
+            // Si erreur 500, arrêter aussi les vérifications après quelques tentatives
+            if (response.status === 500) {
+                console.error(`Erreur serveur 500 pour le déploiement ${name}. Tentative ${attempts+1}/${maxAttempts}`);
+                
+                if (attempts >= 5) { // Arrêter après 5 tentatives pour les erreurs 500
+                    console.error(`Arrêt des vérifications pour ${name} après erreurs 500 répétées`);
+                    clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                    deploymentCheckTimers.delete(`${namespace}-${name}`);
+                    updateLabCardStatus(name, false, null, true);
+                    return;
+                }
+            }
+            
             if (!response.ok) {
-                throw new Error('Impossible de récupérer les détails du déploiement');
+                throw new Error(`Erreur ${response.status}: ${response.statusText}`);
             }
             
             const data = await response.json();
@@ -1011,15 +1061,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.log(`Nombre maximal de tentatives atteint pour ${name}`);
                 // Informer l'utilisateur qu'il pourrait y avoir un problème
                 updateLabCardStatus(name, false, data, true);
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
             }
         } catch (error) {
             console.error(`Erreur lors de la vérification du déploiement ${name}:`, error);
-            // Continuer à vérifier sauf si max atteint
-            if (attempts < maxAttempts) {
+            // Continuer à vérifier sauf si max atteint ET si ce n'est pas une erreur 404
+            if (attempts < maxAttempts && !error.message.includes('404')) {
                 const timerId = setTimeout(() => {
                     checkDeploymentReadiness(namespace, name, attempts + 1);
                 }, 5000);
                 deploymentCheckTimers.set(`${namespace}-${name}`, timerId);
+            } else {
+                // Arrêter les vérifications en cas d'erreur persistante
+                console.error(`Arrêt des vérifications pour ${name} après ${attempts} tentatives`);
+                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
+                deploymentCheckTimers.delete(`${namespace}-${name}`);
             }
         }
     }
@@ -1079,7 +1136,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 
                 // Si des URLs d'accès sont disponibles, mettre à jour l'URL du bouton
                 if (deploymentData && deploymentData.access_urls && deploymentData.access_urls.length > 0) {
-                    accessBtn.href = deploymentData.access_urls[0].url;
+                    const accessUrl = deploymentData.access_urls[0].url;
+                    accessBtn.href = accessUrl;
+                    console.log(`URL d'accès mise à jour pour ${deploymentId}: ${accessUrl}`);
+                } else {
+                    console.warn(`Aucune URL d'accès trouvée pour ${deploymentId}`);
                 }
             } else if (timeout) {
                 accessBtn.innerHTML = '<i class="fas fa-exclamation-circle"></i> Vérifier les détails';
@@ -1135,8 +1196,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('delete-modal').classList.remove('show');
     });
 
+    // --- Fonction pour nettoyer tous les timers ---
+    function clearAllDeploymentTimers() {
+        console.log('Nettoyage de tous les timers de vérification des déploiements');
+        for (const [key, timerId] of deploymentCheckTimers.entries()) {
+            clearTimeout(timerId);
+            console.log(`Timer nettoyé pour: ${key}`);
+        }
+        deploymentCheckTimers.clear();
+    }
+
     // --- Initialisation ---
     async function init() {
+        // Nettoyer tous les timers existants au démarrage
+        clearAllDeploymentTimers();
+        
         initUserInfo();
         // Vérifier la connexion à l'API
         const apiConnected = await checkApiStatus();
@@ -1154,15 +1228,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const data = await response.json();
                 const deployments = data.deployments || [];
                 
-                console.log(`${SCRIPT_VERSION}: Trouvé ${deployments.length} déploiements LabOnDemand`);
-                console.log(`${SCRIPT_VERSION}: Déploiements:`, deployments);
-                
-                // Plus besoin de filtrer puisque l'endpoint ne retourne que les déploiements LabOnDemand
-                const filteredDeployments = deployments;
+                console.log(`Trouvé ${deployments.length} déploiements LabOnDemand`);
+                console.log(`Déploiements:`, deployments);
                 
                 // Pour chaque déploiement, récupérer les détails et créer une carte
-                for (const deployment of filteredDeployments) {
-                    console.log(`${SCRIPT_VERSION}: Traitement du déploiement:`, {
+                for (const deployment of deployments) {
+                    // Vérifier si une carte existe déjà pour ce déploiement
+                    const existingCard = document.getElementById(deployment.name);
+                    if (existingCard) {
+                        console.log(`Carte existante trouvée pour ${deployment.name}, ignorée.`);
+                        continue;
+                    }
+                    console.log(`Traitement du déploiement:`, {
                         name: deployment.name,
                         namespace: deployment.namespace,
                         type: deployment.type,
@@ -1173,18 +1250,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (deployment.namespace.includes('system') || 
                         deployment.namespace === 'kube-public' || 
                         deployment.namespace === 'kube-node-lease') {
-                        console.log(`${SCRIPT_VERSION}: Ignoré déploiement système ${deployment.name}`);
+                        console.log(`Ignoré déploiement système ${deployment.name}`);
                         continue;
                     }
                     
                     // Vérifier que nous avons un déploiement valide avec un nom et un type
                     if (!deployment.name || !deployment.type) {
-                        console.error(`${SCRIPT_VERSION}: Déploiement invalide:`, deployment);
+                        console.error(`Déploiement invalide:`, deployment);
                         continue;
                     }
                     
                     try {
-                        console.log(`${SCRIPT_VERSION}: Récupération des détails pour ${deployment.namespace}/${deployment.name}`);
+                        console.log(`Récupération des détails pour ${deployment.namespace}/${deployment.name}`);
                         const detailsResponse = await fetch(`${API_V1}/k8s/deployments/${deployment.namespace}/${deployment.name}/details`);
                         if (detailsResponse.ok) {
                             const detailsData = await detailsResponse.json();
@@ -1215,7 +1292,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                           detailsData.pods.some(pod => pod.status === 'Running');
                             
                             // Ajouter la carte avec l'état de disponibilité correct
-                            console.log(`${SCRIPT_VERSION}: Ajout de la carte pour ${deployment.name}`, {
+                            console.log(`Ajout de la carte pour ${deployment.name}`, {
                                 serviceName, serviceIcon, accessUrl, isReady
                             });
                             addLabCard({
@@ -1229,10 +1306,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 ready: isReady // Indiquer si le déploiement est prêt
                             });
                         } else {
-                            console.error(`${SCRIPT_VERSION}: Erreur lors de la récupération des détails pour ${deployment.name}:`, detailsResponse.status);
+                            console.error(`Erreur lors de la récupération des détails pour ${deployment.name}:`, detailsResponse.status);
                         }
                     } catch (error) {
-                        console.error(`${SCRIPT_VERSION}: Erreur lors de la récupération des détails pour ${deployment.name}:`, error);
+                        console.error(`Erreur lors de la récupération des détails pour ${deployment.name}:`, error);
                     }
                 }
             }
@@ -1245,6 +1322,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (refreshDeploymentsBtn) {
                 refreshDeploymentsBtn.addEventListener('click', fetchAndRenderDeployments);
             }
+            
+            // Mettre en place un nettoyage périodique des cartes obsolètes (toutes les 30 secondes)
+            setInterval(refreshActiveLabs, 30000);
         } else {
             // Si l'API n'est pas accessible, afficher un message dans chaque section
             ['namespaces-list', 'pods-list', 'deployments-list'].forEach(id => {
@@ -1264,6 +1344,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (noLabsMessage) noLabsMessage.style.display = 'none';
         }
     }
+
+    // Nettoyer les timers lors du déchargement de la page
+    window.addEventListener('beforeunload', () => {
+        console.log('Nettoyage des timers de vérification...');
+        deploymentCheckTimers.forEach((timerId, key) => {
+            clearTimeout(timerId);
+            console.log(`Timer nettoyé pour ${key}`);
+        });
+        deploymentCheckTimers.clear();
+    });
 
     // Initialiser l'application
     init();

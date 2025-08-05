@@ -103,7 +103,7 @@ async def get_pods_by_namespace(
 
 # ============= ENDPOINTS DE DÉTAILS =============
 
-@router.get("/deployments/{namespace}/{name}")
+@router.get("/deployments/{namespace}/{name}/details")
 async def get_deployment_details(
     namespace: str, 
     name: str, 
@@ -126,12 +126,42 @@ async def get_deployment_details(
             label_selector=f"app={name}"
         )
         
-        # Récupérer le service associé s'il existe
-        service = None
-        try:
-            service = core_v1.read_namespaced_service(f"{name}-service", namespace)
-        except client.exceptions.ApiException:
-            pass  # Service n'existe pas
+        # Récupérer les services associés
+        services = core_v1.list_namespaced_service(namespace, label_selector=f"app={name}")
+        
+        # Construire les URLs d'accès si des services NodePort existent
+        access_urls = []
+        service_data = []
+        
+        for svc in services.items:
+            service_info = {
+                "name": svc.metadata.name,
+                "type": svc.spec.type,
+                "cluster_ip": svc.spec.cluster_ip,
+                "ports": []
+            }
+            
+            for port in svc.spec.ports or []:
+                port_info = {
+                    "name": port.name,
+                    "port": port.port,
+                    "target_port": str(port.target_port) if port.target_port else str(port.port),
+                    "protocol": port.protocol
+                }
+                
+                if port.node_port:
+                    port_info["node_port"] = port.node_port
+                    # Construire l'URL d'accès pour les services NodePort
+                    if svc.spec.type == "NodePort":
+                        access_urls.append({
+                            "url": f"http://localhost:{port.node_port}",
+                            "service": svc.metadata.name,
+                            "node_port": port.node_port
+                        })
+                
+                service_info["ports"].append(port_info)
+            
+            service_data.append(service_info)
         
         return {
             "deployment": {
@@ -139,21 +169,21 @@ async def get_deployment_details(
                 "namespace": deployment.metadata.namespace,
                 "replicas": deployment.spec.replicas,
                 "ready_replicas": deployment.status.ready_replicas or 0,
-                "labels": deployment.metadata.labels
+                "available_replicas": deployment.status.available_replicas or 0,
+                "image": deployment.spec.template.spec.containers[0].image if deployment.spec.template.spec.containers else None,
+                "labels": dict(deployment.metadata.labels) if deployment.metadata.labels else {}
             },
             "pods": [
                 {
                     "name": pod.metadata.name,
                     "status": pod.status.phase,
-                    "ip": pod.status.pod_ip
+                    "pod_ip": pod.status.pod_ip,
+                    "node_name": pod.spec.node_name
                 } 
                 for pod in pods.items
             ],
-            "service": {
-                "name": service.metadata.name,
-                "type": service.spec.type,
-                "ports": service.spec.ports
-            } if service else None
+            "services": service_data,
+            "access_urls": access_urls
         }
         
     except client.exceptions.ApiException as e:
