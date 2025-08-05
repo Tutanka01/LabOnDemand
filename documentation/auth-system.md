@@ -1,33 +1,15 @@
-# Documentation du Système d'Authentification - LabOnDemand
+# Documentation Authentification - LabOnDemand
 
-## Aperçu du Système
+## Principe KISS
+Authentification par sessions, 3 rôles : student/teacher/admin.
 
-Le système d'authentification de LabOnDemand est une solution basée sur les sessions qui gère l'authentification des utilisateurs, l'autorisation basée sur les rôles, et la protection des ressources sur la plateforme. Ce système a été conçu pour être simple, sécurisé et bien intégré avec l'existant, sans utiliser de jetons JWT afin d'éviter toute sur-ingénierie.
+## Utilisation
+- Login: POST /api/v1/auth/login
+- Logout: POST /api/v1/auth/logout  
+- Profil: GET /api/v1/auth/me
 
-## Architecture
-
-Le système utilise une architecture à plusieurs niveaux :
-
-1. **Stockage de sessions persistant** : Les sessions sont stockées côté serveur avec un mécanisme d'expiration.
-2. **Gestion des cookies** : Les identifiants de session sont stockés dans des cookies sécurisés côté client.
-3. **Middleware d'authentification** : Intercepte les requêtes pour valider les sessions et charger les informations utilisateur.
-4. **Contrôle d'accès basé sur les rôles** : Les autorisations d'accès aux différentes ressources sont basées sur les rôles utilisateur.
-
-## Modèle utilisateur
-
-Les utilisateurs sont définis par trois rôles principaux :
-
-- **Étudiant (student)** : Accès limité aux fonctionnalités de base et à leurs propres laboratoires.
-- **Enseignant (teacher)** : Accès étendu pour créer et gérer des laboratoires, mais pas d'accès aux fonctions d'administration.
-- **Administrateur (admin)** : Accès complet à toutes les fonctionnalités du système, y compris la gestion des utilisateurs.
-
-## Flux d'authentification
-
-Le flux d'authentification suit ces étapes :
-
-1. **Connexion** : L'utilisateur fournit son nom d'utilisateur et mot de passe.
-2. **Vérification** : Le système vérifie les identifiants dans la base de données.
-3. **Création de session** : Si les identifiants sont valides, une nouvelle session est créée.
+## Comptes par défaut
+- Admin: admin / admin123
 4. **Cookie de session** : Un cookie contenant l'identifiant de session est envoyé au client.
 5. **Authentification pour les requêtes ultérieures** : Le cookie est automatiquement envoyé avec chaque requête et vérifié par le middleware.
 

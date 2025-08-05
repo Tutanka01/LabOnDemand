@@ -1,50 +1,136 @@
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+"""
+Script d'initialisation de la base de données LabOnDemand
+Principe KISS : initialisation simple et fiable
+"""
 import os
-from dotenv import load_dotenv
+import sys
+from pathlib import Path
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
-from database import Base, engine
-from models import User, UserRole
-from security import get_password_hash
+# Ajout du répertoire parent au path
+sys.path.insert(0, str(Path(__file__).parent))
 
-def init_database():
-    """
-    Initialise la base de données et crée un utilisateur admin par défaut
-    """
-    # Créer toutes les tables dans la base de données
-    Base.metadata.create_all(bind=engine)
-    
-    # Créer une session
+try:
+    from database import engine, Base
+    from models import User, UserRole, Lab
+    from security import get_password_hash
+except ImportError as e:
+    print(f"Erreur d'import: {e}")
+    print("Assurez-vous d'être dans le bon répertoire et que les modules existent")
+    sys.exit(1)
+
+def check_database_connection():
+    """Vérifie la connexion à la base de données"""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+            print("✅ Connexion à la base de données réussie")
+            return True
+    except Exception as e:
+        print(f"❌ Erreur de connexion à la base de données: {e}")
+        return False
+
+def create_tables():
+    """Crée toutes les tables"""
+    try:
+        print("🔨 Création des tables...")
+        Base.metadata.create_all(bind=engine)
+        print("✅ Tables créées avec succès")
+        return True
+    except Exception as e:
+        print(f"❌ Erreur lors de la création des tables: {e}")
+        return False
+
+def create_admin_user():
+    """Crée l'utilisateur administrateur par défaut"""
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
     
-    # Vérifier si un utilisateur admin existe déjà
-    admin_exists = db.query(User).filter(User.role == UserRole.admin).first() is not None
-    
-    # Si aucun admin n'existe, en créer un par défaut
-    if not admin_exists:
-        admin_username = os.getenv("ADMIN_USERNAME", "admin")
-        admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
-        admin_email = os.getenv("ADMIN_EMAIL", "admin@labondemand.local")
+    try:
+        # Vérifier si un admin existe déjà
+        existing_admin = db.query(User).filter(User.role == UserRole.admin).first()
         
-        admin_user = User(
-            username=admin_username,
-            email=admin_email,
-            hashed_password=get_password_hash(admin_password),
+        if existing_admin:
+            print(f"✅ Administrateur existe déjà: {existing_admin.username}")
+            return True
+        
+        # Créer le compte admin
+        admin = User(
+            username="admin",
+            email="admin@labondemand.local",
             full_name="Administrateur",
-            role=UserRole.admin
+            hashed_password=get_password_hash("admin123"),
+            role=UserRole.admin,
+            is_active=True
         )
         
-        db.add(admin_user)
+        db.add(admin)
         db.commit()
-        print(f"Utilisateur administrateur créé : {admin_username}")
-    else:
-        print("Un utilisateur administrateur existe déjà")
+        print("✅ Utilisateur admin créé")
+        print("   Nom d'utilisateur: admin")
+        print("   Mot de passe: admin123")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Erreur lors de la création de l'admin: {e}")
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+def verify_setup():
+    """Vérifie que tout est bien configuré"""
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = SessionLocal()
     
-    db.close()
+    try:
+        # Compter les utilisateurs
+        user_count = db.query(User).count()
+        admin_count = db.query(User).filter(User.role == UserRole.admin).count()
+        
+        print(f"📊 Statistiques:")
+        print(f"   - Utilisateurs total: {user_count}")
+        print(f"   - Administrateurs: {admin_count}")
+        
+        return True
+    except Exception as e:
+        print(f"❌ Erreur lors de la vérification: {e}")
+        return False
+    finally:
+        db.close()
+
+def main():
+    """Fonction principale d'initialisation"""
+    print("🚀 Initialisation de la base de données LabOnDemand")
+    print("=" * 50)
+    
+    # Étape 1: Vérifier la connexion
+    if not check_database_connection():
+        print("❌ Impossible de se connecter à la base de données")
+        print("Vérifiez votre configuration dans database.py")
+        return False
+    
+    # Étape 2: Créer les tables
+    if not create_tables():
+        print("❌ Impossible de créer les tables")
+        return False
+    
+    # Étape 3: Créer l'admin
+    if not create_admin_user():
+        print("❌ Impossible de créer l'utilisateur admin")
+        return False
+    
+    # Étape 4: Vérification finale
+    if not verify_setup():
+        print("❌ Erreur lors de la vérification")
+        return False
+    
+    print("=" * 50)
+    print("✅ Initialisation terminée avec succès!")
+    print("Vous pouvez maintenant démarrer l'API")
+    return True
 
 if __name__ == "__main__":
-    print("Initialisation de la base de données...")
-    init_database()
-    print("Initialisation terminée!")
+    success = main()
+    sys.exit(0 if success else 1)

@@ -30,8 +30,27 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail || 'Erreur de connexion');
+                // Essayer de parser le JSON d'erreur
+                let errorMessage = 'Erreur de connexion';
+                try {
+                    const error = await response.json();
+                    errorMessage = error.message || error.detail || 'Erreur de connexion';
+                } catch (parseError) {
+                    // Si ce n'est pas du JSON, récupérer le texte brut
+                    try {
+                        const errorText = await response.text();
+                        if (errorText.includes('Table') && errorText.includes('doesn\'t exist')) {
+                            errorMessage = 'Base de données non initialisée. Contactez l\'administrateur.';
+                        } else if (errorText.includes('Traceback')) {
+                            errorMessage = 'Erreur serveur. Consultez les logs.';
+                        } else {
+                            errorMessage = 'Erreur de connexion';
+                        }
+                    } catch (textError) {
+                        errorMessage = 'Erreur de connexion';
+                    }
+                }
+                throw new Error(errorMessage);
             }
             
             const data = await response.json();
