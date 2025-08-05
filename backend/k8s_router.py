@@ -11,6 +11,7 @@ from .models import User
 from .k8s_utils import validate_k8s_name
 from .deployment_service import deployment_service
 from .templates import get_deployment_templates, get_resource_presets_for_role
+from .config import settings
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
@@ -129,6 +130,50 @@ async def get_deployment_details(
         # Récupérer les services associés
         services = core_v1.list_namespaced_service(namespace, label_selector=f"app={name}")
         
+        # Récupérer l'IP externe du cluster
+        def get_cluster_external_ip():
+            try:
+                # Utiliser la configuration si définie
+                if settings.CLUSTER_EXTERNAL_IP:
+                    return settings.CLUSTER_EXTERNAL_IP
+                
+                # Essayer de récupérer l'IP externe via les nœuds
+                nodes = core_v1.list_node()
+                internal_ip = None
+                
+                for node in nodes.items:
+                    if node.status.addresses:
+                        for address in node.status.addresses:
+                            if address.type == "ExternalIP" and address.address:
+                                return address.address
+                            elif address.type == "InternalIP" and address.address:
+                                # Sauvegarder l'IP interne comme fallback
+                                internal_ip = address.address
+                
+                # Si pas d'IP externe trouvée, essayer de récupérer via les services LoadBalancer
+                lb_services = core_v1.list_service_for_all_namespaces()
+                for svc in lb_services.items:
+                    if svc.spec.type == "LoadBalancer" and svc.status.load_balancer:
+                        if svc.status.load_balancer.ingress:
+                            for ingress in svc.status.load_balancer.ingress:
+                                if ingress.ip:
+                                    return ingress.ip
+                                elif ingress.hostname:
+                                    return ingress.hostname
+                
+                # Fallback sur l'IP interne du premier nœud
+                if internal_ip:
+                    return internal_ip
+                    
+                # Dernière option : localhost (pour développement local)
+                return "localhost"
+            except Exception as e:
+                print(f"Erreur lors de la récupération de l'IP du cluster: {e}")
+                return "localhost"
+
+        cluster_ip = get_cluster_external_ip()
+        print(f"[DEBUG] IP du cluster détectée: {cluster_ip}")  # Pour debug
+        
         # Construire les URLs d'accès si des services NodePort existent
         access_urls = []
         service_data = []
@@ -154,9 +199,10 @@ async def get_deployment_details(
                     # Construire l'URL d'accès pour les services NodePort
                     if svc.spec.type == "NodePort":
                         access_urls.append({
-                            "url": f"http://localhost:{port.node_port}",
+                            "url": f"http://{cluster_ip}:{port.node_port}",
                             "service": svc.metadata.name,
-                            "node_port": port.node_port
+                            "node_port": port.node_port,
+                            "cluster_ip": cluster_ip
                         })
                 
                 service_info["ports"].append(port_info)

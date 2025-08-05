@@ -28,6 +28,8 @@ class Settings:
     ]
     
     # Kubernetes Configuration
+    CLUSTER_EXTERNAL_IP = os.getenv("CLUSTER_EXTERNAL_IP", None)  # IP externe du cluster K8s
+    
     @staticmethod
     def init_kubernetes():
         """Initialise la configuration Kubernetes"""
