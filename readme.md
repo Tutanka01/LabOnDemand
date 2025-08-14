@@ -23,7 +23,7 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   **Configuration des Ressources :** Préréglages de CPU/Mémoire pour adapter les environnements aux besoins spécifiques.
 *   **Accès Simplifié :** Exposition automatique des services via NodePort (configurable pour d'autres types).
 *   **Visualisation :** Tableau de bord pour suivre les laboratoires actifs, les namespaces, pods et déploiements Kubernetes gérés par l'application.
-*   **Templates :** Support pour des templates de déploiement (VS Code, Jupyter, personnalisés) avec des images Docker dédiées.
+*   **Templates :** Templates d'application dynamiques (VS Code, Jupyter, personnalisés) gérés via l'admin; affichés automatiquement aux utilisateurs.
 *   **Validation Intégrée :** Formatage et validation des noms pour la conformité Kubernetes.
 *   **Scalabilité :** Prêt pour une architecture haute disponibilité (voir schéma futur).
 

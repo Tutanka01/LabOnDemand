@@ -84,22 +84,8 @@
             <button class="btn btn-secondary back-btn" data-target="dashboard-view"><i class="fas fa-arrow-left"></i> Retour</button>
             <h1><i class="fas fa-th-large"></i> Choisir un Service</h1>
             <p class="subtitle">Sélectionnez le type d'environnement que vous souhaitez lancer.</p>
-            <div class="card-grid service-catalog">
-                <div class="card service-card" data-service="JupyterLab" data-icon="fa-brands fa-python" data-deployment-type="jupyter">
-                    <i class="fab fa-python service-icon"></i>
-                    <h3>JupyterLab</h3>
-                    <p>Environnement interactif pour data science (Python, R).</p>
-                </div>
-                <div class="card service-card" data-service="VSCode Web" data-icon="fa-solid fa-code" data-deployment-type="vscode">
-                    <i class="fas fa-code service-icon"></i>
-                    <h3>VSCode Web</h3>
-                    <p>IDE complet dans votre navigateur.</p>
-                </div>
-                <div class="card service-card" data-service="Custom" data-icon="fa-solid fa-cube" data-deployment-type="custom">
-                    <i class="fas fa-cube service-icon"></i>
-                    <h3>Personnalisé</h3>
-                    <p>Déploiement d'image Docker personnalisée.</p>
-                </div>
+            <div class="card-grid service-catalog" id="service-catalog">
+                <!-- Rempli dynamiquement depuis /api/v1/k8s/templates -->
             </div>
         </section>
 

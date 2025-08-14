@@ -15,7 +15,9 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "id": "custom",
                 "name": "Déploiement personnalisé",
                 "description": "Déployer une image Docker de votre choix",
-                "icon": "fa-docker"
+                "icon": "fa-docker",
+                "deployment_type": "custom",
+                "default_service_type": "NodePort"
             },
             {
                 "id": "vscode",
@@ -23,7 +25,9 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "description": "Déployer un environnement de développement VS Code accessible via navigateur",
                 "icon": "fa-code",
                 "default_image": "tutanka01/k8s:vscode",
-                "default_port": 8080
+                "default_port": 8080,
+                "deployment_type": "vscode",
+                "default_service_type": "NodePort"
             },
             {
                 "id": "jupyter",
@@ -31,7 +35,9 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "description": "Déployer un environnement Jupyter Notebook pour l'analyse de données et le machine learning",
                 "icon": "fa-chart-line",
                 "default_image": "tutanka01/k8s:jupyter",
-                "default_port": 8888
+                "default_port": 8888,
+                "deployment_type": "jupyter",
+                "default_service_type": "NodePort"
             }
         ]
     }
