@@ -20,6 +20,7 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = None
     password: str = Field(..., min_length=8)
     role: UserRoleEnum = UserRoleEnum.student
+    is_active: Optional[bool] = True
 
 # Schéma pour la mise à jour d'utilisateur
 class UserUpdate(BaseModel):

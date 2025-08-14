@@ -83,7 +83,7 @@ def read_user_me(current_user: User = Depends(get_current_user)):
     """
     return current_user
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(is_admin)])
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
     """
     Enregistre un nouvel utilisateur (accessible uniquement aux admin dans une implémentation finale)
@@ -111,7 +111,8 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
         email=user.email,
         full_name=user.full_name,
         hashed_password=hashed_password,
-        role=UserRole[user.role]
+        role=UserRole[user.role],
+        is_active=user.is_active if user.is_active is not None else True
     )
     
     db.add(db_user)
