@@ -7,7 +7,7 @@ from kubernetes import client
 from typing import List, Dict, Any, Optional
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
-from .models import User
+from .models import User, UserRole
 from .k8s_utils import validate_k8s_name
 from .deployment_service import deployment_service
 from .templates import get_deployment_templates, get_resource_presets_for_role
@@ -59,10 +59,9 @@ async def get_labondemand_deployments(current_user: User = Depends(get_current_u
     """Récupérer uniquement les déploiements LabOnDemand"""
     try:
         v1 = client.AppsV1Api()
-        # Filtrer par label managed-by=labondemand
-        ret = v1.list_deployment_for_all_namespaces(
-            label_selector="managed-by=labondemand"
-        )
+        # Toujours filtrer par user-id pour n'afficher que les labs de l'utilisateur courant
+        label_selector = f"managed-by=labondemand,user-id={current_user.id}"
+        ret = v1.list_deployment_for_all_namespaces(label_selector=label_selector)
         
         deployments = []
         for dep in ret.items:
@@ -120,6 +119,12 @@ async def get_deployment_details(
         
         # Récupérer le déploiement
         deployment = apps_v1.read_namespaced_deployment(name, namespace)
+        # Enforcer l'isolation: un étudiant ne peut voir que ses propres déploiements
+        if current_user.role == UserRole.student:
+            labels = deployment.metadata.labels or {}
+            owner_id = labels.get("user-id")
+            if owner_id != str(current_user.id):
+                raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
         
         # Récupérer les pods associés
         pods = core_v1.list_namespaced_pod(
