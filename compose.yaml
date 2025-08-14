@@ -21,7 +21,7 @@ services:
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
     depends_on:
       - db
-    command: sh -c "sleep 15 && uvicorn backend.main:app --host 0.0.0 --port 8000 --reload"
+    command: sh -c "sleep 15 && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:
     image: nginx:alpine

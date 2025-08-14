@@ -8,11 +8,15 @@ from datetime import datetime
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from .config import settings
-from .database import Base, engine, get_db
+from .database import Base, engine, get_db, SessionLocal
 from .session import setup_session_handler
 from .error_handlers import global_exception_handler
+from . import models  # Importer les modèles pour enregistrer les tables avant create_all
+from .models import User, UserRole
+from .security import get_password_hash
 
 # Initialiser Kubernetes
 settings.init_kubernetes()
@@ -40,8 +44,31 @@ app.add_middleware(
 # Configuration du middleware de session
 setup_session_handler(app)
 
-# Création des tables de base de données
+# Création des tables de base de données (nécessite l'import de models ci-dessus)
 Base.metadata.create_all(bind=engine)
+
+# S'assurer qu'un compte admin par défaut existe (simple et fonctionnel)
+@app.on_event("startup")
+def ensure_admin_exists():
+    try:
+        with SessionLocal() as db:
+            # Re-créer les tables au cas où (idempotent)
+            Base.metadata.create_all(bind=engine)
+            admin = db.query(User).filter(User.role == UserRole.admin).first()
+            if not admin:
+                admin = User(
+                    username="admin",
+                    email="admin@labondemand.local",
+                    full_name="Administrateur",
+                    hashed_password=get_password_hash("admin123"),
+                    role=UserRole.admin,
+                    is_active=True,
+                )
+                db.add(admin)
+                db.commit()
+    except Exception as e:
+        # On ne casse pas le démarrage pour éviter l'indisponibilité totale
+        print(f"[startup] Impossible d'assurer la présence de l'admin: {e}")
 
 # ============= INCLUSION DES ROUTEURS =============
 
@@ -73,7 +100,7 @@ async def health_check(db: Session = Depends(get_db)):
     """Vérification de santé de l'API"""
     try:
         # Test de connexion DB
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         
         # Test des tables
         from .models import User
