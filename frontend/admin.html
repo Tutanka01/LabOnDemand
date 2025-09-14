@@ -37,7 +37,7 @@
             </div>
         </header>
 
-        <main>
+    <main>
             <div class="page-header">
                 <h1><i class="fas fa-users-cog"></i> Administration des utilisateurs</h1>
                 <button id="add-user-btn" class="action-btn">
@@ -101,6 +101,19 @@
                     Suivant <i class="fas fa-chevron-right"></i>
                 </button>
             </div>
+
+            <!-- Gestion des Templates d'applications -->
+            <section class="admin-section" id="templates-section">
+                <div class="page-header">
+                    <h2><i class="fas fa-th-large"></i> Templates d'application</h2>
+                    <button id="add-template-btn" class="action-btn">
+                        <i class="fas fa-plus"></i> Nouveau template
+                    </button>
+                </div>
+                <div id="templates-list" class="users-table-container">
+                    <!-- Rempli par JS -->
+                </div>
+            </section>
         </main>
     </div>
 
@@ -178,6 +191,85 @@
         </div>
     </div>
 
+    <!-- Modal Templates (création/édition) -->
+    <div id="template-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="template-modal-title"><i class="fas fa-th-large"></i> Nouveau template</h2>
+                <button class="close-template-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="template-form">
+                    <input type="hidden" id="template-id">
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tpl-key"><i class="fas fa-key"></i> Clé</label>
+                            <input type="text" id="tpl-key" required minlength="2" maxlength="50" placeholder="vscode">
+                            <small>Identifiant unique (ex: vscode, jupyter, custom)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpl-name"><i class="fas fa-tag"></i> Nom</label>
+                            <input type="text" id="tpl-name" required minlength="2" maxlength="100" placeholder="VSCode Web">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tpl-description"><i class="fas fa-align-left"></i> Description</label>
+                        <input type="text" id="tpl-description" maxlength="255" placeholder="Courte description">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tpl-icon"><i class="fas fa-icons"></i> Icône (classe)</label>
+                            <input type="text" id="tpl-icon" maxlength="100" placeholder="fa-solid fa-code">
+                            <small>Classe Font Awesome (ex: fa-solid fa-code)</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpl-type"><i class="fas fa-cubes"></i> Type</label>
+                            <select id="tpl-type">
+                                <option value="custom">Custom</option>
+                                <option value="vscode">VSCode</option>
+                                <option value="jupyter">Jupyter</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tpl-image"><i class="fas fa-box"></i> Image par défaut</label>
+                            <input type="text" id="tpl-image" maxlength="200" placeholder="ex: tutanka01/k8s:vscode">
+                        </div>
+                        <div class="form-group">
+                            <label for="tpl-port"><i class="fas fa-plug"></i> Port par défaut</label>
+                            <input type="number" id="tpl-port" min="1" max="65535" placeholder="ex: 8080">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tpl-service-type"><i class="fas fa-network-wired"></i> Type de service</label>
+                        <select id="tpl-service-type">
+                            <option value="ClusterIP">ClusterIP</option>
+                            <option value="NodePort" selected>NodePort</option>
+                            <option value="LoadBalancer">LoadBalancer</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <input type="checkbox" id="tpl-active" checked>
+                        <label for="tpl-active">Actif</label>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn-cancel close-template-modal">Annuler</button>
+                        <button type="submit" class="btn-save">Enregistrer</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="js/admin.js"></script>
+    <script src="js/templates.js"></script>
 </body>
 </html>

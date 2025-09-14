@@ -15,8 +15,9 @@ from .database import Base, engine, get_db, SessionLocal
 from .session import setup_session_handler
 from .error_handlers import global_exception_handler
 from . import models  # Importer les modèles pour enregistrer les tables avant create_all
-from .models import User, UserRole
+from .models import User, UserRole, Template
 from .security import get_password_hash
+from .templates import get_deployment_templates
 
 # Initialiser Kubernetes
 settings.init_kubernetes()
@@ -65,6 +66,23 @@ def ensure_admin_exists():
                     is_active=True,
                 )
                 db.add(admin)
+                db.commit()
+
+            # Seed des templates de base si vide
+            if db.query(Template).count() == 0:
+                defaults = get_deployment_templates().get("templates", [])
+                for t in defaults:
+                    db.add(Template(
+                        key=t.get("id"),
+                        name=t.get("name"),
+                        description=t.get("description"),
+                        icon=t.get("icon"),
+                        deployment_type=t.get("deployment_type", "custom"),
+                        default_image=t.get("default_image"),
+                        default_port=t.get("default_port"),
+                        default_service_type=t.get("default_service_type", "NodePort"),
+                        active=True,
+                    ))
                 db.commit()
     except Exception as e:
         # On ne casse pas le démarrage pour éviter l'indisponibilité totale

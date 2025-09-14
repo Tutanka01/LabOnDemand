@@ -33,3 +33,21 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# Modèle pour les templates d'application (déploiements)
+class Template(Base):
+    __tablename__ = "templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(50), unique=True, index=True, nullable=False)  # identifiant fonctionnel (ex: vscode, jupyter)
+    name = Column(String(100), nullable=False)
+    description = Column(String(255), nullable=True)
+    icon = Column(String(100), nullable=True)  # ex: fa-solid fa-code
+    deployment_type = Column(String(30), nullable=False, default="custom")  # vscode|jupyter|custom
+    default_image = Column(String(200), nullable=True)
+    default_port = Column(Integer, nullable=True)
+    default_service_type = Column(String(30), nullable=False, default="NodePort")  # ClusterIP|NodePort|LoadBalancer
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

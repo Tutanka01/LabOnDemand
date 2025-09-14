@@ -7,11 +7,14 @@ from kubernetes import client
 from typing import List, Dict, Any, Optional
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
-from .models import User, UserRole
+from .models import User, UserRole, Template
 from .k8s_utils import validate_k8s_name
 from .deployment_service import deployment_service
 from .templates import get_deployment_templates, get_resource_presets_for_role
 from .config import settings
+from sqlalchemy.orm import Session
+from .database import get_db
+from . import schemas
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
@@ -278,7 +281,6 @@ async def create_deployment(
     name: str,
     image: str,
     replicas: int = 1,
-    namespace: Optional[str] = None,
     create_service: bool = False,
     service_port: int = 80,
     service_target_port: int = 80,
@@ -296,7 +298,7 @@ async def create_deployment(
         name=name,
         image=image,
         replicas=replicas,
-        namespace=namespace,
+    namespace=None,
         create_service=create_service,
         service_port=service_port,
         service_target_port=service_target_port,
@@ -363,9 +365,112 @@ async def delete_deployment(
 # ============= ENDPOINTS DE TEMPLATES ET PRESETS =============
 
 @router.get("/templates")
-async def get_deployment_templates_endpoint(current_user: User = Depends(get_current_user)):
-    """Récupérer les templates de déploiement"""
-    return get_deployment_templates()
+async def get_deployment_templates_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Récupérer les templates de déploiement actifs (DB), fallback sur defaults"""
+    templates = db.query(Template).filter(Template.active == True).all()
+    allowed_for_students = {"jupyter", "vscode"}
+
+    if templates:
+        # Filtrer selon rôle
+        if current_user.role == UserRole.student:
+            templates = [t for t in templates if (t.deployment_type in allowed_for_students or t.key in allowed_for_students)]
+
+        return {
+            "templates": [
+                {
+                    "id": t.key,
+                    "name": t.name,
+                    "description": t.description,
+                    "icon": t.icon,
+                    "default_image": t.default_image,
+                    "default_port": t.default_port,
+                    "deployment_type": t.deployment_type,
+                    "default_service_type": t.default_service_type,
+                }
+                for t in templates
+            ]
+        }
+
+    # Fallback: templates codés + filtrage selon rôle
+    defaults = get_deployment_templates()
+    if current_user.role == UserRole.student:
+        filtered = [tpl for tpl in defaults.get("templates", []) if tpl.get("deployment_type") in allowed_for_students or tpl.get("id") in allowed_for_students]
+        return {"templates": filtered}
+    return defaults
+
+
+@router.post("/templates", response_model=schemas.TemplateResponse)
+async def create_template(
+    payload: schemas.TemplateCreate,
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    """Créer un template (admin)"""
+    # Vérifier unicité de la clé
+    if db.query(Template).filter(Template.key == payload.key).first():
+        raise HTTPException(status_code=400, detail="La clé du template existe déjà")
+    tpl = Template(
+        key=payload.key,
+        name=payload.name,
+        description=payload.description,
+        icon=payload.icon,
+        deployment_type=payload.deployment_type,
+        default_image=payload.default_image,
+        default_port=payload.default_port,
+        default_service_type=payload.default_service_type,
+        active=payload.active,
+    )
+    db.add(tpl)
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+
+@router.get("/templates/all", response_model=List[schemas.TemplateResponse])
+async def list_all_templates(
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    """Lister tous les templates (admin)"""
+    return db.query(Template).order_by(Template.id.desc()).all()
+
+
+@router.put("/templates/{template_id}", response_model=schemas.TemplateResponse)
+async def update_template(
+    template_id: int,
+    payload: schemas.TemplateUpdate,
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    tpl = db.query(Template).filter(Template.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template non trouvé")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(tpl, field, value)
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+
+@router.delete("/templates/{template_id}")
+async def delete_template(
+    template_id: int,
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    tpl = db.query(Template).filter(Template.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template non trouvé")
+    db.delete(tpl)
+    db.commit()
+    return {"message": "Template supprimé"}
 
 @router.get("/resource-presets")
 async def get_resource_presets(current_user: User = Depends(get_current_user)):

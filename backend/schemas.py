@@ -59,3 +59,40 @@ class SessionData(BaseModel):
 class LoginResponse(BaseModel):
     user: UserResponse
     session_id: str
+
+
+# ====== Templates ======
+class TemplateBase(BaseModel):
+    key: str = Field(..., min_length=2, max_length=50)
+    name: str = Field(..., min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=255)
+    icon: Optional[str] = Field(None, max_length=100)
+    deployment_type: str = Field("custom", pattern=r"^(custom|vscode|jupyter)$")
+    default_image: Optional[str] = Field(None, max_length=200)
+    default_port: Optional[int] = Field(None, ge=1, le=65535)
+    default_service_type: str = Field("NodePort", pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
+    active: bool = True
+
+
+class TemplateCreate(TemplateBase):
+    pass
+
+
+class TemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=255)
+    icon: Optional[str] = Field(None, max_length=100)
+    deployment_type: Optional[str] = Field(None, pattern=r"^(custom|vscode|jupyter)$")
+    default_image: Optional[str] = Field(None, max_length=200)
+    default_port: Optional[int] = Field(None, ge=1, le=65535)
+    default_service_type: Optional[str] = Field(None, pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
+    active: Optional[bool] = None
+
+
+class TemplateResponse(TemplateBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

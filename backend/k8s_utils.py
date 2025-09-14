@@ -8,6 +8,14 @@ from typing import Dict, Any, Optional
 from fastapi import HTTPException
 from kubernetes import client
 
+# Types légers pour éviter des imports circulaires coûteux
+try:
+    from .models import User, UserRole  # type: ignore
+except Exception:  # lors de l'import utilitaire isolé
+    User = Any  # type: ignore
+    class UserRole:  # type: ignore
+        student = "student"
+
 def validate_k8s_name(name: str) -> str:
     """
     Valide et formate un nom pour Kubernetes
@@ -93,6 +101,112 @@ def get_namespace_for_deployment(deployment_type: str, user_namespace: Optional[
         return user_namespace
     
     return settings.DEFAULT_NAMESPACES.get(deployment_type, "labondemand-custom")
+
+def build_user_namespace(user: Any) -> str:
+    """
+    Construit le namespace dédié à un utilisateur.
+    Format: <prefix>-<user_id>
+    """
+    from .config import settings
+    prefix = validate_k8s_name(settings.USER_NAMESPACE_PREFIX)
+    return validate_k8s_name(f"{prefix}-{user.id}")
+
+def should_use_user_namespace(user: Any, deployment_type: str, explicit_namespace: Optional[str]) -> bool:
+    """
+    Stratégie d'isolation:
+    - Étudiants: namespace dédié obligatoire (ignore le namespace explicite non autorisé)
+    - Enseignants/Admins: utilisent leur namespace dédié par défaut, sauf si un namespace explicite est fourni
+    """
+    try:
+        role_val = getattr(user.role, "value", str(user.role))
+    except Exception:
+        role_val = str(getattr(user, "role", ""))
+    role_val = str(role_val)
+    if role_val == "student":
+        return True
+    # Pour teacher/admin: si un namespace explicite est fourni, on le respecte, sinon namespace user
+    return explicit_namespace is None
+
+def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
+    """
+    Applique des garde-fous de base au namespace (idempotent):
+    - ResourceQuota (pods, CPU, mémoire)
+    - LimitRange (requests/limits par container)
+    Retourne True si OK, False si erreur non fatale.
+    """
+    try:
+        core = client.CoreV1Api()
+        # Baselines différentes selon le rôle (plus strict pour les étudiants)
+        if role == "student":
+            rq_hard = {
+                "pods": "5",
+                "requests.cpu": "1000m",
+                "requests.memory": "2Gi",
+                "limits.cpu": "2",
+                "limits.memory": "4Gi",
+            }
+            lr_default = {"cpu": "500m", "memory": "512Mi"}
+            lr_request = {"cpu": "100m", "memory": "128Mi"}
+        else:
+            rq_hard = {
+                "pods": "20",
+                "requests.cpu": "4000m",
+                "requests.memory": "8Gi",
+                "limits.cpu": "8",
+                "limits.memory": "16Gi",
+            }
+            lr_default = {"cpu": "1000m", "memory": "1Gi"}
+            lr_request = {"cpu": "250m", "memory": "256Mi"}
+
+        # ResourceQuota
+        rq_name = "baseline-quota"
+        try:
+            core.read_namespaced_resource_quota(rq_name, namespace_name)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                rq_manifest = {
+                    "apiVersion": "v1",
+                    "kind": "ResourceQuota",
+                    "metadata": {"name": rq_name},
+                    "spec": {"hard": rq_hard},
+                }
+                core.create_namespaced_resource_quota(namespace_name, rq_manifest)
+            elif e.status == 403:
+                # Pas les droits pour gérer la quota, on ignore sans bloquer
+                return True
+            else:
+                raise
+
+        # LimitRange
+        lr_name = "baseline-limits"
+        try:
+            core.read_namespaced_limit_range(lr_name, namespace_name)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                lr_manifest = {
+                    "apiVersion": "v1",
+                    "kind": "LimitRange",
+                    "metadata": {"name": lr_name},
+                    "spec": {
+                        "limits": [
+                            {
+                                "type": "Container",
+                                "default": lr_default,
+                                "defaultRequest": lr_request,
+                            }
+                        ]
+                    },
+                }
+                core.create_namespaced_limit_range(namespace_name, lr_manifest)
+            elif e.status == 403:
+                return True
+            else:
+                raise
+
+        return True
+    except Exception as e:
+        print(f"[namespace-baseline] Erreur sur {namespace_name}: {e}")
+        return False
 
 async def ensure_namespace_exists(namespace_name: str) -> bool:
     """
