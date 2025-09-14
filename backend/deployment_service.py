@@ -13,8 +13,9 @@ from .k8s_utils import (
     validate_k8s_name, 
     validate_resource_format, 
     create_labondemand_labels,
-    get_namespace_for_deployment,
     ensure_namespace_exists,
+    build_user_namespace,
+    ensure_namespace_baseline,
     max_resource
 )
 from .templates import DeploymentConfig
@@ -188,7 +189,7 @@ class DeploymentService:
         name: str,
         image: str,
         replicas: int,
-        namespace: Optional[str],
+        namespace: Optional[str],  # ignoré volontairement, conservation pour compat
         create_service: bool,
         service_port: int,
         service_target_port: int,
@@ -206,83 +207,120 @@ class DeploymentService:
         """
         # Validation et formatage
         name = validate_k8s_name(name)
-        effective_namespace = get_namespace_for_deployment(deployment_type, namespace)
-        
-        # S'assurer que le namespace existe
+        # Politique d'isolation: namespace par utilisateur, aucun choix client
+        effective_namespace = build_user_namespace(current_user)
+
+        # S'assurer que le namespace existe (idempotent)
         await ensure_namespace_exists(effective_namespace)
-        
+        # Appliquer des garde-fous de base (idempotent, best-effort)
+        try:
+            role_val = getattr(current_user.role, "value", str(current_user.role))
+            ensure_namespace_baseline(effective_namespace, str(role_val))
+        except Exception:
+            pass
+
         # Valider les permissions
         self.validate_permissions(current_user, deployment_type)
-        
+
         # Valider les types de service
         valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
         if service_type not in valid_service_types:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}"
             )
-        
+
         # Valider les formats de ressources
         try:
             validate_resource_format(cpu_request, cpu_limit, memory_request, memory_limit)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-        
+
         # Appliquer la configuration du déploiement
         config = self.apply_deployment_config(
-            deployment_type, image, cpu_request, cpu_limit, 
-            memory_request, memory_limit, service_target_port, 
-            create_service, service_type
+            deployment_type,
+            image,
+            cpu_request,
+            cpu_limit,
+            memory_request,
+            memory_limit,
+            service_target_port,
+            create_service,
+            service_type,
         )
-        
+
         # Créer les labels
         if additional_labels is None:
             additional_labels = {}
-        
+
         labels = create_labondemand_labels(
-            deployment_type, 
-            str(current_user.id), 
+            deployment_type,
+            str(current_user.id),
             current_user.role.value,
-            additional_labels
+            additional_labels,
         )
-        
+
         try:
-            # Créer le déploiement (plus besoin d'enregistrement DB)
+            # Créer le déploiement
             deployment_manifest = self.create_deployment_manifest(
-                name, config["image"], replicas, config["cpu_request"], 
-                config["cpu_limit"], config["memory_request"], config["memory_limit"],
-                config["service_target_port"], labels
+                name,
+                config["image"],
+                replicas,
+                config["cpu_request"],
+                config["cpu_limit"],
+                config["memory_request"],
+                config["memory_limit"],
+                config["service_target_port"],
+                labels,
             )
-            
+
             self.apps_v1.create_namespaced_deployment(effective_namespace, deployment_manifest)
-            
+
             result_message = (
                 f"Deployment {name} créé dans le namespace {effective_namespace} "
                 f"avec l'image {config['image']} "
                 f"(CPU: {config['cpu_request']}-{config['cpu_limit']}, "
                 f"RAM: {config['memory_request']}-{config['memory_limit']})"
             )
-            
+
             # Créer le service si nécessaire
             node_port = None
             if config["create_service"]:
                 service_manifest = self.create_service_manifest(
-                    name, service_port, config["service_target_port"], 
-                    config["service_type"], labels
+                    name,
+                    service_port,
+                    config["service_target_port"],
+                    config["service_type"],
+                    labels,
                 )
-                
-                created_service = self.core_v1.create_namespaced_service(effective_namespace, service_manifest)
-                
+
+                created_service = self.core_v1.create_namespaced_service(
+                    effective_namespace, service_manifest
+                )
+
                 if config["service_type"] in ["NodePort", "LoadBalancer"]:
                     node_port = created_service.spec.ports[0].node_port
-                    result_message += f". Service {name}-service créé (type: {config['service_type']}, port: {service_port}, NodePort: {node_port})"
+                    result_message += (
+                        f". Service {name}-service créé (type: {config['service_type']}, "
+                        f"port: {service_port}, NodePort: {node_port})"
+                    )
                 else:
-                    result_message += f". Service {name}-service créé (type: {config['service_type']}, port: {service_port})"
-                
+                    result_message += (
+                        f". Service {name}-service créé (type: {config['service_type']}, "
+                        f"port: {service_port})"
+                    )
+
                 # Instructions d'accès spécifiques
-                if deployment_type == "vscode" and config["service_type"] == "NodePort" and node_port:
-                    result_message += f" VS Code Online sera accessible à l'adresse http://<IP_DU_NOEUD>:{node_port}/ (mot de passe: labondemand)"
-            
+                if (
+                    deployment_type == "vscode"
+                    and config["service_type"] == "NodePort"
+                    and node_port
+                ):
+                    result_message += (
+                        f" VS Code Online sera accessible à l'adresse "
+                        f"http://<IP_DU_NOEUD>:{node_port}/ (mot de passe: labondemand)"
+                    )
+
             return {
                 "message": result_message,
                 "deployment_type": deployment_type,
@@ -291,18 +329,21 @@ class DeploymentService:
                     "cpu_request": config["cpu_request"],
                     "cpu_limit": config["cpu_limit"],
                     "memory_request": config["memory_request"],
-                    "memory_limit": config["memory_limit"]
+                    "memory_limit": config["memory_limit"],
                 },
                 "service_info": {
                     "created": config["create_service"],
                     "type": config["service_type"] if config["create_service"] else None,
                     "port": service_port if config["create_service"] else None,
-                    "node_port": node_port
-                }
+                    "node_port": node_port,
+                },
             }
-            
+
         except client.exceptions.ApiException as e:
-            raise HTTPException(status_code=e.status, detail=f"Erreur lors de la création: {e.reason} - {e.body}")
+            raise HTTPException(
+                status_code=e.status,
+                detail=f"Erreur lors de la création: {e.reason} - {e.body}",
+            )
 
 # Instance globale du service
 deployment_service = DeploymentService()

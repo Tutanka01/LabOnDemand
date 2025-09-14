@@ -29,6 +29,8 @@ class Settings:
     
     # Kubernetes Configuration
     CLUSTER_EXTERNAL_IP = os.getenv("CLUSTER_EXTERNAL_IP", None)  # IP externe du cluster K8s
+    # Préfixe des namespaces utilisateur (un namespace par utilisateur)
+    USER_NAMESPACE_PREFIX = os.getenv("USER_NAMESPACE_PREFIX", "labondemand-user")
     
     @staticmethod
     def init_kubernetes():

@@ -281,7 +281,6 @@ async def create_deployment(
     name: str,
     image: str,
     replicas: int = 1,
-    namespace: Optional[str] = None,
     create_service: bool = False,
     service_port: int = 80,
     service_target_port: int = 80,
@@ -299,7 +298,7 @@ async def create_deployment(
         name=name,
         image=image,
         replicas=replicas,
-        namespace=namespace,
+    namespace=None,
         create_service=create_service,
         service_port=service_port,
         service_target_port=service_target_port,
@@ -372,21 +371,35 @@ async def get_deployment_templates_endpoint(
 ):
     """Récupérer les templates de déploiement actifs (DB), fallback sur defaults"""
     templates = db.query(Template).filter(Template.active == True).all()
+    allowed_for_students = {"jupyter", "vscode"}
+
     if templates:
-        return {"templates": [
-            {
-                "id": t.key,
-                "name": t.name,
-                "description": t.description,
-                "icon": t.icon,
-                "default_image": t.default_image,
-                "default_port": t.default_port,
-                "deployment_type": t.deployment_type,
-                "default_service_type": t.default_service_type,
-            } for t in templates
-        ]}
-    # Fallback: templates codés
-    return get_deployment_templates()
+        # Filtrer selon rôle
+        if current_user.role == UserRole.student:
+            templates = [t for t in templates if (t.deployment_type in allowed_for_students or t.key in allowed_for_students)]
+
+        return {
+            "templates": [
+                {
+                    "id": t.key,
+                    "name": t.name,
+                    "description": t.description,
+                    "icon": t.icon,
+                    "default_image": t.default_image,
+                    "default_port": t.default_port,
+                    "deployment_type": t.deployment_type,
+                    "default_service_type": t.default_service_type,
+                }
+                for t in templates
+            ]
+        }
+
+    # Fallback: templates codés + filtrage selon rôle
+    defaults = get_deployment_templates()
+    if current_user.role == UserRole.student:
+        filtered = [tpl for tpl in defaults.get("templates", []) if tpl.get("deployment_type") in allowed_for_students or tpl.get("id") in allowed_for_students]
+        return {"templates": filtered}
+    return defaults
 
 
 @router.post("/templates", response_model=schemas.TemplateResponse)

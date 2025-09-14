@@ -549,22 +549,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const deploymentName = document.getElementById('deployment-name');
             deploymentName.value = `${serviceName.toLowerCase().replace(/\s+/g, '-')}-${Math.floor(Math.random() * 9000) + 1000}`;
 
-            // Définir un namespace spécifique au type de service au lieu de "default"
-            const namespaceInput = document.getElementById('namespace');
-            switch(deploymentType) {
-                case 'jupyter':
-                    namespaceInput.value = 'labondemand-jupyter';
-                    break;
-                case 'vscode':
-                    namespaceInput.value = 'labondemand-vscode';
-                    break;
-                case 'custom':
-                    namespaceInput.value = 'labondemand-custom';
-                    break;
-                default:
-                    namespaceInput.value = `labondemand-${serviceName.toLowerCase().replace(/\s+/g, '-')}`;
-            }
-
             // Reset form (optional)
             configForm.reset();
 
@@ -582,9 +566,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 document.getElementById('service-type-select').value = defaultServiceType;
             }
 
-            // Rétablir le nom par défaut et le namespace (après reset)
+            // Rétablir le nom par défaut (après reset)
             document.getElementById('deployment-name').value = deploymentName.value;
-            document.getElementById('namespace').value = namespaceInput.value;
 
             showView('config-view');
         });
@@ -596,12 +579,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!resp.ok) throw new Error('Erreur de chargement des templates');
             const data = await resp.json();
             const templates = data.templates || [];
+            const isElevated = authManager.isAdmin() || authManager.isTeacher();
+            // Filtrer pour les étudiants: uniquement jupyter et vscode
+            const filteredTemplates = isElevated
+                ? templates
+                : templates.filter(t => {
+                    const dt = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
+                    return dt === 'jupyter' || dt === 'vscode';
+                });
             if (!serviceCatalog) return;
-            if (templates.length === 0) {
+            if (filteredTemplates.length === 0) {
                 serviceCatalog.innerHTML = '<div class="no-items-message">Aucun template disponible</div>';
                 return;
             }
-            serviceCatalog.innerHTML = templates.map(t => {
+            serviceCatalog.innerHTML = filteredTemplates.map(t => {
                 const iconClass = t.icon?.includes('fa-') ? t.icon : 'fa-solid fa-cube';
                 const title = t.name || t.id;
                 const desc = t.description || '';
@@ -626,11 +617,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.error(e);
             // Fallback minimal si l'API échoue
             if (serviceCatalog) {
-                serviceCatalog.innerHTML = `
+                const isElevated = authManager.isAdmin() || authManager.isTeacher();
+                // Pour étudiants: proposer uniquement Jupyter et VS Code en fallback
+                serviceCatalog.innerHTML = isElevated ? `
                     <div class="card service-card" data-service="Custom" data-icon="fa-solid fa-cube" data-deployment-type="custom">
                         <i class="fas fa-cube service-icon"></i>
                         <h3>Personnalisé</h3>
                         <p>Déploiement d'image Docker personnalisée.</p>
+                    </div>` : `
+                    <div class="card service-card" data-service="Jupyter Notebook" data-icon="fa-brands fa-python" data-deployment-type="jupyter" data-default-image="tutanka01/k8s:jupyter" data-default-port="8888" data-default-service-type="NodePort">
+                        <i class="fa-brands fa-python service-icon"></i>
+                        <h3>Jupyter Notebook</h3>
+                        <p>Environnement interactif pour Python et data science.</p>
+                    </div>
+                    <div class="card service-card" data-service="VS Code" data-icon="fa-solid fa-code" data-deployment-type="vscode" data-default-image="tutanka01/k8s:vscode" data-default-port="8080" data-default-service-type="NodePort">
+                        <i class="fa-solid fa-code service-icon"></i>
+                        <h3>VS Code</h3>
+                        <p>Éditeur de code accessible via le navigateur.</p>
                     </div>`;
                 document.querySelectorAll('.service-card').forEach(bindServiceCard);
             }
@@ -647,7 +650,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const serviceIcon = serviceIconInput.value;
             const deploymentType = deploymentTypeInput.value;
             const deploymentName = document.getElementById('deployment-name').value;
-            const namespace = document.getElementById('namespace').value || 'labondemand-' + deploymentType; // Utiliser un namespace spécifique si non défini
             const cpu = document.getElementById('cpu').value;
             const ram = document.getElementById('ram').value;
             
@@ -731,7 +733,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     name: deploymentName,
                     image: image,
                     replicas: replicas,
-                    namespace: namespace,
                     create_service: createService,
                     service_port: servicePort,
                     service_target_port: serviceTargetPort,
@@ -786,6 +787,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Construire les infos du lab à ajouter au dashboard
                 labCounter++;
                 const labId = deploymentName;
+                const effectiveNamespace = data.namespace || 'labondemand-user';
                 
                 // Extraire l'URL d'accès des infos de retour (ou générer une URL factice en attendant de récupérer l'URL réelle)
                 let accessUrl = '';
@@ -809,7 +811,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!accessUrl && nodePort) {
                     // Si on n'a pas d'URL complète mais on a un NodePort, tenter de récupérer les détails
                     try {
-                        const detailsResponse = await fetch(`${API_V1}/k8s/deployments/${namespace}/${deploymentName}/details`);
+                        const detailsResponse = await fetch(`${API_V1}/k8s/deployments/${effectiveNamespace}/${deploymentName}/details`);
                         if (detailsResponse.ok) {
                             const detailsData = await detailsResponse.json();
                             if (detailsData.access_urls && detailsData.access_urls.length > 0) {
@@ -841,7 +843,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ram: ramValues[ram]?.request || '128Mi',
                     datasets: datasets,
                     link: accessUrl,
-                    namespace: namespace,
+                    namespace: effectiveNamespace,
                     ready: false // Le déploiement commence toujours en état non prêt
                 });
 
@@ -1278,10 +1280,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         const apiConnected = await checkApiStatus();
         
         if (apiConnected) {
-            // Charger les données K8s
-            fetchAndRenderNamespaces();
-            fetchAndRenderPods();
-            fetchAndRenderDeployments();
+            // Charger les données K8s seulement pour admin/teacher
+            const isElevated = authManager.isAdmin() || authManager.isTeacher();
+            if (isElevated) {
+                fetchAndRenderNamespaces();
+                fetchAndRenderPods();
+                fetchAndRenderDeployments();
+            } else {
+                // Étudiants: n'appellent pas les endpoints /namespaces et /pods
+                fetchAndRenderDeployments();
+            }
             
             
             // Récupérer les déploiements existants pour les afficher comme labs actifs
