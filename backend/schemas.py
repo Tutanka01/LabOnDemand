@@ -98,3 +98,41 @@ class TemplateResponse(TemplateBase):
 
     class Config:
         from_attributes = True
+
+
+# ====== Runtime Configs ======
+class RuntimeConfigBase(BaseModel):
+    key: str = Field(..., min_length=2, max_length=50)
+    default_image: Optional[str] = Field(None, max_length=200)
+    target_port: Optional[int] = Field(None, ge=1, le=65535)
+    default_service_type: str = Field("NodePort", pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
+    allowed_for_students: bool = True
+    min_cpu_request: Optional[str] = Field(None, max_length=20)
+    min_memory_request: Optional[str] = Field(None, max_length=20)
+    min_cpu_limit: Optional[str] = Field(None, max_length=20)
+    min_memory_limit: Optional[str] = Field(None, max_length=20)
+    active: bool = True
+
+
+class RuntimeConfigCreate(RuntimeConfigBase):
+    pass
+
+
+class RuntimeConfigUpdate(BaseModel):
+    default_image: Optional[str] = Field(None, max_length=200)
+    target_port: Optional[int] = Field(None, ge=1, le=65535)
+    default_service_type: Optional[str] = Field(None, pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
+    min_cpu_request: Optional[str] = Field(None, max_length=20)
+    min_memory_request: Optional[str] = Field(None, max_length=20)
+    min_cpu_limit: Optional[str] = Field(None, max_length=20)
+    min_memory_limit: Optional[str] = Field(None, max_length=20)
+    active: Optional[bool] = None
+
+
+class RuntimeConfigResponse(RuntimeConfigBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

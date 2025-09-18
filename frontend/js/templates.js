@@ -22,11 +22,31 @@
 
   if (!listEl || !addBtn) return; // ne pas exécuter si pas sur la page
 
+  async function populateRuntimes() {
+    try {
+      const resp = await fetch('/api/v1/k8s/runtime-configs', { credentials: 'include' });
+      const ct = resp.headers.get('content-type') || '';
+      const rows = ct.includes('application/json') ? await resp.json() : [];
+      if (Array.isArray(rows)) {
+        const opts = [
+          '<option value="custom">Custom</option>',
+          ...rows.filter(rc => rc.active).map(rc => `<option value="${rc.key}">${rc.key}</option>`)
+        ];
+        typeEl.innerHTML = opts.join('');
+      }
+    } catch (e) {
+      // ignorer: laisser les options statiques si l'appel échoue
+    }
+  }
+
   function openModal(editing = false, data = null) {
     titleEl.innerHTML = editing ? '<i class="fas fa-pen"></i> Modifier le template' : '<i class="fas fa-th-large"></i> Nouveau template';
     form.reset();
     idEl.value = '';
     keyEl.disabled = editing; // clé non modifiable en édition
+
+    // Peupler dynamiquement les runtimes disponibles à chaque ouverture
+    populateRuntimes();
 
     if (editing && data) {
       idEl.value = data.id;

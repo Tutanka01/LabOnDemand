@@ -29,6 +29,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const k8sResources = document.getElementById('k8s-resources');
     const userGreeting = document.getElementById('user-greeting');
     const logoutBtn = document.getElementById('logout-btn');
+    const catalogSearch = document.getElementById('catalog-search');
+    const tagFiltersEl = document.getElementById('tag-filters');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -39,121 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
 
-    // --- Section collapsible pour Kubernetes ---
-    if (k8sSectionToggle) {
-        k8sSectionToggle.addEventListener('click', () => {
-            k8sSectionToggle.classList.toggle('active');
-            k8sResources.classList.toggle('active');
-        });
-    }    // --- Initialiser les informations utilisateur ---
-    function initUserInfo() {
-        // Mettre à jour le message de bienvenue
-        userGreeting.textContent = `Bonjour, ${authManager.getUserDisplayName()}`;
-        
-        // Ajouter une icône selon le rôle
-        let roleIcon = '';
-        switch (authManager.getUserRole()) {
-            case 'admin':
-                roleIcon = '<i class="fas fa-user-shield"></i>';
-                break;
-            case 'teacher':
-                roleIcon = '<i class="fas fa-chalkboard-teacher"></i>';
-                break;
-            case 'student':
-                roleIcon = '<i class="fas fa-user-graduate"></i>';
-                break;
-            default:
-                roleIcon = '<i class="fas fa-user"></i>';
-        }
-        userGreeting.innerHTML += ` ${roleIcon}`;
-        
-        // Configurer le bouton de déconnexion
-        logoutBtn.addEventListener('click', async () => {
-            await authManager.logout();
-        });
-        
-        // Ajuster l'interface selon le rôle
-        if (authManager.isAdmin() || authManager.isTeacher()) {
-            // Afficher la section Kubernetes pour les admins et enseignants
-            document.querySelector('.collapsible-section').style.display = 'block';
-        } else {
-            // Masquer la section Kubernetes pour les étudiants
-            document.querySelector('.collapsible-section').style.display = 'none';
-        }
-    }
-
-    // --- Vérifie la connexion avec l'API ---
-    async function checkApiStatus() {
-        try {
-            const response = await fetch(`${API_V1}/status`);
-            if (response.ok) {
-                const data = await response.json();
-                apiStatusEl.textContent = `API v${data.version} connectée`;
-                apiStatusEl.classList.add('online');
-                apiStatusEl.classList.remove('offline');
-                return true;
-            } else {
-                throw new Error('Réponse API non OK');
-            }
-        } catch (error) {
-            console.error('Erreur de connexion à l\'API:', error);
-            apiStatusEl.textContent = 'API non disponible';
-            apiStatusEl.classList.add('offline');
-            apiStatusEl.classList.remove('online');
-            return false;
-        }
-    }
-
     // --- Fonctions de Rendu des listes K8s ---
-    async function fetchAndRenderNamespaces() {
-        const namespacesListEl = document.getElementById('namespaces-list');
-        
-        try {
-            const response = await fetch(`${API_V1}/k8s/namespaces`);
-            if (!response.ok) throw new Error('Erreur lors de la récupération des namespaces');
-            
-            const data = await response.json();
-            const namespaces = data.namespaces || [];
-            
-            // Filtre pour n'afficher que les namespaces LabOnDemand
-            const labNamespaces = namespaces.filter(ns => 
-                ns.startsWith('labondemand-') || ns === 'default'
-            );
-            
-            if (labNamespaces.length === 0) {
-                namespacesListEl.innerHTML = '<div class="no-items-message">Aucun namespace trouvé</div>';
-                return;
-            }
-            
-            const listItems = labNamespaces.map(ns => {
-                // Ajouter une icône spécifique selon le type de namespace
-                let icon = "fa-project-diagram";
-                let typeLabel = "";
-                
-                if (ns === "labondemand-jupyter") {
-                    icon = "fa-brands fa-python";
-                    typeLabel = '<span class="namespace-type jupyter">Jupyter</span>';
-                } else if (ns === "labondemand-vscode") {
-                    icon = "fa-solid fa-code";
-                    typeLabel = '<span class="namespace-type vscode">VSCode</span>';
-                } else if (ns === "labondemand-custom") {
-                    icon = "fa-solid fa-cube";
-                    typeLabel = '<span class="namespace-type custom">Custom</span>';
-                }
-                
-                return `
-                    <div class="list-group-item">
-                        <i class="fas ${icon}"></i> ${ns} ${typeLabel}
-                    </div>
-                `;
-            }).join('');
-            
-            namespacesListEl.innerHTML = `<div class="list-group">${listItems}</div>`;
-        } catch (error) {
-            console.error('Erreur:', error);
-            namespacesListEl.innerHTML = '<div class="error-message">Erreur lors du chargement des namespaces</div>';
-        }
-    }
 
     async function fetchAndRenderPods() {
         const podsListEl = document.getElementById('pods-list');
@@ -595,7 +483,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await resp.json();
             const templates = data.templates || [];
             const isElevated = authManager.isAdmin() || authManager.isTeacher();
-            // Filtrer pour les étudiants: uniquement jupyter et vscode
+            // Filtrer pour les étudiants: uniquement jupyter et vscode (côté UI, le backend filtre aussi via RuntimeConfig)
             const filteredTemplates = isElevated
                 ? templates
                 : templates.filter(t => {
@@ -604,38 +492,79 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             if (!serviceCatalog) return;
             if (filteredTemplates.length === 0) {
-                serviceCatalog.innerHTML = '<div class="no-items-message">Aucun template disponible</div>';
+                serviceCatalog.innerHTML = '<div class="no-items-message">Aucune application disponible</div>';
                 return;
             }
-            serviceCatalog.innerHTML = filteredTemplates.map(t => {
-                const rawIcon = (t.icon || '').trim();
-                const isFA = rawIcon.includes('fa-');
-                const faClass = isFA ? rawIcon : 'fa-solid fa-cube';
-                const iconHtml = isFA
-                    ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
-                    : (rawIcon
-                        ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${rawIcon}</span>`
-                        : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
 
-                const title = t.name || t.id;
-                const desc = t.description || '';
-                const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
-                return `
-                    <div class="card service-card" 
-                        data-service="${title}"
-                        data-icon="${rawIcon}"
-                        data-deployment-type="${deploymentType}"
-                        data-default-image="${t.default_image || ''}"
-                        data-default-port="${t.default_port || ''}"
-                        data-default-service-type="${t.default_service_type || 'NodePort'}">
-                        ${iconHtml}
-                        <h3>${title}</h3>
-                        <p>${desc}</p>
-                    </div>
-                `;
-            }).join('');
-            // Binder les nouvelles cartes
-            document.querySelectorAll('.service-card').forEach(bindServiceCard);
+            // Construire la liste de tags uniques à partir des templates
+            const tagSet = new Set();
+            filteredTemplates.forEach(t => (t.tags || []).forEach(tag => tagSet.add(tag)));
+            const allTags = Array.from(tagSet).sort();
+
+            // Rendu des filtres de tags
+            if (tagFiltersEl) {
+                tagFiltersEl.innerHTML = allTags.map(tag => `<span class="tag-chip" data-tag="${tag}"><i class="fas fa-tag"></i> ${tag}</span>`).join('');
+            }
+
+            // Fonction de rendu en appliquant recherche + tags actifs
+            function renderCatalog() {
+                const q = (catalogSearch?.value || '').toLowerCase();
+                const activeTags = Array.from(tagFiltersEl?.querySelectorAll('.tag-chip.active') || []).map(el => el.getAttribute('data-tag'));
+                const matches = filteredTemplates.filter(t => {
+                    const title = (t.name || t.id || '').toLowerCase();
+                    const desc = (t.description || '').toLowerCase();
+                    const textOk = !q || title.includes(q) || desc.includes(q);
+                    const tags = t.tags || [];
+                    const tagsOk = activeTags.length === 0 || activeTags.every(tag => tags.includes(tag));
+                    return textOk && tagsOk;
+                });
+
+                serviceCatalog.innerHTML = matches.map(t => {
+                    const rawIcon = (t.icon || '').trim();
+                    const isFA = rawIcon.includes('fa-');
+                    const faClass = isFA ? rawIcon : 'fa-solid fa-cube';
+                    const iconHtml = isFA
+                        ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
+                        : (rawIcon
+                            ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${rawIcon}</span>`
+                            : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
+                    const title = t.name || t.id;
+                    const desc = t.description || '';
+                    const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
+                    const tagsHtml = (t.tags || []).map(tag => `<span class="tag-chip" role="listitem">${tag}</span>`).join(' ');
+                    return `
+                        <div class="card service-card" 
+                            data-service="${title}"
+                            data-icon="${rawIcon}"
+                            data-deployment-type="${deploymentType}"
+                            data-default-image="${t.default_image || ''}"
+                            data-default-port="${t.default_port || ''}"
+                            data-default-service-type="${t.default_service_type || 'NodePort'}">
+                            ${iconHtml}
+                            <h3>${title}</h3>
+                            <p>${desc}</p>
+                            ${tagsHtml ? `<div class=\"card-tags\" role=\"list\">${tagsHtml}</div>` : ''}
+                        </div>
+                    `;
+                }).join('');
+                document.querySelectorAll('.service-card').forEach(bindServiceCard);
+            }
+
+            // Bind des filtres
+            if (tagFiltersEl) {
+                tagFiltersEl.addEventListener('click', (e) => {
+                    const chip = e.target.closest('.tag-chip');
+                    if (!chip) return;
+                    chip.classList.toggle('active');
+                    renderCatalog();
+                });
+            }
+            if (catalogSearch) {
+                catalogSearch.addEventListener('input', () => renderCatalog());
+            }
+
+            // Premier rendu
+            renderCatalog();
         } catch (e) {
             console.error(e);
             // Fallback minimal si l'API échoue
@@ -643,18 +572,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const isElevated = authManager.isAdmin() || authManager.isTeacher();
                 // Pour étudiants: proposer uniquement Jupyter et VS Code en fallback
                 serviceCatalog.innerHTML = isElevated ? `
-                    <div class="card service-card" data-service="Custom" data-icon="fa-solid fa-cube" data-deployment-type="custom">
-                        <i class="fas fa-cube service-icon"></i>
+                    <div class=\"card service-card\" data-service=\"Custom\" data-icon=\"fa-solid fa-cube\" data-deployment-type=\"custom\">
+                        <i class=\"fas fa-cube service-icon\"></i>
                         <h3>Personnalisé</h3>
                         <p>Déploiement d'image Docker personnalisée.</p>
                     </div>` : `
-                    <div class="card service-card" data-service="Jupyter Notebook" data-icon="fa-brands fa-python" data-deployment-type="jupyter" data-default-image="tutanka01/k8s:jupyter" data-default-port="8888" data-default-service-type="NodePort">
-                        <i class="fa-brands fa-python service-icon"></i>
+                    <div class=\"card service-card\" data-service=\"Jupyter Notebook\" data-icon=\"fa-brands fa-python\" data-deployment-type=\"jupyter\" data-default-image=\"tutanka01/k8s:jupyter\" data-default-port=\"8888\" data-default-service-type=\"NodePort\">
+                        <i class=\"fa-brands fa-python service-icon\"></i>
                         <h3>Jupyter Notebook</h3>
                         <p>Environnement interactif pour Python et data science.</p>
                     </div>
-                    <div class="card service-card" data-service="VS Code" data-icon="fa-solid fa-code" data-deployment-type="vscode" data-default-image="tutanka01/k8s:vscode" data-default-port="8080" data-default-service-type="NodePort">
-                        <i class="fa-solid fa-code service-icon"></i>
+                    <div class=\"card service-card\" data-service=\"VS Code\" data-icon=\"fa-solid fa-code\" data-deployment-type=\"vscode\" data-default-image=\"tutanka01/k8s:vscode\" data-default-port=\"8080\" data-default-service-type=\"NodePort\">
+                        <i class=\"fa-solid fa-code service-icon\"></i>
                         <h3>VS Code</h3>
                         <p>Éditeur de code accessible via le navigateur.</p>
                     </div>`;

@@ -84,6 +84,17 @@
             <button class="btn btn-secondary back-btn" data-target="dashboard-view"><i class="fas fa-arrow-left"></i> Retour</button>
             <h1><i class="fas fa-th-large"></i> Choisir une Application</h1>
             <p class="subtitle">Sélectionnez l'application que vous souhaitez lancer.</p>
+            <div class="catalog-toolbar card">
+                <div class="toolbar-row">
+                    <div class="search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="catalog-search" placeholder="Rechercher une application...">
+                    </div>
+                    <div class="tag-filters" id="tag-filters">
+                        <!-- Tags dynamiquement ajoutés -->
+                    </div>
+                </div>
+            </div>
             <div class="card-grid service-catalog" id="service-catalog">
                 <!-- Rempli dynamiquement depuis /api/v1/k8s/templates -->
             </div>

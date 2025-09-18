@@ -53,3 +53,22 @@ class Template(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# Modèle pour la configuration des runtimes (ex: vscode, jupyter)
+class RuntimeConfig(Base):
+    __tablename__ = "runtime_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(50), unique=True, index=True, nullable=False)  # ex: vscode, jupyter
+    default_image = Column(String(200), nullable=True)
+    target_port = Column(Integer, nullable=True)
+    default_service_type = Column(String(30), nullable=False, default="NodePort")
+    allowed_for_students = Column(Boolean, default=True)
+    min_cpu_request = Column(String(20), nullable=True)
+    min_memory_request = Column(String(20), nullable=True)
+    min_cpu_limit = Column(String(20), nullable=True)
+    min_memory_limit = Column(String(20), nullable=True)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

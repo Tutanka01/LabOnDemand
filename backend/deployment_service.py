@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy.orm import Session
 
-from .models import User, UserRole
+from .models import User, UserRole, RuntimeConfig
 from .k8s_utils import (
     validate_k8s_name, 
     validate_resource_format, 
@@ -32,12 +32,21 @@ class DeploymentService:
     def validate_permissions(self, user: User, deployment_type: str):
         """Valide les permissions selon le rôle utilisateur"""
         if user.role == UserRole.student:
-            allowed_types = ["jupyter", "vscode"]
-            if deployment_type not in allowed_types:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Les étudiants ne peuvent créer que des environnements Jupyter ou VS Code"
-                )
+            try:
+                from .database import SessionLocal
+                with SessionLocal() as db:
+                    rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
+                    if not rc or not rc.allowed_for_students:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Type non autorisé pour les étudiants"
+                        )
+            except HTTPException:
+                raise
+            except Exception:
+                # Fallback si DB inaccessible: limiter aux types historiques connus
+                if deployment_type not in {"jupyter", "vscode"}:
+                    raise HTTPException(status_code=403, detail="Type non autorisé pour les étudiants")
     
     def apply_deployment_config(
         self, 
@@ -54,7 +63,33 @@ class DeploymentService:
         """
         Applique la configuration selon le type de déploiement
         """
-        config = DeploymentConfig.get_config(deployment_type)
+        # 1) Chercher une RuntimeConfig en base
+        config_db = None
+        try:
+            # On ne possède pas de session ici; lecture best-effort via client Python K8s context
+            # => Passer par une requête naïve SQL n'est pas souhaitable; on utilisera le fallback si indisponible
+            # L'appelant (router) ne fournit pas de DB session ici. Pour garder KISS, on lit via ORM avec une Session locale si disponible.
+            # On évite l’overengineering; on se contente d’un get via SQLAlchemy SessionLocal si importable.
+            from .database import SessionLocal  # import local pour éviter cycle
+            with SessionLocal() as db:
+                config_db = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
+        except Exception:
+            config_db = None
+
+        # 2) Fallback statique si pas de config DB
+        config = {}
+        if config_db:
+            config = {
+                "image": config_db.default_image,
+                "target_port": config_db.target_port,
+                "service_type": config_db.default_service_type or service_type,
+                "min_cpu_request": config_db.min_cpu_request or cpu_request,
+                "min_memory_request": config_db.min_memory_request or memory_request,
+                "min_cpu_limit": config_db.min_cpu_limit or cpu_limit,
+                "min_memory_limit": config_db.min_memory_limit or memory_limit,
+            }
+        else:
+            config = DeploymentConfig.get_config(deployment_type)
         
         if config:
             # Appliquer les valeurs par défaut
@@ -77,7 +112,8 @@ class DeploymentService:
             "memory_limit": memory_limit,
             "service_target_port": service_target_port,
             "create_service": create_service,
-            "service_type": service_type
+            "service_type": service_type,
+            "has_runtime_config": bool(config_db)
         }
     
     def create_deployment_manifest(
@@ -249,10 +285,9 @@ class DeploymentService:
             service_type,
         )
 
-        # Auto-détermination des ports pour les runtimes connus (ignorer la saisie UI):
-        # - Pour vscode/jupyter, on cale le port d'accès sur le port de l'app (container)
-        # - Pour custom, on respecte les valeurs fournies
-        if deployment_type in {"vscode", "jupyter"}:
+        # Auto-détermination des ports pour les runtimes configurés (DB) ou connus (fallback):
+        # - Si has_runtime_config est vrai OU runtime est vscode/jupyter, alors service_port = target_port
+        if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter"}:
             service_port = config["service_target_port"]
 
         # Créer les labels

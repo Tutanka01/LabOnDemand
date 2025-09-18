@@ -7,7 +7,7 @@ from kubernetes import client
 from typing import List, Dict, Any, Optional
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
-from .models import User, UserRole, Template
+from .models import User, UserRole, Template, RuntimeConfig
 from .k8s_utils import validate_k8s_name
 from .deployment_service import deployment_service
 from .templates import get_deployment_templates, get_resource_presets_for_role
@@ -369,38 +369,110 @@ async def get_deployment_templates_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Récupérer les templates de déploiement actifs (DB), fallback sur defaults"""
-    templates = db.query(Template).filter(Template.active == True).all()
-    allowed_for_students = {"jupyter", "vscode"}
+    """Récupérer les templates actifs; pour les étudiants, filtrer via RuntimeConfig.allowed_for_students si dispo, sinon fallback jupyter/vscode."""
+    try:
+        templates = db.query(Template).filter(Template.active == True).all()
+        runtime_configs = db.query(RuntimeConfig).filter(RuntimeConfig.active == True).all()
+    except Exception:
+        templates = []
+        runtime_configs = []
+
+    # Déterminer l'ensemble des runtimes autorisés aux étudiants
+    allowed_set = set()
+    if runtime_configs:
+        for rc in runtime_configs:
+            if rc.allowed_for_students:
+                allowed_set.add(rc.key)
+    else:
+        # Fallback historique
+        allowed_set = {"jupyter", "vscode"}
+
+    def map_template(t: Template):
+        return {
+            "id": t.key,
+            "name": t.name,
+            "description": t.description,
+            "icon": t.icon,
+            "default_image": t.default_image,
+            "default_port": t.default_port,
+            "deployment_type": t.deployment_type,
+            "default_service_type": t.default_service_type,
+            "tags": [s for s in (t.tags or '').split(',') if s]
+        }
 
     if templates:
-        # Filtrer selon rôle
         if current_user.role == UserRole.student:
-            templates = [t for t in templates if (t.deployment_type in allowed_for_students or t.key in allowed_for_students)]
-
-        return {
-            "templates": [
-                {
-                    "id": t.key,
-                    "name": t.name,
-                    "description": t.description,
-                    "icon": t.icon,
-                    "default_image": t.default_image,
-                    "default_port": t.default_port,
-                    "deployment_type": t.deployment_type,
-                    "default_service_type": t.default_service_type,
-                    "tags": [s for s in (t.tags or '').split(',') if s]
-                }
-                for t in templates
-            ]
-        }
+            templates = [t for t in templates if (t.deployment_type in allowed_set or t.key in allowed_set)]
+        return {"templates": [map_template(t) for t in templates]}
 
     # Fallback: templates codés + filtrage selon rôle
     defaults = get_deployment_templates()
     if current_user.role == UserRole.student:
-        filtered = [tpl for tpl in defaults.get("templates", []) if tpl.get("deployment_type") in allowed_for_students or tpl.get("id") in allowed_for_students]
+        filtered = [tpl for tpl in defaults.get("templates", []) if tpl.get("deployment_type") in allowed_set or tpl.get("id") in allowed_set]
         return {"templates": filtered}
     return defaults
+
+
+# ============= RUNTIME CONFIGS (dynamiques en base) =============
+
+@router.get("/runtime-configs", response_model=List[schemas.RuntimeConfigResponse])
+async def list_runtime_configs(
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    rows = db.query(RuntimeConfig).order_by(RuntimeConfig.id.desc()).all()
+    return [schemas.RuntimeConfigResponse.model_validate(r) for r in rows]
+
+
+@router.post("/runtime-configs", response_model=schemas.RuntimeConfigResponse)
+async def create_runtime_config(
+    payload: schemas.RuntimeConfigCreate,
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    if db.query(RuntimeConfig).filter(RuntimeConfig.key == payload.key).first():
+        raise HTTPException(status_code=400, detail="Cette clé existe déjà")
+    rc = RuntimeConfig(**payload.model_dump())
+    db.add(rc)
+    db.commit()
+    db.refresh(rc)
+    return schemas.RuntimeConfigResponse.model_validate(rc)
+
+
+@router.put("/runtime-configs/{rc_id}", response_model=schemas.RuntimeConfigResponse)
+async def update_runtime_config(
+    rc_id: int,
+    payload: schemas.RuntimeConfigUpdate,
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    rc = db.query(RuntimeConfig).filter(RuntimeConfig.id == rc_id).first()
+    if not rc:
+        raise HTTPException(status_code=404, detail="Runtime config non trouvée")
+    updates = payload.model_dump(exclude_unset=True)
+    for k, v in updates.items():
+        setattr(rc, k, v)
+    db.commit()
+    db.refresh(rc)
+    return schemas.RuntimeConfigResponse.model_validate(rc)
+
+
+@router.delete("/runtime-configs/{rc_id}")
+async def delete_runtime_config(
+    rc_id: int,
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin),
+    db: Session = Depends(get_db)
+):
+    rc = db.query(RuntimeConfig).filter(RuntimeConfig.id == rc_id).first()
+    if not rc:
+        raise HTTPException(status_code=404, detail="Runtime config non trouvée")
+    db.delete(rc)
+    db.commit()
+    return {"message": "Runtime config supprimée"}
 
 
 @router.post("/templates", response_model=schemas.TemplateResponse)

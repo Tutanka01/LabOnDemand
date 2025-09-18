@@ -244,6 +244,52 @@ main {
     margin-top: 20px;
 }
 
+/* Toolbar catalogue */
+.catalog-toolbar {
+    margin-top: 10px;
+}
+.toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+.search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--grey-border);
+    border-radius: var(--border-radius);
+    padding: 8px 12px;
+    flex: 1;
+}
+.search-box input {
+    border: none;
+    outline: none;
+    width: 100%;
+    font-family: var(--font-main);
+    font-size: 1rem;
+}
+.tag-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--grey-border);
+    border-radius: 999px;
+    background-color: #fff;
+    cursor: pointer;
+    user-select: none;
+}
+.tag-chip.active {
+    background-color: var(--light-blue);
+    border-color: var(--labondemand-blue);
+}
+
 /* Service Catalog Cards */
 .service-card {
     text-align: center;
