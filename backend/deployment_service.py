@@ -16,7 +16,8 @@ from .k8s_utils import (
     ensure_namespace_exists,
     build_user_namespace,
     ensure_namespace_baseline,
-    max_resource
+    max_resource,
+    clamp_resources_for_role
 )
 from .templates import DeploymentConfig
 
@@ -301,6 +302,17 @@ class DeploymentService:
         if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter"}:
             service_port = config["service_target_port"]
 
+        # Plafonner selon le rôle (sécurité)
+        role_val = getattr(current_user.role, "value", str(current_user.role))
+        clamped = clamp_resources_for_role(
+            str(role_val),
+            config["cpu_request"],
+            config["cpu_limit"],
+            config["memory_request"],
+            config["memory_limit"],
+            replicas,
+        )
+
         # Créer les labels
         if additional_labels is None:
             additional_labels = {}
@@ -317,11 +329,11 @@ class DeploymentService:
             deployment_manifest = self.create_deployment_manifest(
                 name,
                 config["image"],
-                replicas,
-                config["cpu_request"],
-                config["cpu_limit"],
-                config["memory_request"],
-                config["memory_limit"],
+                clamped["replicas"],
+                clamped["cpu_request"],
+                clamped["cpu_limit"],
+                clamped["memory_request"],
+                clamped["memory_limit"],
                 config["service_target_port"],
                 labels,
             )
@@ -378,10 +390,10 @@ class DeploymentService:
                 "deployment_type": deployment_type,
                 "namespace": effective_namespace,
                 "resources": {
-                    "cpu_request": config["cpu_request"],
-                    "cpu_limit": config["cpu_limit"],
-                    "memory_request": config["memory_request"],
-                    "memory_limit": config["memory_limit"],
+                    "cpu_request": clamped["cpu_request"],
+                    "cpu_limit": clamped["cpu_limit"],
+                    "memory_request": clamped["memory_request"],
+                    "memory_limit": clamped["memory_limit"],
                 },
                 "service_info": {
                     "created": config["create_service"],
@@ -481,6 +493,11 @@ class DeploymentService:
             },
         }
 
+        # Déterminer les ressources selon rôle
+        role_val = getattr(current_user.role, "value", str(current_user.role))
+        db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
+        wp_res = clamp_resources_for_role(str(role_val), "250m", "1000m", "512Mi", "1Gi", 1)
+
         # Deployment DB (Bitnami MariaDB)
         dep_db_manifest = {
             "apiVersion": "apps/v1",
@@ -498,6 +515,10 @@ class DeploymentService:
                                 "image": "bitnami/mariadb:latest",
                                 "envFrom": [{"secretRef": {"name": secret_name}}],
                                 "ports": [{"containerPort": 3306}],
+                                "resources": {
+                                    "requests": {"cpu": db_res["cpu_request"], "memory": db_res["memory_request"]},
+                                    "limits": {"cpu": db_res["cpu_limit"], "memory": db_res["memory_limit"]},
+                                },
                                 "livenessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 30, "periodSeconds": 10},
                                 "readinessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 10, "periodSeconds": 5},
                                 "volumeMounts": [
@@ -550,6 +571,10 @@ class DeploymentService:
                                     {"secretRef": {"name": secret_name}}
                                 ],
                                 "ports": [{"containerPort": 8080}],
+                                "resources": {
+                                    "requests": {"cpu": wp_res["cpu_request"], "memory": wp_res["memory_request"]},
+                                    "limits": {"cpu": wp_res["cpu_limit"], "memory": wp_res["memory_limit"]},
+                                },
                                 "readinessProbe": {
                                     "httpGet": {"path": "/", "port": 8080},
                                     "initialDelaySeconds": 10,

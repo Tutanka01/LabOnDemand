@@ -259,3 +259,54 @@ def validate_resource_format(cpu_request: str, cpu_limit: str, memory_request: s
                 f"Format memory {mem_type} invalide: {mem_val}. "
                 f"Utilisez un nombre suivi d'une unité (Mi, Gi, etc.)."
             )
+
+
+def clamp_resources_for_role(role: str, cpu_request: str, cpu_limit: str, memory_request: str, memory_limit: str, replicas: int) -> Dict[str, Any]:
+    """Applique des plafonds stricts selon le rôle.
+    Retourne les valeurs corrigées: cpu_request, cpu_limit, memory_request, memory_limit, replicas.
+    """
+    # Bornes maximales par rôle (sécuritaires; cohérentes avec ensure_namespace_baseline)
+    if role == "student":
+        max_cpu_req = "500m"
+        max_cpu_lim = "1000m"
+        max_mem_req = "512Mi"
+        max_mem_lim = "1Gi"
+        max_replicas = 1
+    elif role == "teacher":
+        max_cpu_req = "1000m"
+        max_cpu_lim = "2000m"
+        max_mem_req = "1Gi"
+        max_mem_lim = "2Gi"
+        max_replicas = 2
+    else:  # admin
+        max_cpu_req = "2000m"
+        max_cpu_lim = "4000m"
+        max_mem_req = "2Gi"
+        max_mem_lim = "4Gi"
+        max_replicas = 5
+
+    def min_resource(a: str, b: str) -> str:
+        # retourne la plus petite des deux (pour plafonner)
+        is_mem = any(u in a for u in ['Ki', 'Mi', 'Gi', 'Ti']) or any(u in b for u in ['Ki', 'Mi', 'Gi', 'Ti'])
+        if is_mem:
+            va = parse_memory_to_mi(a)
+            vb = parse_memory_to_mi(b)
+            return a if va < vb else b
+        else:
+            va = parse_cpu_to_millicores(a)
+            vb = parse_cpu_to_millicores(b)
+            return a if va < vb else b
+
+    cpu_request = min_resource(cpu_request, max_cpu_req)
+    cpu_limit = min_resource(cpu_limit, max_cpu_lim)
+    memory_request = min_resource(memory_request, max_mem_req)
+    memory_limit = min_resource(memory_limit, max_mem_lim)
+    replicas = min(replicas, max_replicas)
+
+    return {
+        "cpu_request": cpu_request,
+        "cpu_limit": cpu_limit,
+        "memory_request": memory_request,
+        "memory_limit": memory_limit,
+        "replicas": replicas,
+    }

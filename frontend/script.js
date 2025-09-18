@@ -672,6 +672,68 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             showView('config-view');
 
+            // Appliquer la politique ressources par rôle (UI):
+            const cpuSelect = document.getElementById('cpu');
+            const ramSelect = document.getElementById('ram');
+            const replicasInput = document.getElementById('deployment-replicas');
+            const isStudent = authManager.isStudent();
+            const isTeacher = authManager.isTeacher();
+            const isAdmin = authManager.isAdmin();
+
+            // Ajouter/mettre à jour une note de politique sous les champs
+            function ensurePolicyNote(targetEl, text) {
+                if (!targetEl) return;
+                const group = targetEl.closest('.form-group');
+                if (!group) return;
+                let note = group.querySelector('.policy-note');
+                if (!note) {
+                    note = document.createElement('small');
+                    note.className = 'policy-note';
+                    group.appendChild(note);
+                }
+                note.textContent = text;
+            }
+
+            if (isStudent) {
+                // Étudiants: pas de choix CPU/RAM ni de replicas; valeurs imposées et clamp backend
+                if (cpuSelect) {
+                    cpuSelect.value = 'medium';
+                    cpuSelect.disabled = true;
+                    ensurePolicyNote(cpuSelect, 'Les ressources sont fixées par la politique étudiante.');
+                    cpuSelect.title = 'Ressources fixées par la politique';
+                }
+                if (ramSelect) {
+                    ramSelect.value = 'medium';
+                    ramSelect.disabled = true;
+                    ensurePolicyNote(ramSelect, 'Les ressources sont fixées par la politique étudiante.');
+                    ramSelect.title = 'Ressources fixées par la politique';
+                }
+                if (replicasInput) {
+                    replicasInput.value = 1;
+                    replicasInput.disabled = true;
+                    ensurePolicyNote(replicasInput, 'Un seul replica autorisé pour les étudiants.');
+                    replicasInput.title = 'Limité à 1';
+                }
+            } else {
+                // Enseignants/Admins: choix permis, avec maxima indiqués
+                if (cpuSelect) cpuSelect.disabled = false;
+                if (ramSelect) ramSelect.disabled = false;
+                if (replicasInput) {
+                    replicasInput.disabled = false;
+                    if (isTeacher) {
+                        replicasInput.max = 2;
+                        ensurePolicyNote(replicasInput, 'Jusqu’à 2 réplicas autorisés pour les enseignants.');
+                        replicasInput.title = 'Max 2';
+                        if (parseInt(replicasInput.value || '1', 10) > 2) replicasInput.value = 2;
+                    } else if (isAdmin) {
+                        replicasInput.max = 5;
+                        ensurePolicyNote(replicasInput, 'Jusqu’à 5 réplicas autorisés pour les administrateurs.');
+                        replicasInput.title = 'Max 5';
+                        if (parseInt(replicasInput.value || '1', 10) > 5) replicasInput.value = 5;
+                    }
+                }
+            }
+
             // Toggle options réseau avancées
             const advToggle = document.getElementById('advanced-options-toggle');
             const svcOptions = document.getElementById('service-options');
