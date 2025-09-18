@@ -41,6 +41,101 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
 
+    // --- UI: Toggle section Kubernetes ---
+    if (k8sSectionToggle && k8sResources) {
+        k8sSectionToggle.addEventListener('click', () => {
+            k8sSectionToggle.classList.toggle('active');
+            k8sResources.classList.toggle('active');
+        });
+    }
+
+    // --- Auth UI: infos utilisateur + bouton logout ---
+    function initUserInfo() {
+        // Message de bienvenue
+        if (userGreeting) {
+            const name = authManager.getUserDisplayName();
+            let roleIcon = '<i class="fas fa-user"></i>';
+            const role = authManager.getUserRole();
+            if (role === 'admin') roleIcon = '<i class="fas fa-user-shield"></i>';
+            else if (role === 'teacher') roleIcon = '<i class="fas fa-chalkboard-teacher"></i>';
+            else if (role === 'student') roleIcon = '<i class="fas fa-user-graduate"></i>';
+
+            userGreeting.innerHTML = `Bonjour, ${name} ${roleIcon}`;
+        }
+
+        // Déconnexion
+        if (logoutBtn) {
+            // éviter de dupliquer les listeners si le script est rechargé
+            logoutBtn.onclick = async () => {
+                await authManager.logout();
+            };
+        }
+
+        // Adapter l'UI selon le rôle: masquer la section K8s pour les étudiants
+        const k8sSection = document.querySelector('.collapsible-section');
+        if (k8sSection) {
+            if (authManager.isAdmin() || authManager.isTeacher()) {
+                k8sSection.style.display = 'block';
+            } else {
+                k8sSection.style.display = 'none';
+            }
+        }
+    }
+
+    // --- API: statut ---
+    async function checkApiStatus() {
+        try {
+            const resp = await fetch(`${API_V1}/status`);
+            if (!resp.ok) throw new Error('Statut API non OK');
+            const data = await resp.json();
+            if (apiStatusEl) {
+                apiStatusEl.textContent = `API v${data.version} connectée`;
+                apiStatusEl.classList.add('online');
+                apiStatusEl.classList.remove('offline');
+            }
+            return true;
+        } catch (err) {
+            console.error("Erreur de connexion à l'API:", err);
+            if (apiStatusEl) {
+                apiStatusEl.textContent = 'API non disponible';
+                apiStatusEl.classList.add('offline');
+                apiStatusEl.classList.remove('online');
+            }
+            return false;
+        }
+    }
+
+    // --- Rendu des namespaces (admin/teacher) ---
+    async function fetchAndRenderNamespaces() {
+        const listEl = document.getElementById('namespaces-list');
+        if (!listEl) return;
+        try {
+            const resp = await fetch(`${API_V1}/k8s/namespaces`);
+            if (!resp.ok) throw new Error('Erreur lors de la récupération des namespaces');
+            const data = await resp.json();
+            const namespaces = (data.namespaces || []).filter(ns => ns.startsWith('labondemand-') || ns === 'default');
+            if (namespaces.length === 0) {
+                listEl.innerHTML = '<div class="no-items-message">Aucun namespace trouvé</div>';
+                return;
+            }
+            const html = `
+                <div class="list-group">
+                    ${namespaces.map(ns => {
+                        let icon = 'fa-project-diagram';
+                        let badge = '';
+                        if (ns.includes('jupyter')) { icon = 'fa-brands fa-python'; badge = '<span class="namespace-type jupyter">Jupyter</span>'; }
+                        else if (ns.includes('vscode')) { icon = 'fa-solid fa-code'; badge = '<span class="namespace-type vscode">VSCode</span>'; }
+                        else if (ns.includes('custom')) { icon = 'fa-solid fa-cube'; badge = '<span class="namespace-type custom">Custom</span>'; }
+                        return `<div class="list-group-item"><i class="fas ${icon}"></i> ${ns} ${badge}</div>`;
+                    }).join('')}
+                </div>`;
+            listEl.innerHTML = html;
+        } catch (e) {
+            console.error(e);
+            listEl.innerHTML = '<div class="error-message">Erreur lors du chargement des namespaces</div>';
+        }
+    }
+
     // --- Fonctions de Rendu des listes K8s ---
 
     async function fetchAndRenderPods() {
