@@ -16,6 +16,7 @@ from .config import settings
 from sqlalchemy.orm import Session
 from .database import get_db
 from . import schemas
+import base64
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
@@ -206,8 +207,23 @@ async def get_deployment_details(
         apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
         
-        # Récupérer le déploiement
-        deployment = apps_v1.read_namespaced_deployment(name, namespace)
+        # Récupérer le déploiement, avec fallback stack (stack-name)
+        try:
+            deployment = apps_v1.read_namespaced_deployment(name, namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                # Chercher un composant de la stack (priorité wordpress)
+                label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
+                lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+                if not lst.items:
+                    raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+                # Choisir de préférence le composant wordpress sinon le premier
+                wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
+                deployment = wp[0] if wp else lst.items[0]
+                # Pour continuer les sélecteurs/pods/services, utiliser son nom
+                name = deployment.metadata.name
+            else:
+                raise
         # Enforcer l'isolation: un étudiant ne peut voir que ses propres déploiements
         if current_user.role == UserRole.student:
             labels = deployment.metadata.labels or {}
@@ -326,6 +342,109 @@ async def get_deployment_details(
             "access_urls": access_urls
         }
         
+    except Exception as e:
+        _raise_k8s_http(e)
+
+# ============= ENDPOINT CREDENTIALS (SECRETS) =============
+
+@router.get("/deployments/{namespace}/{name}/credentials")
+async def get_deployment_credentials(
+    namespace: str,
+    name: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Récupère les identifiants (secrets) associés à un déploiement LabOnDemand.
+    - Autorisé pour: propriétaire (user-id sur labels) ou rôles admin/teacher.
+    - Spécifique WordPress: renvoie wordpress + database creds.
+    """
+    namespace = validate_k8s_name(namespace)
+    name = validate_k8s_name(name)
+
+    try:
+        apps_v1 = client.AppsV1Api()
+        core_v1 = client.CoreV1Api()
+
+        # Vérifier le déploiement et les droits (avec fallback stack)
+        try:
+            deployment = apps_v1.read_namespaced_deployment(name, namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
+                lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+                if not lst.items:
+                    raise HTTPException(status_code=404, detail="Application introuvable pour récupérer les identifiants")
+                wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
+                deployment = wp[0] if wp else lst.items[0]
+                name = deployment.metadata.name
+            else:
+                raise
+        labels = deployment.metadata.labels or {}
+        owner_id = labels.get("user-id")
+        app_type = labels.get("app-type", "custom")
+
+        if current_user.role == UserRole.student and owner_id != str(current_user.id):
+            raise HTTPException(status_code=403, detail="Accès refusé à ces identifiants")
+
+        # Rechercher le secret par label stack-name=name ou fallback {name}-secret
+        selector = f"managed-by=labondemand,stack-name={name}"
+        secrets_list = core_v1.list_namespaced_secret(namespace, label_selector=selector)
+        secret_obj = None
+        if secrets_list.items:
+            secret_obj = secrets_list.items[0]
+        else:
+            # Fallback par nom conventionnel
+            secret_name = f"{name}-secret"
+            try:
+                secret_obj = core_v1.read_namespaced_secret(secret_name, namespace)
+            except client.exceptions.ApiException as e:
+                if e.status == 404:
+                    raise HTTPException(status_code=404, detail="Aucun identifiant trouvé pour cette application")
+                raise
+
+        data = secret_obj.data or {}
+        # Helper pour décoder une clé si présente
+        def dec(key: str) -> Optional[str]:
+            val = data.get(key)
+            if not val:
+                return None
+            try:
+                return base64.b64decode(val).decode("utf-8")
+            except Exception:
+                return None
+
+        # Construire la réponse selon le type
+        if app_type == "wordpress":
+            wp_user = dec("WORDPRESS_USERNAME")
+            wp_pass = dec("WORDPRESS_PASSWORD")
+            wp_email = dec("WORDPRESS_EMAIL")
+
+            db_user = dec("MARIADB_USER") or dec("WORDPRESS_DATABASE_USER")
+            db_pass = dec("MARIADB_PASSWORD") or dec("WORDPRESS_DATABASE_PASSWORD")
+            db_name = dec("MARIADB_DATABASE") or dec("WORDPRESS_DATABASE_NAME")
+            # Host/port conventionnels pour la stack
+            db_host = f"{name}-mariadb-service"
+            db_port = 3306
+
+            return {
+                "type": "wordpress",
+                "wordpress": {
+                    "username": wp_user,
+                    "password": wp_pass,
+                    "email": wp_email,
+                },
+                "database": {
+                    "host": db_host,
+                    "port": db_port,
+                    "username": db_user,
+                    "password": db_pass,
+                    "database": db_name,
+                },
+            }
+
+        # Par défaut: retourner toutes les paires décodées disponibles
+        decoded = {k: dec(k) for k in data.keys()}
+        return {"type": app_type, "secrets": decoded}
+
     except Exception as e:
         _raise_k8s_http(e)
 

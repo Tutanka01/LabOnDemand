@@ -522,6 +522,61 @@ small {
     margin-bottom: 15px;
 }
 
+
+    /* Onglets dans la modale de détails */
+    .details-tabs {
+        display: flex;
+        gap: 8px;
+        margin: 10px 0 16px;
+    }
+    .details-tabs .tab-btn {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    .details-tabs .tab-btn.active {
+        background: var(--primary-color);
+        color: #fff;
+        border-color: var(--primary-color);
+    }
+    .tab-content { margin-top: 6px; }
+
+    /* Options / Credentials UI */
+    .options-panel {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 16px;
+    }
+    .options-panel .muted { color: var(--muted-text); font-size: 0.95em; }
+    .credentials-container { margin-top: 12px; }
+    .credentials-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+    }
+    .cred-card {
+        background: var(--bg-color);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+    }
+    .cred-card h5 { margin: 0 0 8px; font-size: 1rem; }
+    .cred-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 8px; margin: 6px 0; }
+    .cred-row span { color: var(--muted-text); }
+    .cred-row code { background: #0f172a; color: #e2e8f0; padding: 3px 6px; border-radius: 4px; display: inline-block; }
+    .copy-btn {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 6px 10px;
+        cursor: pointer;
+    }
+    .copy-btn.copied { background: #10b981; color: #fff; border-color: #10b981; }
 /* Tables pour les ressources K8s */
 .k8s-table {
     width: 100%;

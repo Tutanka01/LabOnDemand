@@ -385,11 +385,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 accessUrlsHtml = `<p>Aucune URL d'accès disponible pour ce déploiement.</p>`;
             }
             
-            // Construire le HTML des détails du déploiement
+            // Construire le HTML des détails du déploiement avec un onglet Options
             modalContent.innerHTML = `
                 <h3>Application: ${data.deployment.name}</h3>
                 <div class="deployment-details">
-                    <div class="deployment-info">                        <h4>Informations générales</h4>
+                    <div class="deployment-info">
+                        <div class="details-tabs">
+                            <button class="tab-btn active" data-tab="infos"><i class="fas fa-info-circle"></i> Infos</button>
+                            <button class="tab-btn" data-tab="options"><i class="fas fa-sliders-h"></i> Options</button>
+                        </div>
+                        <div class="tab-content" id="tab-infos">
+                        <h4>Informations générales</h4>
                         <ul>
                             <li><strong>Namespace:</strong> ${data.deployment.namespace}</li>
                             <li><strong>Image:</strong> ${data.deployment.image || 'N/A'}</li>
@@ -412,6 +418,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <span class="app-availability-text">L'application est en cours d'initialisation</span>
                             </div>
                         `}
+                        </div>
+                        <div class="tab-content" id="tab-options" style="display:none;">
+                            <div class="options-panel">
+                                <h4><i class="fas fa-key"></i> Identifiants & paramètres</h4>
+                                <p class="muted">Retrouvez ici les identifiants générés pour votre application. Ne partagez pas ces informations.</p>
+                                <div id="credentials-container" class="credentials-container">
+                                    <button class="btn btn-secondary" id="load-credentials">
+                                        <i class="fas fa-unlock"></i> Afficher les identifiants
+                                    </button>
+                                    <div id="credentials-content" class="credentials-content" style="display:none;"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="access-section">
@@ -479,6 +498,59 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </div>
             `;
+
+            // Gestion des tabs
+            const tabBtns = modalContent.querySelectorAll('.tab-btn');
+            const tabInfos = modalContent.querySelector('#tab-infos');
+            const tabOptions = modalContent.querySelector('#tab-options');
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const t = btn.dataset.tab;
+                    tabInfos.style.display = (t === 'infos') ? 'block' : 'none';
+                    tabOptions.style.display = (t === 'options') ? 'block' : 'none';
+                });
+            });
+
+            // Bouton pour charger les credentials
+            const loadBtn = modalContent.querySelector('#load-credentials');
+            const credContent = modalContent.querySelector('#credentials-content');
+            if (loadBtn) {
+                loadBtn.addEventListener('click', async () => {
+                    loadBtn.disabled = true;
+                    loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Chargement...';
+                    try {
+                        const r = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/credentials`);
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            throw new Error(err.detail || 'Impossible de récupérer les identifiants');
+                        }
+                        const creds = await r.json();
+                        credContent.style.display = 'block';
+                        credContent.innerHTML = renderCredentials(creds);
+                        // Bind boutons copier
+                        credContent.querySelectorAll('.copy-btn').forEach(btn => {
+                            btn.addEventListener('click', () => {
+                                const target = btn.getAttribute('data-target');
+                                const el = credContent.querySelector(`#${target}`);
+                                if (el) {
+                                    navigator.clipboard.writeText(el.textContent || '').then(() => {
+                                        btn.classList.add('copied');
+                                        setTimeout(() => btn.classList.remove('copied'), 1000);
+                                    });
+                                }
+                            });
+                        });
+                    } catch (e) {
+                        credContent.style.display = 'block';
+                        credContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${e.message}</div>`;
+                    } finally {
+                        loadBtn.disabled = false;
+                        loadBtn.innerHTML = '<i class="fas fa-unlock"></i> Afficher les identifiants';
+                    }
+                });
+            }
         } catch (error) {
             console.error('Erreur:', error);
             modalContent.innerHTML = `
@@ -488,6 +560,44 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
             `;
         }
+    }
+
+    // Rendu HTML des credentials
+    function renderCredentials(creds) {
+        if (!creds) return '<p class="muted">Aucun identifiant disponible.</p>';
+        if (creds.type === 'wordpress') {
+            return `
+                <div class="credentials-grid">
+                    <div class="cred-card">
+                        <h5><i class="fab fa-wordpress"></i> Admin WordPress</h5>
+                        <div class="cred-row"><span>Utilisateur</span><code id="wp-user">${creds.wordpress?.username || ''}</code><button class="copy-btn" data-target="wp-user"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Mot de passe</span><code id="wp-pass">${creds.wordpress?.password || ''}</code><button class="copy-btn" data-target="wp-pass"><i class="fas fa-copy"></i></button></div>
+                        ${creds.wordpress?.email ? `<div class="cred-row"><span>Email</span><code id="wp-mail">${creds.wordpress.email}</code><button class="copy-btn" data-target="wp-mail"><i class="fas fa-copy"></i></button></div>` : ''}
+                    </div>
+                    <div class="cred-card">
+                        <h5><i class="fas fa-database"></i> Base de données</h5>
+                        <div class="cred-row"><span>Hôte</span><code id="db-host">${creds.database?.host || ''}</code><button class="copy-btn" data-target="db-host"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Port</span><code id="db-port">${creds.database?.port || ''}</code><button class="copy-btn" data-target="db-port"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Utilisateur</span><code id="db-user">${creds.database?.username || ''}</code><button class="copy-btn" data-target="db-user"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Mot de passe</span><code id="db-pass">${creds.database?.password || ''}</code><button class="copy-btn" data-target="db-pass"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Base</span><code id="db-name">${creds.database?.database || ''}</code><button class="copy-btn" data-target="db-name"><i class="fas fa-copy"></i></button></div>
+                    </div>
+                </div>
+            `;
+        }
+        // Générique
+        const entries = Object.entries(creds.secrets || {});
+        if (!entries.length) return '<p class="muted">Aucun identifiant trouvé.</p>';
+        return `
+            <div class="credentials-grid">
+                ${entries.map(([k,v],i)=>`
+                    <div class="cred-card">
+                        <h5><i class="fas fa-key"></i> ${k}</h5>
+                        <div class="cred-row"><span>Valeur</span><code id="gen-${i}">${v || ''}</code><button class="copy-btn" data-target="gen-${i}"><i class="fas fa-copy"></i></button></div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 
     // --- Navigation ---
