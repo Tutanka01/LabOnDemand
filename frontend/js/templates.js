@@ -17,15 +17,36 @@
   const imageEl = document.getElementById('tpl-image');
   const portEl = document.getElementById('tpl-port');
   const svcTypeEl = document.getElementById('tpl-service-type');
+  const tagsEl = document.getElementById('tpl-tags');
   const activeEl = document.getElementById('tpl-active');
 
   if (!listEl || !addBtn) return; // ne pas exécuter si pas sur la page
+
+  async function populateRuntimes() {
+    try {
+      const resp = await fetch('/api/v1/k8s/runtime-configs', { credentials: 'include' });
+      const ct = resp.headers.get('content-type') || '';
+      const rows = ct.includes('application/json') ? await resp.json() : [];
+      if (Array.isArray(rows)) {
+        const opts = [
+          '<option value="custom">Custom</option>',
+          ...rows.filter(rc => rc.active).map(rc => `<option value="${rc.key}">${rc.key}</option>`)
+        ];
+        typeEl.innerHTML = opts.join('');
+      }
+    } catch (e) {
+      // ignorer: laisser les options statiques si l'appel échoue
+    }
+  }
 
   function openModal(editing = false, data = null) {
     titleEl.innerHTML = editing ? '<i class="fas fa-pen"></i> Modifier le template' : '<i class="fas fa-th-large"></i> Nouveau template';
     form.reset();
     idEl.value = '';
     keyEl.disabled = editing; // clé non modifiable en édition
+
+    // Peupler dynamiquement les runtimes disponibles à chaque ouverture
+    populateRuntimes();
 
     if (editing && data) {
       idEl.value = data.id;
@@ -37,6 +58,7 @@
       imageEl.value = data.default_image || '';
       portEl.value = data.default_port || '';
       svcTypeEl.value = data.default_service_type || 'NodePort';
+      if (tagsEl) tagsEl.value = Array.isArray(data.tags) ? data.tags.join(', ') : '';
       activeEl.checked = !!data.active;
     }
 
@@ -66,7 +88,7 @@
         <table class="users-table">
           <thead>
             <tr>
-              <th>ID</th><th>Clé</th><th>Nom</th><th>Type</th><th>Image</th><th>Port</th><th>Service</th><th>Actif</th><th>Actions</th>
+              <th>ID</th><th>Clé</th><th>Nom</th><th>Runtime</th><th>Image</th><th>Port</th><th>Accès</th><th>Tags</th><th>Actif</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -79,6 +101,7 @@
                 <td>${t.default_image || '-'}</td>
                 <td>${t.default_port ?? '-'}</td>
                 <td>${t.default_service_type || '-'}</td>
+                <td>${Array.isArray(t.tags) && t.tags.length ? t.tags.join(', ') : '-'}</td>
                 <td><span class="status-badge ${t.active ? 'active' : 'inactive'}">${t.active ? 'Actif' : 'Inactif'}</span></td>
                 <td class="action-icons">
                   <button class="edit-tpl" data-id="${t.id}"><i class="fas fa-edit"></i></button>
@@ -100,7 +123,8 @@
           default_image: row[4].textContent === '-' ? '' : row[4].textContent,
           default_port: row[5].textContent === '-' ? '' : parseInt(row[5].textContent),
           default_service_type: row[6].textContent,
-          active: row[7].querySelector('.status-badge').classList.contains('active')
+          tags: row[7].textContent === '-' ? [] : row[7].textContent.split(',').map(s => s.trim()),
+          active: row[8].querySelector('.status-badge').classList.contains('active')
         };
         openModal(true, current);
       }));
@@ -139,6 +163,7 @@
       default_image: imageEl.value.trim() || null,
       default_port: portEl.value ? parseInt(portEl.value, 10) : null,
       default_service_type: svcTypeEl.value,
+      tags: tagsEl && tagsEl.value ? tagsEl.value.split(',').map(s => s.trim()).filter(Boolean) : [],
       active: activeEl.checked
     };
 

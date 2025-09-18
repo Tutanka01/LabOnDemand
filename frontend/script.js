@@ -29,6 +29,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const k8sResources = document.getElementById('k8s-resources');
     const userGreeting = document.getElementById('user-greeting');
     const logoutBtn = document.getElementById('logout-btn');
+    const catalogSearch = document.getElementById('catalog-search');
+    const tagFiltersEl = document.getElementById('tag-filters');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -39,121 +41,110 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
 
-    // --- Section collapsible pour Kubernetes ---
-    if (k8sSectionToggle) {
+    // --- UI: Toggle section Kubernetes ---
+    if (k8sSectionToggle && k8sResources) {
         k8sSectionToggle.addEventListener('click', () => {
             k8sSectionToggle.classList.toggle('active');
             k8sResources.classList.toggle('active');
         });
-    }    // --- Initialiser les informations utilisateur ---
+    }
+
+    // --- Auth UI: infos utilisateur + bouton logout ---
     function initUserInfo() {
-        // Mettre à jour le message de bienvenue
-        userGreeting.textContent = `Bonjour, ${authManager.getUserDisplayName()}`;
-        
-        // Ajouter une icône selon le rôle
-        let roleIcon = '';
-        switch (authManager.getUserRole()) {
-            case 'admin':
-                roleIcon = '<i class="fas fa-user-shield"></i>';
-                break;
-            case 'teacher':
-                roleIcon = '<i class="fas fa-chalkboard-teacher"></i>';
-                break;
-            case 'student':
-                roleIcon = '<i class="fas fa-user-graduate"></i>';
-                break;
-            default:
-                roleIcon = '<i class="fas fa-user"></i>';
+        // Message de bienvenue
+        if (userGreeting) {
+            const name = authManager.getUserDisplayName();
+            let roleIcon = '<i class="fas fa-user"></i>';
+            const role = authManager.getUserRole();
+            if (role === 'admin') roleIcon = '<i class="fas fa-user-shield"></i>';
+            else if (role === 'teacher') roleIcon = '<i class="fas fa-chalkboard-teacher"></i>';
+            else if (role === 'student') roleIcon = '<i class="fas fa-user-graduate"></i>';
+
+            userGreeting.innerHTML = `Bonjour, ${name} ${roleIcon}`;
         }
-        userGreeting.innerHTML += ` ${roleIcon}`;
-        
-        // Configurer le bouton de déconnexion
-        logoutBtn.addEventListener('click', async () => {
-            await authManager.logout();
-        });
-        
-        // Ajuster l'interface selon le rôle
-        if (authManager.isAdmin() || authManager.isTeacher()) {
-            // Afficher la section Kubernetes pour les admins et enseignants
-            document.querySelector('.collapsible-section').style.display = 'block';
-        } else {
-            // Masquer la section Kubernetes pour les étudiants
-            document.querySelector('.collapsible-section').style.display = 'none';
+
+        // Déconnexion
+        if (logoutBtn) {
+            // éviter de dupliquer les listeners si le script est rechargé
+            logoutBtn.onclick = async () => {
+                await authManager.logout();
+            };
+        }
+
+        // Adapter l'UI selon le rôle: masquer la section K8s pour les étudiants
+        const k8sSection = document.querySelector('.collapsible-section');
+        if (k8sSection) {
+            if (authManager.isAdmin() || authManager.isTeacher()) {
+                k8sSection.style.display = 'block';
+            } else {
+                k8sSection.style.display = 'none';
+            }
         }
     }
 
-    // --- Vérifie la connexion avec l'API ---
+    // --- API: statut ---
     async function checkApiStatus() {
         try {
-            const response = await fetch(`${API_V1}/status`);
-            if (response.ok) {
-                const data = await response.json();
+            const resp = await fetch(`${API_V1}/status`);
+            if (!resp.ok) throw new Error('Statut API non OK');
+            const data = await resp.json();
+            if (apiStatusEl) {
                 apiStatusEl.textContent = `API v${data.version} connectée`;
                 apiStatusEl.classList.add('online');
                 apiStatusEl.classList.remove('offline');
-                return true;
-            } else {
-                throw new Error('Réponse API non OK');
             }
-        } catch (error) {
-            console.error('Erreur de connexion à l\'API:', error);
-            apiStatusEl.textContent = 'API non disponible';
-            apiStatusEl.classList.add('offline');
-            apiStatusEl.classList.remove('online');
-            return false;
+            // Ping rapide de l'API Kubernetes pour savoir si on peut afficher la section K8s
+            try {
+                const ping = await fetch(`${API_V1}/k8s/ping`);
+                if (!ping.ok) throw new Error('K8s KO');
+                return { api: true, k8s: true };
+            } catch (e) {
+                console.warn('Kubernetes indisponible:', e.message || e);
+                return { api: true, k8s: false };
+            }
+        } catch (err) {
+            console.error("Erreur de connexion à l'API:", err);
+            if (apiStatusEl) {
+                apiStatusEl.textContent = 'API non disponible';
+                apiStatusEl.classList.add('offline');
+                apiStatusEl.classList.remove('online');
+            }
+            return { api: false, k8s: false };
+        }
+    }
+
+    // --- Rendu des namespaces (admin/teacher) ---
+    async function fetchAndRenderNamespaces() {
+        const listEl = document.getElementById('namespaces-list');
+        if (!listEl) return;
+        try {
+            const resp = await fetch(`${API_V1}/k8s/namespaces`);
+            if (!resp.ok) throw new Error('Erreur lors de la récupération des namespaces');
+            const data = await resp.json();
+            const namespaces = (data.namespaces || []).filter(ns => ns.startsWith('labondemand-') || ns === 'default');
+            if (namespaces.length === 0) {
+                listEl.innerHTML = '<div class="no-items-message">Aucun namespace trouvé</div>';
+                return;
+            }
+            const html = `
+                <div class="list-group">
+                    ${namespaces.map(ns => {
+                        let icon = 'fa-project-diagram';
+                        let badge = '';
+                        if (ns.includes('jupyter')) { icon = 'fa-brands fa-python'; badge = '<span class="namespace-type jupyter">Jupyter</span>'; }
+                        else if (ns.includes('vscode')) { icon = 'fa-solid fa-code'; badge = '<span class="namespace-type vscode">VSCode</span>'; }
+                        else if (ns.includes('custom')) { icon = 'fa-solid fa-cube'; badge = '<span class="namespace-type custom">Custom</span>'; }
+                        return `<div class="list-group-item"><i class="fas ${icon}"></i> ${ns} ${badge}</div>`;
+                    }).join('')}
+                </div>`;
+            listEl.innerHTML = html;
+        } catch (e) {
+            console.error(e);
+            listEl.innerHTML = '<div class="error-message">Erreur lors du chargement des namespaces</div>';
         }
     }
 
     // --- Fonctions de Rendu des listes K8s ---
-    async function fetchAndRenderNamespaces() {
-        const namespacesListEl = document.getElementById('namespaces-list');
-        
-        try {
-            const response = await fetch(`${API_V1}/k8s/namespaces`);
-            if (!response.ok) throw new Error('Erreur lors de la récupération des namespaces');
-            
-            const data = await response.json();
-            const namespaces = data.namespaces || [];
-            
-            // Filtre pour n'afficher que les namespaces LabOnDemand
-            const labNamespaces = namespaces.filter(ns => 
-                ns.startsWith('labondemand-') || ns === 'default'
-            );
-            
-            if (labNamespaces.length === 0) {
-                namespacesListEl.innerHTML = '<div class="no-items-message">Aucun namespace trouvé</div>';
-                return;
-            }
-            
-            const listItems = labNamespaces.map(ns => {
-                // Ajouter une icône spécifique selon le type de namespace
-                let icon = "fa-project-diagram";
-                let typeLabel = "";
-                
-                if (ns === "labondemand-jupyter") {
-                    icon = "fa-brands fa-python";
-                    typeLabel = '<span class="namespace-type jupyter">Jupyter</span>';
-                } else if (ns === "labondemand-vscode") {
-                    icon = "fa-solid fa-code";
-                    typeLabel = '<span class="namespace-type vscode">VSCode</span>';
-                } else if (ns === "labondemand-custom") {
-                    icon = "fa-solid fa-cube";
-                    typeLabel = '<span class="namespace-type custom">Custom</span>';
-                }
-                
-                return `
-                    <div class="list-group-item">
-                        <i class="fas ${icon}"></i> ${ns} ${typeLabel}
-                    </div>
-                `;
-            }).join('');
-            
-            namespacesListEl.innerHTML = `<div class="list-group">${listItems}</div>`;
-        } catch (error) {
-            console.error('Erreur:', error);
-            namespacesListEl.innerHTML = '<div class="error-message">Erreur lors du chargement des namespaces</div>';
-        }
-    }
 
     async function fetchAndRenderPods() {
         const podsListEl = document.getElementById('pods-list');
@@ -379,13 +370,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             let accessUrlsHtml = '';
             if (data.access_urls && data.access_urls.length > 0) {
                 accessUrlsHtml = `
-                    <h4>URLs d'accès</h4>
+                    <h4>Accès à l'application</h4>
                     <ul class="access-urls-list">
                         ${data.access_urls.map(url => `
                             <li>
                                 <a href="${url.url}" target="_blank">
                                     <i class="fas fa-external-link-alt"></i> ${url.url}
-                                </a> (Service: ${url.service}, NodePort: ${url.node_port})
+                                </a> (exposé par: ${url.service}, NodePort: ${url.node_port})
                             </li>
                         `).join('')}
                     </ul>
@@ -394,11 +385,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 accessUrlsHtml = `<p>Aucune URL d'accès disponible pour ce déploiement.</p>`;
             }
             
-            // Construire le HTML des détails du déploiement
+            // Construire le HTML des détails du déploiement avec un onglet Options
             modalContent.innerHTML = `
-                <h3>Déploiement: ${data.deployment.name}</h3>
+                <h3>Application: ${data.deployment.name}</h3>
                 <div class="deployment-details">
-                    <div class="deployment-info">                        <h4>Informations générales</h4>
+                    <div class="deployment-info">
+                        <div class="details-tabs">
+                            <button class="tab-btn active" data-tab="infos"><i class="fas fa-info-circle"></i> Infos</button>
+                            <button class="tab-btn" data-tab="options"><i class="fas fa-sliders-h"></i> Options</button>
+                        </div>
+                        <div class="tab-content" id="tab-infos">
+                        <h4>Informations générales</h4>
                         <ul>
                             <li><strong>Namespace:</strong> ${data.deployment.namespace}</li>
                             <li><strong>Image:</strong> ${data.deployment.image || 'N/A'}</li>
@@ -421,6 +418,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <span class="app-availability-text">L'application est en cours d'initialisation</span>
                             </div>
                         `}
+                        </div>
+                        <div class="tab-content" id="tab-options" style="display:none;">
+                            <div class="options-panel">
+                                <h4><i class="fas fa-key"></i> Identifiants & paramètres</h4>
+                                <p class="muted">Retrouvez ici les identifiants générés pour votre application. Ne partagez pas ces informations.</p>
+                                <div id="credentials-container" class="credentials-container">
+                                    <button class="btn btn-secondary" id="load-credentials">
+                                        <i class="fas fa-unlock"></i> Afficher les identifiants
+                                    </button>
+                                    <div id="credentials-content" class="credentials-content" style="display:none;"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="access-section">
@@ -454,7 +464,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     
                     <div class="services-section">
-                        <h4>Services (${data.services.length})</h4>
+                        <h4>Points d'exposition (${data.services.length})</h4>
                         ${data.services.length > 0 ? `
                             <table class="k8s-table">
                                 <thead>
@@ -484,10 +494,63 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     `).join('')}
                                 </tbody>
                             </table>
-                        ` : `<p>Aucun service trouvé pour ce déploiement.</p>`}
+                        ` : `<p>Aucun point d'exposition (Service Kubernetes) trouvé pour ce déploiement.</p>`}
                     </div>
                 </div>
             `;
+
+            // Gestion des tabs
+            const tabBtns = modalContent.querySelectorAll('.tab-btn');
+            const tabInfos = modalContent.querySelector('#tab-infos');
+            const tabOptions = modalContent.querySelector('#tab-options');
+            tabBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const t = btn.dataset.tab;
+                    tabInfos.style.display = (t === 'infos') ? 'block' : 'none';
+                    tabOptions.style.display = (t === 'options') ? 'block' : 'none';
+                });
+            });
+
+            // Bouton pour charger les credentials
+            const loadBtn = modalContent.querySelector('#load-credentials');
+            const credContent = modalContent.querySelector('#credentials-content');
+            if (loadBtn) {
+                loadBtn.addEventListener('click', async () => {
+                    loadBtn.disabled = true;
+                    loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Chargement...';
+                    try {
+                        const r = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/credentials`);
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            throw new Error(err.detail || 'Impossible de récupérer les identifiants');
+                        }
+                        const creds = await r.json();
+                        credContent.style.display = 'block';
+                        credContent.innerHTML = renderCredentials(creds);
+                        // Bind boutons copier
+                        credContent.querySelectorAll('.copy-btn').forEach(btn => {
+                            btn.addEventListener('click', () => {
+                                const target = btn.getAttribute('data-target');
+                                const el = credContent.querySelector(`#${target}`);
+                                if (el) {
+                                    navigator.clipboard.writeText(el.textContent || '').then(() => {
+                                        btn.classList.add('copied');
+                                        setTimeout(() => btn.classList.remove('copied'), 1000);
+                                    });
+                                }
+                            });
+                        });
+                    } catch (e) {
+                        credContent.style.display = 'block';
+                        credContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${e.message}</div>`;
+                    } finally {
+                        loadBtn.disabled = false;
+                        loadBtn.innerHTML = '<i class="fas fa-unlock"></i> Afficher les identifiants';
+                    }
+                });
+            }
         } catch (error) {
             console.error('Erreur:', error);
             modalContent.innerHTML = `
@@ -497,6 +560,44 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </div>
             `;
         }
+    }
+
+    // Rendu HTML des credentials
+    function renderCredentials(creds) {
+        if (!creds) return '<p class="muted">Aucun identifiant disponible.</p>';
+        if (creds.type === 'wordpress') {
+            return `
+                <div class="credentials-grid">
+                    <div class="cred-card">
+                        <h5><i class="fab fa-wordpress"></i> Admin WordPress</h5>
+                        <div class="cred-row"><span>Utilisateur</span><code id="wp-user">${creds.wordpress?.username || ''}</code><button class="copy-btn" data-target="wp-user"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Mot de passe</span><code id="wp-pass">${creds.wordpress?.password || ''}</code><button class="copy-btn" data-target="wp-pass"><i class="fas fa-copy"></i></button></div>
+                        ${creds.wordpress?.email ? `<div class="cred-row"><span>Email</span><code id="wp-mail">${creds.wordpress.email}</code><button class="copy-btn" data-target="wp-mail"><i class="fas fa-copy"></i></button></div>` : ''}
+                    </div>
+                    <div class="cred-card">
+                        <h5><i class="fas fa-database"></i> Base de données</h5>
+                        <div class="cred-row"><span>Hôte</span><code id="db-host">${creds.database?.host || ''}</code><button class="copy-btn" data-target="db-host"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Port</span><code id="db-port">${creds.database?.port || ''}</code><button class="copy-btn" data-target="db-port"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Utilisateur</span><code id="db-user">${creds.database?.username || ''}</code><button class="copy-btn" data-target="db-user"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Mot de passe</span><code id="db-pass">${creds.database?.password || ''}</code><button class="copy-btn" data-target="db-pass"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Base</span><code id="db-name">${creds.database?.database || ''}</code><button class="copy-btn" data-target="db-name"><i class="fas fa-copy"></i></button></div>
+                    </div>
+                </div>
+            `;
+        }
+        // Générique
+        const entries = Object.entries(creds.secrets || {});
+        if (!entries.length) return '<p class="muted">Aucun identifiant trouvé.</p>';
+        return `
+            <div class="credentials-grid">
+                ${entries.map(([k,v],i)=>`
+                    <div class="cred-card">
+                        <h5><i class="fas fa-key"></i> ${k}</h5>
+                        <div class="cred-row"><span>Valeur</span><code id="gen-${i}">${v || ''}</code><button class="copy-btn" data-target="gen-${i}"><i class="fas fa-copy"></i></button></div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 
     // --- Navigation ---
@@ -570,6 +671,83 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('deployment-name').value = deploymentName.value;
 
             showView('config-view');
+
+            // Appliquer la politique ressources par rôle (UI):
+            const cpuSelect = document.getElementById('cpu');
+            const ramSelect = document.getElementById('ram');
+            const replicasInput = document.getElementById('deployment-replicas');
+            const isStudent = authManager.isStudent();
+            const isTeacher = authManager.isTeacher();
+            const isAdmin = authManager.isAdmin();
+
+            // Ajouter/mettre à jour une note de politique sous les champs
+            function ensurePolicyNote(targetEl, text) {
+                if (!targetEl) return;
+                const group = targetEl.closest('.form-group');
+                if (!group) return;
+                let note = group.querySelector('.policy-note');
+                if (!note) {
+                    note = document.createElement('small');
+                    note.className = 'policy-note';
+                    group.appendChild(note);
+                }
+                note.textContent = text;
+            }
+
+            if (isStudent) {
+                // Étudiants: pas de choix CPU/RAM ni de replicas; valeurs imposées et clamp backend
+                if (cpuSelect) {
+                    cpuSelect.value = 'medium';
+                    cpuSelect.disabled = true;
+                    ensurePolicyNote(cpuSelect, 'Les ressources sont fixées par la politique étudiante.');
+                    cpuSelect.title = 'Ressources fixées par la politique';
+                }
+                if (ramSelect) {
+                    ramSelect.value = 'medium';
+                    ramSelect.disabled = true;
+                    ensurePolicyNote(ramSelect, 'Les ressources sont fixées par la politique étudiante.');
+                    ramSelect.title = 'Ressources fixées par la politique';
+                }
+                if (replicasInput) {
+                    replicasInput.value = 1;
+                    replicasInput.disabled = true;
+                    ensurePolicyNote(replicasInput, 'Un seul replica autorisé pour les étudiants.');
+                    replicasInput.title = 'Limité à 1';
+                }
+            } else {
+                // Enseignants/Admins: choix permis, avec maxima indiqués
+                if (cpuSelect) cpuSelect.disabled = false;
+                if (ramSelect) ramSelect.disabled = false;
+                if (replicasInput) {
+                    replicasInput.disabled = false;
+                    if (isTeacher) {
+                        replicasInput.max = 2;
+                        ensurePolicyNote(replicasInput, 'Jusqu’à 2 réplicas autorisés pour les enseignants.');
+                        replicasInput.title = 'Max 2';
+                        if (parseInt(replicasInput.value || '1', 10) > 2) replicasInput.value = 2;
+                    } else if (isAdmin) {
+                        replicasInput.max = 5;
+                        ensurePolicyNote(replicasInput, 'Jusqu’à 5 réplicas autorisés pour les administrateurs.');
+                        replicasInput.title = 'Max 5';
+                        if (parseInt(replicasInput.value || '1', 10) > 5) replicasInput.value = 5;
+                    }
+                }
+            }
+
+            // Toggle options réseau avancées
+            const advToggle = document.getElementById('advanced-options-toggle');
+            const svcOptions = document.getElementById('service-options');
+            if (advToggle && svcOptions) {
+                advToggle.onclick = (ev) => {
+                    ev.preventDefault();
+                    const show = svcOptions.style.display === 'none' || svcOptions.style.display === '';
+                    svcOptions.style.display = show ? 'block' : 'none';
+                    advToggle.textContent = show ? 'Masquer les options réseau avancées' : 'Options réseau avancées';
+                };
+                // Par défaut replié
+                svcOptions.style.display = 'none';
+                advToggle.textContent = 'Options réseau avancées';
+            }
         });
     }
 
@@ -580,7 +758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const data = await resp.json();
             const templates = data.templates || [];
             const isElevated = authManager.isAdmin() || authManager.isTeacher();
-            // Filtrer pour les étudiants: uniquement jupyter et vscode
+            // Filtrer pour les étudiants: uniquement jupyter et vscode (côté UI, le backend filtre aussi via RuntimeConfig)
             const filteredTemplates = isElevated
                 ? templates
                 : templates.filter(t => {
@@ -589,30 +767,79 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
             if (!serviceCatalog) return;
             if (filteredTemplates.length === 0) {
-                serviceCatalog.innerHTML = '<div class="no-items-message">Aucun template disponible</div>';
+                serviceCatalog.innerHTML = '<div class="no-items-message">Aucune application disponible</div>';
                 return;
             }
-            serviceCatalog.innerHTML = filteredTemplates.map(t => {
-                const iconClass = t.icon?.includes('fa-') ? t.icon : 'fa-solid fa-cube';
-                const title = t.name || t.id;
-                const desc = t.description || '';
-                const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
-                return `
-                    <div class="card service-card" 
-                        data-service="${title}"
-                        data-icon="${iconClass}"
-                        data-deployment-type="${deploymentType}"
-                        data-default-image="${t.default_image || ''}"
-                        data-default-port="${t.default_port || ''}"
-                        data-default-service-type="${t.default_service_type || 'NodePort'}">
-                        <i class="${iconClass} service-icon"></i>
-                        <h3>${title}</h3>
-                        <p>${desc}</p>
-                    </div>
-                `;
-            }).join('');
-            // Binder les nouvelles cartes
-            document.querySelectorAll('.service-card').forEach(bindServiceCard);
+
+            // Construire la liste de tags uniques à partir des templates
+            const tagSet = new Set();
+            filteredTemplates.forEach(t => (t.tags || []).forEach(tag => tagSet.add(tag)));
+            const allTags = Array.from(tagSet).sort();
+
+            // Rendu des filtres de tags
+            if (tagFiltersEl) {
+                tagFiltersEl.innerHTML = allTags.map(tag => `<span class="tag-chip" data-tag="${tag}"><i class="fas fa-tag"></i> ${tag}</span>`).join('');
+            }
+
+            // Fonction de rendu en appliquant recherche + tags actifs
+            function renderCatalog() {
+                const q = (catalogSearch?.value || '').toLowerCase();
+                const activeTags = Array.from(tagFiltersEl?.querySelectorAll('.tag-chip.active') || []).map(el => el.getAttribute('data-tag'));
+                const matches = filteredTemplates.filter(t => {
+                    const title = (t.name || t.id || '').toLowerCase();
+                    const desc = (t.description || '').toLowerCase();
+                    const textOk = !q || title.includes(q) || desc.includes(q);
+                    const tags = t.tags || [];
+                    const tagsOk = activeTags.length === 0 || activeTags.every(tag => tags.includes(tag));
+                    return textOk && tagsOk;
+                });
+
+                serviceCatalog.innerHTML = matches.map(t => {
+                    const rawIcon = (t.icon || '').trim();
+                    const isFA = rawIcon.includes('fa-');
+                    const faClass = isFA ? rawIcon : 'fa-solid fa-cube';
+                    const iconHtml = isFA
+                        ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
+                        : (rawIcon
+                            ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${rawIcon}</span>`
+                            : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
+                    const title = t.name || t.id;
+                    const desc = t.description || '';
+                    const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
+                    const tagsHtml = (t.tags || []).map(tag => `<span class="tag-chip" role="listitem">${tag}</span>`).join(' ');
+                    return `
+                        <div class="card service-card" 
+                            data-service="${title}"
+                            data-icon="${rawIcon}"
+                            data-deployment-type="${deploymentType}"
+                            data-default-image="${t.default_image || ''}"
+                            data-default-port="${t.default_port || ''}"
+                            data-default-service-type="${t.default_service_type || 'NodePort'}">
+                            ${iconHtml}
+                            <h3>${title}</h3>
+                            <p>${desc}</p>
+                            ${tagsHtml ? `<div class=\"card-tags\" role=\"list\">${tagsHtml}</div>` : ''}
+                        </div>
+                    `;
+                }).join('');
+                document.querySelectorAll('.service-card').forEach(bindServiceCard);
+            }
+
+            // Bind des filtres
+            if (tagFiltersEl) {
+                tagFiltersEl.addEventListener('click', (e) => {
+                    const chip = e.target.closest('.tag-chip');
+                    if (!chip) return;
+                    chip.classList.toggle('active');
+                    renderCatalog();
+                });
+            }
+            if (catalogSearch) {
+                catalogSearch.addEventListener('input', () => renderCatalog());
+            }
+
+            // Premier rendu
+            renderCatalog();
         } catch (e) {
             console.error(e);
             // Fallback minimal si l'API échoue
@@ -620,18 +847,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const isElevated = authManager.isAdmin() || authManager.isTeacher();
                 // Pour étudiants: proposer uniquement Jupyter et VS Code en fallback
                 serviceCatalog.innerHTML = isElevated ? `
-                    <div class="card service-card" data-service="Custom" data-icon="fa-solid fa-cube" data-deployment-type="custom">
-                        <i class="fas fa-cube service-icon"></i>
+                    <div class=\"card service-card\" data-service=\"Custom\" data-icon=\"fa-solid fa-cube\" data-deployment-type=\"custom\">
+                        <i class=\"fas fa-cube service-icon\"></i>
                         <h3>Personnalisé</h3>
                         <p>Déploiement d'image Docker personnalisée.</p>
                     </div>` : `
-                    <div class="card service-card" data-service="Jupyter Notebook" data-icon="fa-brands fa-python" data-deployment-type="jupyter" data-default-image="tutanka01/k8s:jupyter" data-default-port="8888" data-default-service-type="NodePort">
-                        <i class="fa-brands fa-python service-icon"></i>
+                    <div class=\"card service-card\" data-service=\"Jupyter Notebook\" data-icon=\"fa-brands fa-python\" data-deployment-type=\"jupyter\" data-default-image=\"tutanka01/k8s:jupyter\" data-default-port=\"8888\" data-default-service-type=\"NodePort\">
+                        <i class=\"fa-brands fa-python service-icon\"></i>
                         <h3>Jupyter Notebook</h3>
                         <p>Environnement interactif pour Python et data science.</p>
                     </div>
-                    <div class="card service-card" data-service="VS Code" data-icon="fa-solid fa-code" data-deployment-type="vscode" data-default-image="tutanka01/k8s:vscode" data-default-port="8080" data-default-service-type="NodePort">
-                        <i class="fa-solid fa-code service-icon"></i>
+                    <div class=\"card service-card\" data-service=\"VS Code\" data-icon=\"fa-solid fa-code\" data-deployment-type=\"vscode\" data-default-image=\"tutanka01/k8s:vscode\" data-default-port=\"8080\" data-default-service-type=\"NodePort\">
+                        <i class=\"fa-solid fa-code service-icon\"></i>
                         <h3>VS Code</h3>
                         <p>Éditeur de code accessible via le navigateur.</p>
                     </div>`;
@@ -702,6 +929,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serviceType = 'NodePort';
                 servicePort = 8080;
                 serviceTargetPort = 8080;
+            } else if (deploymentType === 'wordpress') {
+                // WordPress: l'image sera ignorée côté serveur (bitnami/wordpress), mais on garde NodePort 8080
+                image = 'bitnami/wordpress:latest';
+                createService = true;
+                serviceType = 'NodePort';
+                servicePort = 8080;
+                serviceTargetPort = 8080;
             }
             
             // Obtenir les valeurs réelles CPU/RAM
@@ -722,8 +956,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             showView('status-view');
             statusContent.innerHTML = `
                 <i class="fas fa-spinner fa-spin status-icon loading"></i>
-                <h2>Lancement de ${serviceName} en cours...</h2>
-                <p>Votre environnement est en cours de préparation. Veuillez patienter.</p>
+                <h2>Lancement de l'application ${serviceName} en cours...</h2>
+                <p>Votre application est en cours de préparation. Veuillez patienter.</p>
             `;
             statusActions.style.display = 'none'; // Cacher le bouton "Terminé" pendant le chargement
 
@@ -1064,11 +1298,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
                 deploymentCheckTimers.delete(`${namespace}-${name}`);
                 
-                // Supprimer la carte du laboratoire
+                // Supprimer la carte de l'application
                 const card = document.getElementById(name);
                 if (card) {
                     card.remove();
-                    console.log(`Carte de laboratoire ${name} supprimée car le déploiement n'existe plus.`);
+                    console.log(`Carte d'application ${name} supprimée car le déploiement n'existe plus.`);
                 }
                 
                 // Vérifier si la liste est maintenant vide
@@ -1212,7 +1446,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function stopLab(labId, namespace) {
          // Demander confirmation
-        if (confirm(`Êtes-vous sûr de vouloir arrêter le laboratoire "${labId}" ?`)) {
+    if (confirm(`Êtes-vous sûr de vouloir arrêter l'application "${labId}" ?`)) {
             try {
                 // Appel API pour supprimer le déploiement
                 const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${labId}?delete_service=true`, {
@@ -1240,7 +1474,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             } catch (error) {
                 console.error('Erreur:', error);
-                alert(`Erreur lors de l'arrêt du laboratoire: ${error.message}`);
+                alert(`Erreur lors de l'arrêt de l'application: ${error.message}`);
             }
         }
     }
@@ -1277,15 +1511,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Charger le catalogue dynamiquement
     await loadTemplates();
         // Vérifier la connexion à l'API
-        const apiConnected = await checkApiStatus();
-        
+        const status = await checkApiStatus();
+        const apiConnected = !!status.api;
+        const k8sConnected = !!status.k8s;
+
         if (apiConnected) {
             // Charger les données K8s seulement pour admin/teacher
             const isElevated = authManager.isAdmin() || authManager.isTeacher();
             if (isElevated) {
-                fetchAndRenderNamespaces();
-                fetchAndRenderPods();
-                fetchAndRenderDeployments();
+                if (k8sConnected) {
+                    fetchAndRenderNamespaces();
+                    fetchAndRenderPods();
+                    fetchAndRenderDeployments();
+                } else {
+                    // Afficher un message clair dans les panneaux K8s
+                    ['namespaces-list', 'pods-list', 'deployments-list'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            el.innerHTML = '<div class="error-message">Kubernetes indisponible. Réessayez plus tard.</div>';
+                        }
+                    });
+                }
             } else {
                 // Étudiants: n'appellent pas les endpoints /namespaces et /pods
                 fetchAndRenderDeployments();
@@ -1346,6 +1592,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             } else if (deployment.type === "vscode") {
                                 serviceIcon = "fa-solid fa-code";
                                 serviceName = "VS Code";
+                            } else if (deployment.type === "wordpress") {
+                                serviceIcon = "fa-brands fa-wordpress";
+                                serviceName = "WordPress";
                             }
                             
                             // Déterminer l'URL d'accès

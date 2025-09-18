@@ -32,19 +32,19 @@
         <!-- Section Dashboard Principal -->
         <section id="dashboard-view" class="view active-view">
             <h1><i class="fas fa-tachometer-alt"></i> Votre Tableau de Bord</h1>
-            <p class="subtitle">Gérez vos environnements actifs et lancez de nouveaux laboratoires.</p>
+            <p class="subtitle">Gérez vos applications actives et lancez de nouvelles applications.</p>
 
             <div class="actions">
                 <button id="show-launch-view-btn" class="btn btn-primary">
-                    <i class="fas fa-plus-circle"></i> Lancer un Nouveau Laboratoire
+                    <i class="fas fa-plus-circle"></i> Lancer une Nouvelle Application
                 </button>
             </div>
 
-            <h2><i class="fas fa-rocket"></i> Laboratoires Actifs</h2>
+            <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
             <div id="active-labs-list" class="card-grid">
                 <!-- Les labs actifs seront ajoutés ici par JS -->
                 <div class="no-labs-message">
-                    <i class="fas fa-info-circle"></i> Vous n'avez aucun laboratoire actif pour le moment.
+                    <i class="fas fa-info-circle"></i> Vous n'avez aucune application active pour le moment.
                 </div>
             </div>
             
@@ -82,8 +82,19 @@
         <!-- Section Catalogue pour Lancer -->
         <section id="launch-view" class="view">
             <button class="btn btn-secondary back-btn" data-target="dashboard-view"><i class="fas fa-arrow-left"></i> Retour</button>
-            <h1><i class="fas fa-th-large"></i> Choisir un Service</h1>
-            <p class="subtitle">Sélectionnez le type d'environnement que vous souhaitez lancer.</p>
+            <h1><i class="fas fa-th-large"></i> Choisir une Application</h1>
+            <p class="subtitle">Sélectionnez l'application que vous souhaitez lancer.</p>
+            <div class="catalog-toolbar card">
+                <div class="toolbar-row">
+                    <div class="search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="catalog-search" placeholder="Rechercher une application...">
+                    </div>
+                    <div class="tag-filters" id="tag-filters">
+                        <!-- Tags dynamiquement ajoutés -->
+                    </div>
+                </div>
+            </div>
             <div class="card-grid service-catalog" id="service-catalog">
                 <!-- Rempli dynamiquement depuis /api/v1/k8s/templates -->
             </div>
@@ -92,8 +103,8 @@
         <!-- Section Configuration (Modale ou vue dédiée) -->
         <section id="config-view" class="view">
              <button class="btn btn-secondary back-btn" data-target="launch-view"><i class="fas fa-arrow-left"></i> Retour</button>
-            <h1><i class="fas fa-cogs"></i> Configurer <span id="config-service-name"></span></h1>
-            <p class="subtitle">Ajustez les paramètres de votre nouvel environnement.</p>
+            <h1><i class="fas fa-cogs"></i> Configurer l'application <span id="config-service-name"></span></h1>
+            <p class="subtitle">Ajustez les paramètres de votre nouvelle application.</p>
 
             <form id="config-form" class="config-form card">
                 <input type="hidden" id="service-type" value="">
@@ -103,7 +114,7 @@
                 <div class="form-group">
                     <label for="deployment-name"><i class="fas fa-tag"></i> Nom du déploiement</label>
                     <input type="text" id="deployment-name" name="deployment-name" required placeholder="Entrez un nom unique">
-                    <small>Ce nom sera utilisé pour identifier votre laboratoire</small>
+                    <small>Ce nom sera utilisé pour identifier votre application</small>
                 </div>
 
                 <!-- Le namespace est désormais géré côté serveur (un par utilisateur) -->
@@ -147,12 +158,12 @@
                     <div class="form-group service-config">
                         <label class="checkbox-label">
                             <input type="checkbox" id="create-service" checked>
-                            Créer un service pour accéder à ce déploiement
+                            Exposer l'application (création d'un Service Kubernetes)
                         </label>
-                        
-                        <div id="service-options">
+                        <p><a href="#" id="advanced-options-toggle">Options réseau avancées</a></p>
+                        <div id="service-options" style="display:none;">
                             <div class="form-group">
-                                <label for="service-type-select"><i class="fas fa-network-wired"></i> Type de Service</label>
+                                <label for="service-type-select"><i class="fas fa-network-wired"></i> Mode d'accès</label>
                                 <select id="service-type-select" name="service-type-select">
                                     <option value="ClusterIP">ClusterIP (interne)</option>
                                     <option value="NodePort" selected>NodePort (accès externe)</option>
@@ -161,13 +172,13 @@
                             </div>
                             
                             <div class="form-group">
-                                <label for="service-port"><i class="fas fa-plug"></i> Port du Service</label>
+                                <label for="service-port"><i class="fas fa-plug"></i> Port d'accès</label>
                                 <input type="number" id="service-port" name="service-port" value="80" min="1" max="65535">
-                                <small>Port sur lequel le service sera accessible</small>
+                                <small>Port externe sur lequel l'application sera accessible</small>
                             </div>
                             
                             <div class="form-group">
-                                <label for="service-target-port"><i class="fas fa-bullseye"></i> Port Cible (Container)</label>
+                                <label for="service-target-port"><i class="fas fa-bullseye"></i> Port de l'application (container)</label>
                                 <input type="number" id="service-target-port" name="service-target-port" value="80" min="1" max="65535">
                                 <small>Port sur lequel l'application écoute dans le container</small>
                             </div>
@@ -186,7 +197,7 @@
 
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary btn-launch">
-                        <i class="fas fa-rocket"></i> Lancer l'Environnement
+                        <i class="fas fa-rocket"></i> Lancer l'Application
                     </button>
                 </div>
             </form>

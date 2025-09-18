@@ -15,7 +15,7 @@ from .database import Base, engine, get_db, SessionLocal
 from .session import setup_session_handler
 from .error_handlers import global_exception_handler
 from . import models  # Importer les modèles pour enregistrer les tables avant create_all
-from .models import User, UserRole, Template
+from .models import User, UserRole, Template, RuntimeConfig
 from .security import get_password_hash
 from .templates import get_deployment_templates
 
@@ -55,6 +55,33 @@ def ensure_admin_exists():
         with SessionLocal() as db:
             # Re-créer les tables au cas où (idempotent)
             Base.metadata.create_all(bind=engine)
+            # Migration douce: ajouter la colonne 'tags' si absente
+            try:
+                db.execute(text("ALTER TABLE templates ADD COLUMN tags VARCHAR(255) NULL"))
+                db.commit()
+            except Exception:
+                pass
+            # Créer la table runtime_configs si absente (migration douce)
+            try:
+                db.execute(text(
+                    "CREATE TABLE IF NOT EXISTS runtime_configs ("
+                    "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+                    "key VARCHAR(50) UNIQUE NOT NULL,"
+                    "default_image VARCHAR(200),"
+                    "target_port INTEGER,"
+                    "default_service_type VARCHAR(30) NOT NULL DEFAULT 'NodePort',"
+                    "min_cpu_request VARCHAR(20),"
+                    "min_memory_request VARCHAR(20),"
+                    "min_cpu_limit VARCHAR(20),"
+                    "min_memory_limit VARCHAR(20),"
+                    "active BOOLEAN DEFAULT TRUE,"
+                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+                    "updated_at DATETIME NULL"
+                    ")"
+                ))
+                db.commit()
+            except Exception:
+                pass
             admin = db.query(User).filter(User.role == UserRole.admin).first()
             if not admin:
                 admin = User(
@@ -83,6 +110,34 @@ def ensure_admin_exists():
                         default_service_type=t.get("default_service_type", "NodePort"),
                         active=True,
                     ))
+                db.commit()
+            # Seed des runtime configs si vide (dynamiques pour remplacer le hardcode)
+            if db.query(RuntimeConfig).count() == 0:
+                # valeurs inspirées de templates.DeploymentConfig
+                db.add(RuntimeConfig(
+                    key="vscode",
+                    default_image="tutanka01/k8s:vscode",
+                    target_port=8080,
+                    default_service_type="NodePort",
+                    allowed_for_students=True,
+                    min_cpu_request="200m",
+                    min_memory_request="256Mi",
+                    min_cpu_limit="500m",
+                    min_memory_limit="512Mi",
+                    active=True,
+                ))
+                db.add(RuntimeConfig(
+                    key="jupyter",
+                    default_image="tutanka01/k8s:jupyter",
+                    target_port=8888,
+                    default_service_type="NodePort",
+                    allowed_for_students=True,
+                    min_cpu_request="250m",
+                    min_memory_request="512Mi",
+                    min_cpu_limit="500m",
+                    min_memory_limit="1Gi",
+                    active=True,
+                ))
                 db.commit()
     except Exception as e:
         # On ne casse pas le démarrage pour éviter l'indisponibilité totale

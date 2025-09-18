@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy.orm import Session
 
-from .models import User, UserRole
+from .models import User, UserRole, RuntimeConfig
 from .k8s_utils import (
     validate_k8s_name, 
     validate_resource_format, 
@@ -16,7 +16,8 @@ from .k8s_utils import (
     ensure_namespace_exists,
     build_user_namespace,
     ensure_namespace_baseline,
-    max_resource
+    max_resource,
+    clamp_resources_for_role
 )
 from .templates import DeploymentConfig
 
@@ -32,12 +33,21 @@ class DeploymentService:
     def validate_permissions(self, user: User, deployment_type: str):
         """Valide les permissions selon le rôle utilisateur"""
         if user.role == UserRole.student:
-            allowed_types = ["jupyter", "vscode"]
-            if deployment_type not in allowed_types:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Les étudiants ne peuvent créer que des environnements Jupyter ou VS Code"
-                )
+            try:
+                from .database import SessionLocal
+                with SessionLocal() as db:
+                    rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
+                    if not rc or not rc.allowed_for_students:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="Type non autorisé pour les étudiants"
+                        )
+            except HTTPException:
+                raise
+            except Exception:
+                # Fallback si DB inaccessible: limiter aux types historiques connus
+                if deployment_type not in {"jupyter", "vscode"}:
+                    raise HTTPException(status_code=403, detail="Type non autorisé pour les étudiants")
     
     def apply_deployment_config(
         self, 
@@ -54,7 +64,33 @@ class DeploymentService:
         """
         Applique la configuration selon le type de déploiement
         """
-        config = DeploymentConfig.get_config(deployment_type)
+        # 1) Chercher une RuntimeConfig en base
+        config_db = None
+        try:
+            # On ne possède pas de session ici; lecture best-effort via client Python K8s context
+            # => Passer par une requête naïve SQL n'est pas souhaitable; on utilisera le fallback si indisponible
+            # L'appelant (router) ne fournit pas de DB session ici. Pour garder KISS, on lit via ORM avec une Session locale si disponible.
+            # On évite l’overengineering; on se contente d’un get via SQLAlchemy SessionLocal si importable.
+            from .database import SessionLocal  # import local pour éviter cycle
+            with SessionLocal() as db:
+                config_db = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
+        except Exception:
+            config_db = None
+
+        # 2) Fallback statique si pas de config DB
+        config = {}
+        if config_db:
+            config = {
+                "image": config_db.default_image,
+                "target_port": config_db.target_port,
+                "service_type": config_db.default_service_type or service_type,
+                "min_cpu_request": config_db.min_cpu_request or cpu_request,
+                "min_memory_request": config_db.min_memory_request or memory_request,
+                "min_cpu_limit": config_db.min_cpu_limit or cpu_limit,
+                "min_memory_limit": config_db.min_memory_limit or memory_limit,
+            }
+        else:
+            config = DeploymentConfig.get_config(deployment_type)
         
         if config:
             # Appliquer les valeurs par défaut
@@ -77,7 +113,8 @@ class DeploymentService:
             "memory_limit": memory_limit,
             "service_target_port": service_target_port,
             "create_service": create_service,
-            "service_type": service_type
+            "service_type": service_type,
+            "has_runtime_config": bool(config_db)
         }
     
     def create_deployment_manifest(
@@ -222,7 +259,7 @@ class DeploymentService:
         # Valider les permissions
         self.validate_permissions(current_user, deployment_type)
 
-        # Valider les types de service
+    # Valider les types de service
         valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
         if service_type not in valid_service_types:
             raise HTTPException(
@@ -236,6 +273,17 @@ class DeploymentService:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
+        # Cas spécial: application multi-composants (WordPress)
+        if deployment_type == "wordpress":
+            return await self._create_wordpress_stack(
+                name=name,
+                effective_namespace=effective_namespace,
+                service_type=service_type,
+                service_port=service_port or 8080,
+                current_user=current_user,
+                additional_labels=additional_labels or {},
+            )
+
         # Appliquer la configuration du déploiement
         config = self.apply_deployment_config(
             deployment_type,
@@ -247,6 +295,22 @@ class DeploymentService:
             service_target_port,
             create_service,
             service_type,
+        )
+
+        # Auto-détermination des ports pour les runtimes configurés (DB) ou connus (fallback):
+        # - Si has_runtime_config est vrai OU runtime est vscode/jupyter, alors service_port = target_port
+        if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter"}:
+            service_port = config["service_target_port"]
+
+        # Plafonner selon le rôle (sécurité)
+        role_val = getattr(current_user.role, "value", str(current_user.role))
+        clamped = clamp_resources_for_role(
+            str(role_val),
+            config["cpu_request"],
+            config["cpu_limit"],
+            config["memory_request"],
+            config["memory_limit"],
+            replicas,
         )
 
         # Créer les labels
@@ -265,11 +329,11 @@ class DeploymentService:
             deployment_manifest = self.create_deployment_manifest(
                 name,
                 config["image"],
-                replicas,
-                config["cpu_request"],
-                config["cpu_limit"],
-                config["memory_request"],
-                config["memory_limit"],
+                clamped["replicas"],
+                clamped["cpu_request"],
+                clamped["cpu_limit"],
+                clamped["memory_request"],
+                clamped["memory_limit"],
                 config["service_target_port"],
                 labels,
             )
@@ -326,10 +390,10 @@ class DeploymentService:
                 "deployment_type": deployment_type,
                 "namespace": effective_namespace,
                 "resources": {
-                    "cpu_request": config["cpu_request"],
-                    "cpu_limit": config["cpu_limit"],
-                    "memory_request": config["memory_request"],
-                    "memory_limit": config["memory_limit"],
+                    "cpu_request": clamped["cpu_request"],
+                    "cpu_limit": clamped["cpu_limit"],
+                    "memory_request": clamped["memory_request"],
+                    "memory_limit": clamped["memory_limit"],
                 },
                 "service_info": {
                     "created": config["create_service"],
@@ -344,6 +408,231 @@ class DeploymentService:
                 status_code=e.status,
                 detail=f"Erreur lors de la création: {e.reason} - {e.body}",
             )
+
+    async def _create_wordpress_stack(
+        self,
+        name: str,
+        effective_namespace: str,
+        service_type: str,
+        service_port: int,
+        current_user: User,
+        additional_labels: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Crée une stack WordPress + MariaDB isolée pour l'utilisateur.
+        Composants:
+          - Secret (mots de passe générés)
+          - PVC pour DB
+          - Service + Deployment MariaDB
+          - Service + Deployment WordPress (bitnami)
+        """
+        import secrets
+        import base64
+
+        # Noms dérivés
+        wp_name = name
+        db_name = f"{name}-mariadb"
+        svc_wp = f"{wp_name}-service"
+        svc_db = f"{db_name}-service"
+        pvc_db = f"{db_name}-pvc"
+        secret_name = f"{name}-secret"
+
+        # Labels communs + regroupement par stack
+        labels_base = create_labondemand_labels(
+            "wordpress", str(current_user.id), current_user.role.value, additional_labels
+        )
+        labels_wp = {**labels_base, "stack-name": name, "component": "wordpress"}
+        labels_db = {**labels_base, "stack-name": name, "component": "database"}
+
+        # Générer des mots de passe/identifiants
+        db_user = "wp_user"
+        db_pass = secrets.token_urlsafe(16)
+        db_root = secrets.token_urlsafe(18)
+        wp_admin_user = "admin"
+        wp_admin_pass = secrets.token_urlsafe(18)
+
+        # Secret (stringData pour lisibilité)
+        secret_manifest = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": secret_name, "labels": labels_wp},
+            "type": "Opaque",
+            "stringData": {
+                "MARIADB_ROOT_PASSWORD": db_root,
+                "MARIADB_USER": db_user,
+                "MARIADB_PASSWORD": db_pass,
+                "MARIADB_DATABASE": "wordpress",
+                "WORDPRESS_DATABASE_USER": db_user,
+                "WORDPRESS_DATABASE_PASSWORD": db_pass,
+                "WORDPRESS_DATABASE_NAME": "wordpress",
+                "WORDPRESS_USERNAME": wp_admin_user,
+                "WORDPRESS_PASSWORD": wp_admin_pass,
+                "WORDPRESS_EMAIL": "admin@example.local",
+            },
+        }
+
+        # PVC pour la DB
+        pvc_manifest = {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {"name": pvc_db, "labels": labels_db},
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "1Gi"}},
+            },
+        }
+
+        # Service DB
+        svc_db_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": svc_db, "labels": {"app": db_name, **labels_db}},
+            "spec": {
+                "type": "ClusterIP",
+                "ports": [{"port": 3306, "targetPort": 3306}],
+                "selector": {"app": db_name},
+            },
+        }
+
+        # Déterminer les ressources selon rôle
+        role_val = getattr(current_user.role, "value", str(current_user.role))
+        db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
+        wp_res = clamp_resources_for_role(str(role_val), "250m", "1000m", "512Mi", "1Gi", 1)
+
+        # Deployment DB (Bitnami MariaDB)
+        dep_db_manifest = {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": db_name, "labels": labels_db},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": db_name}},
+                "template": {
+                    "metadata": {"labels": {"app": db_name, **labels_db}},
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "mariadb",
+                                "image": "bitnami/mariadb:latest",
+                                "envFrom": [{"secretRef": {"name": secret_name}}],
+                                "ports": [{"containerPort": 3306}],
+                                "resources": {
+                                    "requests": {"cpu": db_res["cpu_request"], "memory": db_res["memory_request"]},
+                                    "limits": {"cpu": db_res["cpu_limit"], "memory": db_res["memory_limit"]},
+                                },
+                                "livenessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 30, "periodSeconds": 10},
+                                "readinessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 10, "periodSeconds": 5},
+                                "volumeMounts": [
+                                    {"name": "data", "mountPath": "/bitnami/mariadb"}
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {"name": "data", "persistentVolumeClaim": {"claimName": pvc_db}}
+                        ],
+                    },
+                },
+            },
+        }
+
+        # Service WordPress
+        svc_wp_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": svc_wp, "labels": {"app": wp_name, **labels_wp}},
+            "spec": {
+                "type": service_type,
+                "ports": [{"port": service_port, "targetPort": 8080}],
+                "selector": {"app": wp_name},
+            },
+        }
+
+        # Deployment WordPress (Bitnami WordPress, listen 8080)
+        dep_wp_manifest = {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": wp_name, "labels": labels_wp},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": wp_name}},
+                "template": {
+                    "metadata": {"labels": {"app": wp_name, **labels_wp}},
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "wordpress",
+                                "image": "bitnami/wordpress:latest",
+                                "env": [
+                                    {"name": "WORDPRESS_ENABLE_HTTPS", "value": "no"},
+                                    {"name": "APACHE_HTTP_PORT_NUMBER", "value": "8080"},
+                                    {"name": "WORDPRESS_DATABASE_HOST", "value": svc_db},
+                                    {"name": "WORDPRESS_DATABASE_PORT_NUMBER", "value": "3306"}
+                                ],
+                                "envFrom": [
+                                    {"secretRef": {"name": secret_name}}
+                                ],
+                                "ports": [{"containerPort": 8080}],
+                                "resources": {
+                                    "requests": {"cpu": wp_res["cpu_request"], "memory": wp_res["memory_request"]},
+                                    "limits": {"cpu": wp_res["cpu_limit"], "memory": wp_res["memory_limit"]},
+                                },
+                                "readinessProbe": {
+                                    "httpGet": {"path": "/", "port": 8080},
+                                    "initialDelaySeconds": 10,
+                                    "periodSeconds": 5,
+                                },
+                                "livenessProbe": {
+                                    "httpGet": {"path": "/", "port": 8080},
+                                    "initialDelaySeconds": 30,
+                                    "periodSeconds": 10,
+                                },
+                            }
+                        ],
+                    },
+                },
+            },
+        }
+
+        try:
+            # Créer les ressources dans un ordre logique
+            self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+            self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+            self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
+            self.apps_v1.create_namespaced_deployment(effective_namespace, dep_db_manifest)
+            created_wp_svc = self.core_v1.create_namespaced_service(effective_namespace, svc_wp_manifest)
+            self.apps_v1.create_namespaced_deployment(effective_namespace, dep_wp_manifest)
+
+            node_port = None
+            if service_type in ["NodePort", "LoadBalancer"]:
+                node_port = created_wp_svc.spec.ports[0].node_port
+
+            msg = (
+                f"Stack WordPress créée: DB={db_name}, WP={wp_name} dans {effective_namespace}. "
+                f"Admin: {wp_admin_user}/{wp_admin_pass}. DB user: {db_user}/{db_pass}."
+            )
+
+            return {
+                "message": msg,
+                "deployment_type": "wordpress",
+                "namespace": effective_namespace,
+                "service_info": {
+                    "created": True,
+                    "type": service_type,
+                    "port": service_port,
+                    "node_port": node_port,
+                },
+                "credentials": {
+                    "wordpress": {"username": wp_admin_user, "password": wp_admin_pass},
+                    "database": {
+                        "host": svc_db,
+                        "port": 3306,
+                        "username": db_user,
+                        "password": db_pass,
+                        "database": "wordpress",
+                    },
+                },
+            }
+        except client.exceptions.ApiException as e:
+            raise HTTPException(status_code=e.status, detail=f"Erreur WordPress: {e.reason} - {e.body}")
 
 # Instance globale du service
 deployment_service = DeploymentService()

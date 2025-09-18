@@ -105,12 +105,25 @@
             <!-- Gestion des Templates d'applications -->
             <section class="admin-section" id="templates-section">
                 <div class="page-header">
-                    <h2><i class="fas fa-th-large"></i> Templates d'application</h2>
+                    <h2><i class="fas fa-th-large"></i> Templates d’applications</h2>
                     <button id="add-template-btn" class="action-btn">
                         <i class="fas fa-plus"></i> Nouveau template
                     </button>
                 </div>
                 <div id="templates-list" class="users-table-container">
+                    <!-- Rempli par JS -->
+                </div>
+            </section>
+
+            <!-- Gestion des Runtimes (autorisations étudiants) -->
+            <section class="admin-section" id="runtime-configs-section">
+                <div class="page-header">
+                    <h2><i class="fas fa-cogs"></i> Runtimes & accès étudiants</h2>
+                    <button id="add-rc-btn" class="action-btn">
+                        <i class="fas fa-plus"></i> Nouveau runtime
+                    </button>
+                </div>
+                <div id="runtime-configs-list" class="users-table-container">
                     <!-- Rempli par JS -->
                 </div>
             </section>
@@ -221,12 +234,12 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="tpl-icon"><i class="fas fa-icons"></i> Icône (classe)</label>
-                            <input type="text" id="tpl-icon" maxlength="100" placeholder="fa-solid fa-code">
-                            <small>Classe Font Awesome (ex: fa-solid fa-code)</small>
+                            <label for="tpl-icon"><i class="fas fa-icons"></i> Icône (classe ou emoji)</label>
+                            <input type="text" id="tpl-icon" maxlength="100" placeholder="fa-solid fa-code ou 🧪">
+                            <small>Vous pouvez saisir une classe Font Awesome (ex: fa-solid fa-code) ou directement un emoji (ex: 🧪)</small>
                         </div>
                         <div class="form-group">
-                            <label for="tpl-type"><i class="fas fa-cubes"></i> Type</label>
+                            <label for="tpl-type"><i class="fas fa-cubes"></i> Runtime</label>
                             <select id="tpl-type">
                                 <option value="custom">Custom</option>
                                 <option value="vscode">VSCode</option>
@@ -247,7 +260,13 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="tpl-service-type"><i class="fas fa-network-wired"></i> Type de service</label>
+                        <label for="tpl-tags"><i class="fas fa-tags"></i> Tags (séparés par des virgules)</label>
+                        <input type="text" id="tpl-tags" maxlength="255" placeholder="ex: web,python,education">
+                        <small>Permet d’assigner plusieurs catégories à l’application (facultatif)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="tpl-service-type"><i class="fas fa-network-wired"></i> Mode d’accès</label>
                         <select id="tpl-service-type">
                             <option value="ClusterIP">ClusterIP</option>
                             <option value="NodePort" selected>NodePort</option>
@@ -271,5 +290,6 @@
 
     <script src="js/admin.js"></script>
     <script src="js/templates.js"></script>
+    <script src="js/runtime-configs.js"></script>
 </body>
 </html>
