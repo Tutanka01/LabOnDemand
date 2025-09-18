@@ -258,7 +258,7 @@ class DeploymentService:
         # Valider les permissions
         self.validate_permissions(current_user, deployment_type)
 
-        # Valider les types de service
+    # Valider les types de service
         valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
         if service_type not in valid_service_types:
             raise HTTPException(
@@ -271,6 +271,17 @@ class DeploymentService:
             validate_resource_format(cpu_request, cpu_limit, memory_request, memory_limit)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+        # Cas spécial: application multi-composants (WordPress)
+        if deployment_type == "wordpress":
+            return await self._create_wordpress_stack(
+                name=name,
+                effective_namespace=effective_namespace,
+                service_type=service_type,
+                service_port=service_port or 8080,
+                current_user=current_user,
+                additional_labels=additional_labels or {},
+            )
 
         # Appliquer la configuration du déploiement
         config = self.apply_deployment_config(
@@ -385,6 +396,218 @@ class DeploymentService:
                 status_code=e.status,
                 detail=f"Erreur lors de la création: {e.reason} - {e.body}",
             )
+
+    async def _create_wordpress_stack(
+        self,
+        name: str,
+        effective_namespace: str,
+        service_type: str,
+        service_port: int,
+        current_user: User,
+        additional_labels: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Crée une stack WordPress + MariaDB isolée pour l'utilisateur.
+        Composants:
+          - Secret (mots de passe générés)
+          - PVC pour DB
+          - Service + Deployment MariaDB
+          - Service + Deployment WordPress (bitnami)
+        """
+        import secrets
+        import base64
+
+        # Noms dérivés
+        wp_name = name
+        db_name = f"{name}-mariadb"
+        svc_wp = f"{wp_name}-service"
+        svc_db = f"{db_name}-service"
+        pvc_db = f"{db_name}-pvc"
+        secret_name = f"{name}-secret"
+
+        # Labels communs + regroupement par stack
+        labels_base = create_labondemand_labels(
+            "wordpress", str(current_user.id), current_user.role.value, additional_labels
+        )
+        labels_wp = {**labels_base, "stack-name": name, "component": "wordpress"}
+        labels_db = {**labels_base, "stack-name": name, "component": "database"}
+
+        # Générer des mots de passe/identifiants
+        db_user = "wp_user"
+        db_pass = secrets.token_urlsafe(16)
+        db_root = secrets.token_urlsafe(18)
+        wp_admin_user = "admin"
+        wp_admin_pass = secrets.token_urlsafe(18)
+
+        # Secret (stringData pour lisibilité)
+        secret_manifest = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": secret_name, "labels": labels_wp},
+            "type": "Opaque",
+            "stringData": {
+                "MARIADB_ROOT_PASSWORD": db_root,
+                "MARIADB_USER": db_user,
+                "MARIADB_PASSWORD": db_pass,
+                "MARIADB_DATABASE": "wordpress",
+                "WORDPRESS_DATABASE_USER": db_user,
+                "WORDPRESS_DATABASE_PASSWORD": db_pass,
+                "WORDPRESS_DATABASE_NAME": "wordpress",
+                "WORDPRESS_USERNAME": wp_admin_user,
+                "WORDPRESS_PASSWORD": wp_admin_pass,
+                "WORDPRESS_EMAIL": "admin@example.local",
+            },
+        }
+
+        # PVC pour la DB
+        pvc_manifest = {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {"name": pvc_db, "labels": labels_db},
+            "spec": {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": "1Gi"}},
+            },
+        }
+
+        # Service DB
+        svc_db_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": svc_db, "labels": {"app": db_name, **labels_db}},
+            "spec": {
+                "type": "ClusterIP",
+                "ports": [{"port": 3306, "targetPort": 3306}],
+                "selector": {"app": db_name},
+            },
+        }
+
+        # Deployment DB (Bitnami MariaDB)
+        dep_db_manifest = {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": db_name, "labels": labels_db},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": db_name}},
+                "template": {
+                    "metadata": {"labels": {"app": db_name, **labels_db}},
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "mariadb",
+                                "image": "bitnami/mariadb:latest",
+                                "envFrom": [{"secretRef": {"name": secret_name}}],
+                                "ports": [{"containerPort": 3306}],
+                                "livenessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 30, "periodSeconds": 10},
+                                "readinessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 10, "periodSeconds": 5},
+                                "volumeMounts": [
+                                    {"name": "data", "mountPath": "/bitnami/mariadb"}
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {"name": "data", "persistentVolumeClaim": {"claimName": pvc_db}}
+                        ],
+                    },
+                },
+            },
+        }
+
+        # Service WordPress
+        svc_wp_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": svc_wp, "labels": {"app": wp_name, **labels_wp}},
+            "spec": {
+                "type": service_type,
+                "ports": [{"port": service_port, "targetPort": 8080}],
+                "selector": {"app": wp_name},
+            },
+        }
+
+        # Deployment WordPress (Bitnami WordPress, listen 8080)
+        dep_wp_manifest = {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {"name": wp_name, "labels": labels_wp},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": wp_name}},
+                "template": {
+                    "metadata": {"labels": {"app": wp_name, **labels_wp}},
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "wordpress",
+                                "image": "bitnami/wordpress:latest",
+                                "env": [
+                                    {"name": "WORDPRESS_ENABLE_HTTPS", "value": "no"},
+                                    {"name": "APACHE_HTTP_PORT_NUMBER", "value": "8080"},
+                                    {"name": "WORDPRESS_DATABASE_HOST", "value": svc_db},
+                                    {"name": "WORDPRESS_DATABASE_PORT_NUMBER", "value": "3306"}
+                                ],
+                                "envFrom": [
+                                    {"secretRef": {"name": secret_name}}
+                                ],
+                                "ports": [{"containerPort": 8080}],
+                                "readinessProbe": {
+                                    "httpGet": {"path": "/", "port": 8080},
+                                    "initialDelaySeconds": 10,
+                                    "periodSeconds": 5,
+                                },
+                                "livenessProbe": {
+                                    "httpGet": {"path": "/", "port": 8080},
+                                    "initialDelaySeconds": 30,
+                                    "periodSeconds": 10,
+                                },
+                            }
+                        ],
+                    },
+                },
+            },
+        }
+
+        try:
+            # Créer les ressources dans un ordre logique
+            self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+            self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+            self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
+            self.apps_v1.create_namespaced_deployment(effective_namespace, dep_db_manifest)
+            created_wp_svc = self.core_v1.create_namespaced_service(effective_namespace, svc_wp_manifest)
+            self.apps_v1.create_namespaced_deployment(effective_namespace, dep_wp_manifest)
+
+            node_port = None
+            if service_type in ["NodePort", "LoadBalancer"]:
+                node_port = created_wp_svc.spec.ports[0].node_port
+
+            msg = (
+                f"Stack WordPress créée: DB={db_name}, WP={wp_name} dans {effective_namespace}. "
+                f"Admin: {wp_admin_user}/{wp_admin_pass}. DB user: {db_user}/{db_pass}."
+            )
+
+            return {
+                "message": msg,
+                "deployment_type": "wordpress",
+                "namespace": effective_namespace,
+                "service_info": {
+                    "created": True,
+                    "type": service_type,
+                    "port": service_port,
+                    "node_port": node_port,
+                },
+                "credentials": {
+                    "wordpress": {"username": wp_admin_user, "password": wp_admin_pass},
+                    "database": {
+                        "host": svc_db,
+                        "port": 3306,
+                        "username": db_user,
+                        "password": db_pass,
+                        "database": "wordpress",
+                    },
+                },
+            }
+        except client.exceptions.ApiException as e:
+            raise HTTPException(status_code=e.status, detail=f"Erreur WordPress: {e.reason} - {e.body}")
 
 # Instance globale du service
 deployment_service = DeploymentService()

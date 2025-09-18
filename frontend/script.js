@@ -93,7 +93,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 apiStatusEl.classList.add('online');
                 apiStatusEl.classList.remove('offline');
             }
-            return true;
+            // Ping rapide de l'API Kubernetes pour savoir si on peut afficher la section K8s
+            try {
+                const ping = await fetch(`${API_V1}/k8s/ping`);
+                if (!ping.ok) throw new Error('K8s KO');
+                return { api: true, k8s: true };
+            } catch (e) {
+                console.warn('Kubernetes indisponible:', e.message || e);
+                return { api: true, k8s: false };
+            }
         } catch (err) {
             console.error("Erreur de connexion à l'API:", err);
             if (apiStatusEl) {
@@ -101,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 apiStatusEl.classList.add('offline');
                 apiStatusEl.classList.remove('online');
             }
-            return false;
+            return { api: false, k8s: false };
         }
     }
 
@@ -749,6 +757,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serviceType = 'NodePort';
                 servicePort = 8080;
                 serviceTargetPort = 8080;
+            } else if (deploymentType === 'wordpress') {
+                // WordPress: l'image sera ignorée côté serveur (bitnami/wordpress), mais on garde NodePort 8080
+                image = 'bitnami/wordpress:latest';
+                createService = true;
+                serviceType = 'NodePort';
+                servicePort = 8080;
+                serviceTargetPort = 8080;
             }
             
             // Obtenir les valeurs réelles CPU/RAM
@@ -1324,15 +1339,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Charger le catalogue dynamiquement
     await loadTemplates();
         // Vérifier la connexion à l'API
-        const apiConnected = await checkApiStatus();
-        
+        const status = await checkApiStatus();
+        const apiConnected = !!status.api;
+        const k8sConnected = !!status.k8s;
+
         if (apiConnected) {
             // Charger les données K8s seulement pour admin/teacher
             const isElevated = authManager.isAdmin() || authManager.isTeacher();
             if (isElevated) {
-                fetchAndRenderNamespaces();
-                fetchAndRenderPods();
-                fetchAndRenderDeployments();
+                if (k8sConnected) {
+                    fetchAndRenderNamespaces();
+                    fetchAndRenderPods();
+                    fetchAndRenderDeployments();
+                } else {
+                    // Afficher un message clair dans les panneaux K8s
+                    ['namespaces-list', 'pods-list', 'deployments-list'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            el.innerHTML = '<div class="error-message">Kubernetes indisponible. Réessayez plus tard.</div>';
+                        }
+                    });
+                }
             } else {
                 // Étudiants: n'appellent pas les endpoints /namespaces et /pods
                 fetchAndRenderDeployments();
@@ -1393,6 +1420,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             } else if (deployment.type === "vscode") {
                                 serviceIcon = "fa-solid fa-code";
                                 serviceName = "VS Code";
+                            } else if (deployment.type === "wordpress") {
+                                serviceIcon = "fa-brands fa-wordpress";
+                                serviceName = "WordPress";
                             }
                             
                             // Déterminer l'URL d'accès

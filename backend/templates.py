@@ -14,30 +14,44 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
             {
                 "id": "custom",
                 "name": "Déploiement personnalisé",
-                "description": "Déployer une image Docker de votre choix",
-                "icon": "fa-docker",
+                "description": "Déployez n'importe quelle image Docker avec exposition réseau optionnelle.",
+                "icon": "fa-solid fa-cube",
                 "deployment_type": "custom",
-                "default_service_type": "NodePort"
+                "default_service_type": "NodePort",
+                "tags": ["générique", "docker", "custom", "service"]
+            },
+            {
+                "id": "wordpress",
+                "name": "WordPress (Web + DB)",
+                "description": "Déployer WordPress avec base MariaDB, clés générées automatiquement.",
+                "icon": "fa-brands fa-wordpress",
+                "default_image": "bitnami/wordpress:latest",
+                "default_port": 8080,
+                "deployment_type": "wordpress",
+                "default_service_type": "NodePort",
+                "tags": ["cms", "web", "database"]
             },
             {
                 "id": "vscode",
                 "name": "VS Code Online",
-                "description": "Déployer un environnement de développement VS Code accessible via navigateur",
-                "icon": "fa-code",
+                "description": "Environnement VS Code dans le navigateur, idéal pour TP et démos. Mot de passe par défaut: labondemand.",
+                "icon": "fa-solid fa-code",
                 "default_image": "tutanka01/k8s:vscode",
                 "default_port": 8080,
                 "deployment_type": "vscode",
-                "default_service_type": "NodePort"
+                "default_service_type": "NodePort",
+                "tags": ["ide", "développement", "web", "nodeport", "enseignement"]
             },
             {
                 "id": "jupyter",
                 "name": "Jupyter Notebook",
-                "description": "Déployer un environnement Jupyter Notebook pour l'analyse de données et le machine learning",
-                "icon": "fa-chart-line",
+                "description": "Jupyter pour data science, avec support notebooks et bibliothèques courantes.",
+                "icon": "fa-brands fa-python",
                 "default_image": "tutanka01/k8s:jupyter",
                 "default_port": 8888,
                 "deployment_type": "jupyter",
-                "default_service_type": "NodePort"
+                "default_service_type": "NodePort",
+                "tags": ["data", "notebooks", "python", "apprentissage", "web", "nodeport"]
             }
         ]
     }

@@ -5,6 +5,7 @@ Principe KISS : endpoints focalisés et simples
 from fastapi import APIRouter, Depends, HTTPException
 from kubernetes import client
 from typing import List, Dict, Any, Optional
+import urllib3
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
 from .models import User, UserRole, Template, RuntimeConfig
@@ -20,42 +21,90 @@ router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
 # ============= ENDPOINTS DE LISTING =============
 
+# Helper centralisé pour mapper les erreurs K8s -> HTTPException propres
+def _raise_k8s_http(e: Exception):
+    try:
+        # ApiException du client Kubernetes
+        if isinstance(e, client.exceptions.ApiException):
+            status = getattr(e, "status", 500) or 500
+            reason = getattr(e, "reason", None) or str(e)
+            # Harmoniser le message 503
+            if status == 503:
+                reason = "Kubernetes apiserver indisponible (503: Service Unavailable)"
+            raise HTTPException(status_code=status, detail=reason)
+
+        # Erreurs de connexion sous-jacentes (urllib3)
+        if isinstance(e, (urllib3.exceptions.MaxRetryError, urllib3.exceptions.NewConnectionError)):
+            raise HTTPException(status_code=503, detail="Impossible de joindre l'API Kubernetes (connexion refusée)")
+
+        # Timeouts / OS
+        if isinstance(e, (TimeoutError, ConnectionError, OSError)):
+            raise HTTPException(status_code=503, detail="Kubernetes indisponible (erreur de connexion)")
+
+        # Fallback générique
+        raise HTTPException(status_code=500, detail=f"Erreur Kubernetes: {str(e)}")
+    except HTTPException:
+        # Laisser passer tel quel
+        raise
+
+@router.get("/ping")
+async def ping_k8s(current_user: User = Depends(get_current_user)):
+    """Vérifie la disponibilité de l'API Kubernetes (léger)."""
+    try:
+        v1 = client.CoreV1Api()
+        # Requête très légère: limiter à 1 item
+        v1.list_namespace(_preload_content=False, limit=1)
+        return {"k8s": True}
+    except Exception:
+        # Mode dégradé: indiquer indisponible mais ne pas renvoyer d'erreur HTTP
+        return {"k8s": False}
+
 @router.get("/pods")
 async def get_pods(current_user: User = Depends(get_current_user), _: bool = Depends(is_admin)):
     """Lister tous les pods (admin uniquement)"""
-    v1 = client.CoreV1Api()
-    ret = v1.list_pod_for_all_namespaces(watch=False)
-    pods = [
-        {
-            "name": pod.metadata.name, 
-            "namespace": pod.metadata.namespace, 
-            "ip": pod.status.pod_ip
-        } 
-        for pod in ret.items
-    ]
-    return {"pods": pods}
+    try:
+        v1 = client.CoreV1Api()
+        ret = v1.list_pod_for_all_namespaces(watch=False)
+        pods = [
+            {
+                "name": pod.metadata.name,
+                "namespace": pod.metadata.namespace,
+                "ip": pod.status.pod_ip,
+            }
+            for pod in ret.items
+        ]
+        return {"pods": pods, "k8s_available": True}
+    except Exception:
+        # Mode dégradé: retourner une liste vide
+        return {"pods": [], "k8s_available": False}
 
 @router.get("/namespaces")
 async def get_namespaces(current_user: User = Depends(get_current_user), _: bool = Depends(is_teacher_or_admin)):
     """Lister les namespaces (admin ou enseignant)"""
-    v1 = client.CoreV1Api()
-    ret = v1.list_namespace(watch=False)
-    namespaces = [ns.metadata.name for ns in ret.items]
-    return {"namespaces": namespaces}
+    try:
+        v1 = client.CoreV1Api()
+        ret = v1.list_namespace(watch=False)
+        namespaces = [ns.metadata.name for ns in ret.items]
+        return {"namespaces": namespaces, "k8s_available": True}
+    except Exception:
+        return {"namespaces": [], "k8s_available": False}
 
 @router.get("/deployments")
 async def get_deployments(current_user: User = Depends(get_current_user), _: bool = Depends(is_teacher_or_admin)):
     """Lister tous les déploiements (admin ou enseignant)"""
-    v1 = client.AppsV1Api()
-    ret = v1.list_deployment_for_all_namespaces(watch=False)
-    deployments = [
-        {
-            "name": dep.metadata.name, 
-            "namespace": dep.metadata.namespace
-        } 
-        for dep in ret.items
-    ]
-    return {"deployments": deployments}
+    try:
+        v1 = client.AppsV1Api()
+        ret = v1.list_deployment_for_all_namespaces(watch=False)
+        deployments = [
+            {
+                "name": dep.metadata.name,
+                "namespace": dep.metadata.namespace,
+            }
+            for dep in ret.items
+        ]
+        return {"deployments": deployments, "k8s_available": True}
+    except Exception:
+        return {"deployments": [], "k8s_available": False}
 
 @router.get("/deployments/labondemand")
 async def get_labondemand_deployments(current_user: User = Depends(get_current_user)):
@@ -66,24 +115,58 @@ async def get_labondemand_deployments(current_user: User = Depends(get_current_u
         label_selector = f"managed-by=labondemand,user-id={current_user.id}"
         ret = v1.list_deployment_for_all_namespaces(label_selector=label_selector)
         
-        deployments = []
+        # Regrouper par stack si présent (labels stack-name)
+        stacks: Dict[str, Dict[str, Any]] = {}
+        singles: list = []
+
         for dep in ret.items:
-            # Extraire le type depuis les labels
-            app_type = dep.metadata.labels.get("app-type", "custom") if dep.metadata.labels else "custom"
-            
-            deployments.append({
+            labels = dep.metadata.labels or {}
+            stack_name = labels.get("stack-name")
+            app_type = labels.get("app-type", "custom")
+            dep_name = dep.metadata.name or ""
+
+            # Fallback heuristique: stack WordPress sans labels
+            if not stack_name and app_type == "wordpress":
+                if dep_name.endswith("-mariadb"):
+                    stack_name = dep_name[: -len("-mariadb")]
+                else:
+                    stack_name = dep_name
+
+            entry = {
                 "name": dep.metadata.name,
                 "namespace": dep.metadata.namespace,
-                "type": app_type,  # Ajouter le type pour le frontend
-                "labels": dep.metadata.labels,
+                "type": app_type,
+                "labels": labels,
                 "replicas": dep.spec.replicas,
                 "ready_replicas": dep.status.ready_replicas or 0,
                 "image": dep.spec.template.spec.containers[0].image if dep.spec.template.spec.containers else "Unknown"
-            })
-        
-        return {"deployments": deployments}
-    except client.exceptions.ApiException as e:
-        raise HTTPException(status_code=e.status, detail=f"Erreur Kubernetes: {e.reason}")
+            }
+
+            if stack_name:
+                # pour une stack, on expose un seul item avec le nom de la stack
+                agg = stacks.get(stack_name)
+                if not agg:
+                    stacks[stack_name] = {
+                        "name": stack_name,
+                        "namespace": dep.metadata.namespace,
+                        "type": app_type,
+                        "labels": labels,
+                        "replicas": dep.spec.replicas,
+                        "ready_replicas": dep.status.ready_replicas or 0,
+                        "components": [entry],
+                    }
+                else:
+                    agg["components"].append(entry)
+                    # consolider readiness simple: si au moins un composant ready, laisser comme tel; sinon prendre min
+                    agg["ready_replicas"] = max(agg.get("ready_replicas", 0), entry["ready_replicas"])
+            else:
+                singles.append(entry)
+
+        # Concaténer: stacks (une entrée par stack) + déploiements unitaires
+        deployments = list(stacks.values()) + singles
+        return {"deployments": deployments, "k8s_available": True}
+    except Exception:
+        return {"deployments": [], "k8s_available": False}
 
 @router.get("/pods/{namespace}")
 async def get_pods_by_namespace(
@@ -93,16 +176,19 @@ async def get_pods_by_namespace(
 ):
     """Lister les pods d'un namespace spécifique"""
     namespace = validate_k8s_name(namespace)
-    v1 = client.CoreV1Api()
-    ret = v1.list_namespaced_pod(namespace, watch=False)
-    pods = [
-        {
-            "name": pod.metadata.name, 
-            "ip": pod.status.pod_ip
-        } 
-        for pod in ret.items
-    ]
-    return {"namespace": namespace, "pods": pods}
+    try:
+        v1 = client.CoreV1Api()
+        ret = v1.list_namespaced_pod(namespace, watch=False)
+        pods = [
+            {
+                "name": pod.metadata.name,
+                "ip": pod.status.pod_ip,
+            }
+            for pod in ret.items
+        ]
+        return {"namespace": namespace, "pods": pods, "k8s_available": True}
+    except Exception:
+        return {"namespace": namespace, "pods": [], "k8s_available": False}
 
 # ============= ENDPOINTS DE DÉTAILS =============
 
@@ -240,8 +326,8 @@ async def get_deployment_details(
             "access_urls": access_urls
         }
         
-    except client.exceptions.ApiException as e:
-        raise HTTPException(status_code=e.status, detail=f"Erreur: {e.reason}")
+    except Exception as e:
+        _raise_k8s_http(e)
 
 # ============= ENDPOINTS DE CRÉATION =============
 
@@ -273,8 +359,8 @@ async def create_pod(
         }
         v1.create_namespaced_pod(namespace, pod_manifest)
         return {"message": f"Pod {name} créé avec succès dans le namespace {namespace}"}
-    except client.exceptions.ApiException as e:
-        raise HTTPException(status_code=e.status, detail=f"Erreur: {e.reason}")
+    except Exception as e:
+        _raise_k8s_http(e)
 
 @router.post("/deployments")
 async def create_deployment(
@@ -329,8 +415,8 @@ async def delete_pod(
         v1 = client.CoreV1Api()
         v1.delete_namespaced_pod(name, namespace)
         return {"message": f"Pod {name} supprimé du namespace {namespace}"}
-    except client.exceptions.ApiException as e:
-        raise HTTPException(status_code=e.status, detail=f"Erreur: {e.reason}")
+    except Exception as e:
+        _raise_k8s_http(e)
 
 @router.delete("/deployments/{namespace}/{name}")
 async def delete_deployment(
@@ -347,20 +433,49 @@ async def delete_deployment(
     try:
         apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
-        
-        # Supprimer le déploiement
-        apps_v1.delete_namespaced_deployment(name, namespace)
-        
-        # Supprimer le service associé si demandé
-        if delete_service:
-            try:
-                core_v1.delete_namespaced_service(f"{name}-service", namespace)
-            except client.exceptions.ApiException:
-                pass  # Service n'existe pas
-        
-        return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
-    except client.exceptions.ApiException as e:
-        raise HTTPException(status_code=e.status, detail=f"Erreur: {e.reason}")
+
+        # Lire le déploiement principal
+        dep = apps_v1.read_namespaced_deployment(name, namespace)
+        labels = dep.metadata.labels or {}
+        app_type = labels.get("app-type", "custom")
+
+        deleted = []
+
+        if app_type == "wordpress":
+            # Supprimer la stack complète (web + db) sans toucher PVC/Secret
+            stack_name = labels.get("stack-name") or name
+            wp_name = stack_name
+            db_name = f"{stack_name}-mariadb"
+
+            # Supprimer deployments
+            for dep_name in [wp_name, db_name]:
+                try:
+                    apps_v1.delete_namespaced_deployment(dep_name, namespace)
+                    deleted.append(dep_name)
+                except client.exceptions.ApiException as e:
+                    if e.status != 404:
+                        raise
+
+            # Supprimer services si demandé
+            if delete_service:
+                for svc_name in [f"{wp_name}-service", f"{db_name}-service"]:
+                    try:
+                        core_v1.delete_namespaced_service(svc_name, namespace)
+                    except client.exceptions.ApiException:
+                        pass
+
+            return {"message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"}
+        else:
+            # Comportement standard pour les apps unitaires
+            apps_v1.delete_namespaced_deployment(name, namespace)
+            if delete_service:
+                try:
+                    core_v1.delete_namespaced_service(f"{name}-service", namespace)
+                except client.exceptions.ApiException:
+                    pass
+            return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
+    except Exception as e:
+        _raise_k8s_http(e)
 
 # ============= ENDPOINTS DE TEMPLATES ET PRESETS =============
 
@@ -401,9 +516,25 @@ async def get_deployment_templates_endpoint(
         }
 
     if templates:
+        # Compléter depuis defaults si des champs manquent (icône, description, tags)
+        defaults = get_deployment_templates().get("templates", [])
+        defaults_map = {d.get("id"): d for d in defaults}
+
+        def enrich(tpl_dict):
+            did = tpl_dict.get("id")
+            d = defaults_map.get(did, {})
+            # Appliquer seulement si manquant côté DB
+            tpl_dict.setdefault("icon", d.get("icon"))
+            tpl_dict.setdefault("description", d.get("description"))
+            tpl_dict.setdefault("default_service_type", d.get("default_service_type"))
+            if not tpl_dict.get("tags") and d.get("tags"):
+                tpl_dict["tags"] = d["tags"]
+            return tpl_dict
+
+        items = [enrich(map_template(t)) for t in templates]
         if current_user.role == UserRole.student:
-            templates = [t for t in templates if (t.deployment_type in allowed_set or t.key in allowed_set)]
-        return {"templates": [map_template(t) for t in templates]}
+            items = [tpl for tpl in items if (tpl.get("deployment_type") in allowed_set or tpl.get("id") in allowed_set)]
+        return {"templates": items}
 
     # Fallback: templates codés + filtrage selon rôle
     defaults = get_deployment_templates()
