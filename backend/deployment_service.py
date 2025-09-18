@@ -249,6 +249,12 @@ class DeploymentService:
             service_type,
         )
 
+        # Auto-détermination des ports pour les runtimes connus (ignorer la saisie UI):
+        # - Pour vscode/jupyter, on cale le port d'accès sur le port de l'app (container)
+        # - Pour custom, on respecte les valeurs fournies
+        if deployment_type in {"vscode", "jupyter"}:
+            service_port = config["service_target_port"]
+
         # Créer les labels
         if additional_labels is None:
             additional_labels = {}

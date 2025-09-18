@@ -265,6 +265,14 @@ main {
     color: var(--labondemand-blue);
     margin-bottom: 15px;
 }
+/* Rendu propre pour les emojis utilisés comme icône */
+.emoji-icon.service-icon {
+    font-size: 2.6rem; /* légèrement plus petit pour un alignement visuel */
+    line-height: 1;
+    color: inherit; /* ne pas recolorer les emojis */
+    filter: none;
+    display: inline-block;
+}
 .service-card h3 {
     color: var(--labondemand-blue);
     margin-bottom: 10px;
@@ -820,8 +828,6 @@ footer {
 
 .app-availability-text {
     flex: 1;
-}
-    color: white;
 }
 
 .namespace-type.custom,

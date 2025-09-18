@@ -48,6 +48,8 @@ class Template(Base):
     default_image = Column(String(200), nullable=True)
     default_port = Column(Integer, nullable=True)
     default_service_type = Column(String(30), nullable=False, default="NodePort")  # ClusterIP|NodePort|LoadBalancer
+    # Types multiples (tags) stockés en CSV pour simplicité (ex: "web,python,education")
+    tags = Column(String(255), nullable=True)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

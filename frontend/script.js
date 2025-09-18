@@ -379,13 +379,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             let accessUrlsHtml = '';
             if (data.access_urls && data.access_urls.length > 0) {
                 accessUrlsHtml = `
-                    <h4>URLs d'accès</h4>
+                    <h4>Accès à l'application</h4>
                     <ul class="access-urls-list">
                         ${data.access_urls.map(url => `
                             <li>
                                 <a href="${url.url}" target="_blank">
                                     <i class="fas fa-external-link-alt"></i> ${url.url}
-                                </a> (Service: ${url.service}, NodePort: ${url.node_port})
+                                </a> (exposé par: ${url.service}, NodePort: ${url.node_port})
                             </li>
                         `).join('')}
                     </ul>
@@ -396,7 +396,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             // Construire le HTML des détails du déploiement
             modalContent.innerHTML = `
-                <h3>Déploiement: ${data.deployment.name}</h3>
+                <h3>Application: ${data.deployment.name}</h3>
                 <div class="deployment-details">
                     <div class="deployment-info">                        <h4>Informations générales</h4>
                         <ul>
@@ -454,7 +454,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     
                     <div class="services-section">
-                        <h4>Services (${data.services.length})</h4>
+                        <h4>Points d'exposition (${data.services.length})</h4>
                         ${data.services.length > 0 ? `
                             <table class="k8s-table">
                                 <thead>
@@ -484,7 +484,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     `).join('')}
                                 </tbody>
                             </table>
-                        ` : `<p>Aucun service trouvé pour ce déploiement.</p>`}
+                        ` : `<p>Aucun point d'exposition (Service Kubernetes) trouvé pour ce déploiement.</p>`}
                     </div>
                 </div>
             `;
@@ -570,6 +570,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('deployment-name').value = deploymentName.value;
 
             showView('config-view');
+
+            // Toggle options réseau avancées
+            const advToggle = document.getElementById('advanced-options-toggle');
+            const svcOptions = document.getElementById('service-options');
+            if (advToggle && svcOptions) {
+                advToggle.onclick = (ev) => {
+                    ev.preventDefault();
+                    const show = svcOptions.style.display === 'none' || svcOptions.style.display === '';
+                    svcOptions.style.display = show ? 'block' : 'none';
+                    advToggle.textContent = show ? 'Masquer les options réseau avancées' : 'Options réseau avancées';
+                };
+                // Par défaut replié
+                svcOptions.style.display = 'none';
+                advToggle.textContent = 'Options réseau avancées';
+            }
         });
     }
 
@@ -593,19 +608,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
             serviceCatalog.innerHTML = filteredTemplates.map(t => {
-                const iconClass = t.icon?.includes('fa-') ? t.icon : 'fa-solid fa-cube';
+                const rawIcon = (t.icon || '').trim();
+                const isFA = rawIcon.includes('fa-');
+                const faClass = isFA ? rawIcon : 'fa-solid fa-cube';
+                const iconHtml = isFA
+                    ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
+                    : (rawIcon
+                        ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${rawIcon}</span>`
+                        : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
+
                 const title = t.name || t.id;
                 const desc = t.description || '';
                 const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
                 return `
                     <div class="card service-card" 
                         data-service="${title}"
-                        data-icon="${iconClass}"
+                        data-icon="${rawIcon}"
                         data-deployment-type="${deploymentType}"
                         data-default-image="${t.default_image || ''}"
                         data-default-port="${t.default_port || ''}"
                         data-default-service-type="${t.default_service_type || 'NodePort'}">
-                        <i class="${iconClass} service-icon"></i>
+                        ${iconHtml}
                         <h3>${title}</h3>
                         <p>${desc}</p>
                     </div>
@@ -722,8 +745,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             showView('status-view');
             statusContent.innerHTML = `
                 <i class="fas fa-spinner fa-spin status-icon loading"></i>
-                <h2>Lancement de ${serviceName} en cours...</h2>
-                <p>Votre environnement est en cours de préparation. Veuillez patienter.</p>
+                <h2>Lancement de l'application ${serviceName} en cours...</h2>
+                <p>Votre application est en cours de préparation. Veuillez patienter.</p>
             `;
             statusActions.style.display = 'none'; // Cacher le bouton "Terminé" pendant le chargement
 
@@ -1064,11 +1087,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
                 deploymentCheckTimers.delete(`${namespace}-${name}`);
                 
-                // Supprimer la carte du laboratoire
+                // Supprimer la carte de l'application
                 const card = document.getElementById(name);
                 if (card) {
                     card.remove();
-                    console.log(`Carte de laboratoire ${name} supprimée car le déploiement n'existe plus.`);
+                    console.log(`Carte d'application ${name} supprimée car le déploiement n'existe plus.`);
                 }
                 
                 // Vérifier si la liste est maintenant vide
@@ -1212,7 +1235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     async function stopLab(labId, namespace) {
          // Demander confirmation
-        if (confirm(`Êtes-vous sûr de vouloir arrêter le laboratoire "${labId}" ?`)) {
+    if (confirm(`Êtes-vous sûr de vouloir arrêter l'application "${labId}" ?`)) {
             try {
                 // Appel API pour supprimer le déploiement
                 const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${labId}?delete_service=true`, {
@@ -1240,7 +1263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             } catch (error) {
                 console.error('Erreur:', error);
-                alert(`Erreur lors de l'arrêt du laboratoire: ${error.message}`);
+                alert(`Erreur lors de l'arrêt de l'application: ${error.message}`);
             }
         }
     }

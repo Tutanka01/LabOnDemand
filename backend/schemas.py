@@ -3,7 +3,7 @@ Schémas Pydantic pour LabOnDemand
 Principe KISS : Uniquement les schémas utilisés
 """
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
@@ -72,6 +72,7 @@ class TemplateBase(BaseModel):
     default_port: Optional[int] = Field(None, ge=1, le=65535)
     default_service_type: str = Field("NodePort", pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
     active: bool = True
+    tags: Optional[List[str]] = None
 
 
 class TemplateCreate(TemplateBase):
@@ -87,6 +88,7 @@ class TemplateUpdate(BaseModel):
     default_port: Optional[int] = Field(None, ge=1, le=65535)
     default_service_type: Optional[str] = Field(None, pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
     active: Optional[bool] = None
+    tags: Optional[List[str]] = None
 
 
 class TemplateResponse(TemplateBase):

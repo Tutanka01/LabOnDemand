@@ -55,6 +55,12 @@ def ensure_admin_exists():
         with SessionLocal() as db:
             # Re-créer les tables au cas où (idempotent)
             Base.metadata.create_all(bind=engine)
+            # Migration douce: ajouter la colonne 'tags' si absente
+            try:
+                db.execute(text("ALTER TABLE templates ADD COLUMN tags VARCHAR(255) NULL"))
+                db.commit()
+            except Exception:
+                pass
             admin = db.query(User).filter(User.role == UserRole.admin).first()
             if not admin:
                 admin = User(

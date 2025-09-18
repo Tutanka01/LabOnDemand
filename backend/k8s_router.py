@@ -389,6 +389,7 @@ async def get_deployment_templates_endpoint(
                     "default_port": t.default_port,
                     "deployment_type": t.deployment_type,
                     "default_service_type": t.default_service_type,
+                    "tags": [s for s in (t.tags or '').split(',') if s]
                 }
                 for t in templates
             ]
@@ -422,12 +423,27 @@ async def create_template(
         default_image=payload.default_image,
         default_port=payload.default_port,
         default_service_type=payload.default_service_type,
+        tags=','.join(payload.tags) if payload.tags else None,
         active=payload.active,
     )
     db.add(tpl)
     db.commit()
     db.refresh(tpl)
-    return tpl
+    return schemas.TemplateResponse(
+        id=tpl.id,
+        key=tpl.key,
+        name=tpl.name,
+        description=tpl.description,
+        icon=tpl.icon,
+        deployment_type=tpl.deployment_type,
+        default_image=tpl.default_image,
+        default_port=tpl.default_port,
+        default_service_type=tpl.default_service_type,
+        active=tpl.active,
+        tags=[s for s in (tpl.tags or '').split(',') if s],
+        created_at=tpl.created_at,
+        updated_at=tpl.updated_at,
+    )
 
 
 @router.get("/templates/all", response_model=List[schemas.TemplateResponse])
@@ -437,7 +453,24 @@ async def list_all_templates(
     db: Session = Depends(get_db)
 ):
     """Lister tous les templates (admin)"""
-    return db.query(Template).order_by(Template.id.desc()).all()
+    rows = db.query(Template).order_by(Template.id.desc()).all()
+    return [
+        schemas.TemplateResponse(
+            id=t.id,
+            key=t.key,
+            name=t.name,
+            description=t.description,
+            icon=t.icon,
+            deployment_type=t.deployment_type,
+            default_image=t.default_image,
+            default_port=t.default_port,
+            default_service_type=t.default_service_type,
+            active=t.active,
+            tags=[s for s in (t.tags or '').split(',') if s],
+            created_at=t.created_at,
+            updated_at=t.updated_at,
+        ) for t in rows
+    ]
 
 
 @router.put("/templates/{template_id}", response_model=schemas.TemplateResponse)
@@ -451,11 +484,28 @@ async def update_template(
     tpl = db.query(Template).filter(Template.id == template_id).first()
     if not tpl:
         raise HTTPException(status_code=404, detail="Template non trouvé")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "tags" in updates:
+        updates["tags"] = ','.join(updates["tags"]) if updates["tags"] else None
+    for field, value in updates.items():
         setattr(tpl, field, value)
     db.commit()
     db.refresh(tpl)
-    return tpl
+    return schemas.TemplateResponse(
+        id=tpl.id,
+        key=tpl.key,
+        name=tpl.name,
+        description=tpl.description,
+        icon=tpl.icon,
+        deployment_type=tpl.deployment_type,
+        default_image=tpl.default_image,
+        default_port=tpl.default_port,
+        default_service_type=tpl.default_service_type,
+        active=tpl.active,
+        tags=[s for s in (tpl.tags or '').split(',') if s],
+        created_at=tpl.created_at,
+        updated_at=tpl.updated_at,
+    )
 
 
 @router.delete("/templates/{template_id}")
