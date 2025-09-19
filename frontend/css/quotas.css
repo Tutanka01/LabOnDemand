@@ -1,0 +1,14 @@
+/* Carte Quotas utilisateur */
+.quotas-card { margin-top: 10px; }
+.quotas-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.quotas-content { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; }
+.quota-item { background:#fff; border:1px solid var(--grey-border); border-radius:8px; padding:14px; }
+.quota-item h4 { display:flex; align-items:center; gap:8px; font-size:1rem; margin-bottom:8px; color:#0f172a; }
+.quota-metric { font-size:0.9rem; color:#475569; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+.progress { height:10px; background:#eef2f7; border-radius:999px; overflow:hidden; }
+.progress-bar { height:100%; border-radius:999px; transition:width .4s ease; }
+.pb-green { background:#22c55e; }
+.pb-amber { background:#f59e0b; }
+.pb-red { background:#ef4444; }
+.quota-legend { margin-top:6px; font-size:0.85rem; color:#64748b; }
+.btn-sm { padding:6px 10px; font-size:0.85rem; }
