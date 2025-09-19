@@ -17,15 +17,16 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 
 ## 🚀 Fonctionnalités Clés
 
-*   **Déploiement Facile :** Interface web intuitive pour lancer des environnements pré-configurés (VS Code, Jupyter) ou des images Docker personnalisées.
-*   **Gestion Kubernetes Simplifiée :** Interagit avec l'API Kubernetes pour créer déploiements, services et gérer les ressources (CPU/Mémoire).
-*   **Isolation :** Chaque laboratoire est déployé dans son propre namespace (optionnel) pour une meilleure organisation et isolation.
-*   **Configuration des Ressources :** Préréglages de CPU/Mémoire pour adapter les environnements aux besoins spécifiques.
-*   **Accès Simplifié :** Exposition automatique des services via NodePort (configurable pour d'autres types).
-*   **Visualisation :** Tableau de bord pour suivre les laboratoires actifs, les namespaces, pods et déploiements Kubernetes gérés par l'application.
-*   **Templates :** Templates d'application dynamiques (VS Code, Jupyter, personnalisés) gérés via l'admin; affichés automatiquement aux utilisateurs.
-*   **Validation Intégrée :** Formatage et validation des noms pour la conformité Kubernetes.
-*   **Scalabilité :** Prêt pour une architecture haute disponibilité (voir schéma futur).
+*   Déploiement Facile : UI pour lancer des environnements pré-configurés (VS Code, Jupyter, WordPress) ou des images Docker personnalisées.
+*   Gestion Kubernetes Simplifiée : création de Deployments/Services, labels standardisés, et conformité K8s (validation des noms).
+*   Rôles & Autorisations : étudiants, enseignants, admins. Les étudiants peuvent supprimer uniquement leurs propres applications (contrôle d’étiquettes managed-by=labondemand, user-id).
+*   Quotas par Rôle (enforcement côté serveur) : limites sur nombre d’apps, CPU et mémoire avec mode fail-closed si la mesure est indisponible. Carte de quotas sur le dashboard.
+*   Observabilité par Application : métriques CPU (m) et mémoire (Mi) par application, en Live (metrics-server) ou estimation (requests). Liste triable par consommation.
+*   Statistiques Admin : vue dédiée pour l’état cluster/noeuds (si metrics-server présent), avec agrégations utiles.
+*   WordPress pour Étudiants : stack complète WordPress + MariaDB gérée; suppression traite la stack (web + db) proprement.
+*   Sécurité des Sessions : cookies HttpOnly, Secure, SameSite, domaine/expiration configurables; contrôles de rôle côté API.
+*   Accès Simplifié : exposition via NodePort (par défaut), configurable.
+*   Templates Dynamiques : templates en base (icône/desc/tags) + runtime-configs pour piloter l’affichage aux étudiants.
 
 ## 🏗️ Architecture du Projet
 
@@ -169,9 +170,9 @@ graph TD
     helm install nginx-ingress ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
     ```
 
-### Authentification
+### Diagrammes de flux
 
-Voila actuellement le flow d'authentification :
+Flux d'authentification actuel :
 
 ```mermaid
 sequenceDiagram
@@ -210,6 +211,42 @@ sequenceDiagram
     S-->>A: Session supprimée
     A-->>F: Réponse + Suppression du cookie
     F-->>U: Redirection vers la page de connexion
+```
+
+Flux de suppression d'une application (étudiant) :
+
+```mermaid
+sequenceDiagram
+    participant E as Étudiant
+    participant F as Frontend
+    participant K as API K8s (FastAPI)
+    participant K8s as Kubernetes API
+
+    E->>F: Clic "Supprimer" sur une app
+    F->>K: DELETE /api/v1/k8s/deployments/{ns}/{name}?delete_service=true (cookie de session)
+    K->>K: Vérifier session + rôle
+    alt Étudiant
+        K->>K: Lire le Deployment (ou par stack-name, ou label app)
+        K->>K: Vérifier labels managed-by=labondemand et user-id=étudiant
+        alt App non possédée
+            K-->>F: 403 Forbidden
+        else App possédée
+            opt Stack WordPress
+                K->>K8s: delete Deployment wordpress et mariadb
+                K->>K8s: delete Service(s) associés (si demandé)
+            end
+            opt App unitaire
+                K->>K8s: delete Deployment {name}
+                K->>K8s: delete Service {name}-service (si demandé)
+            end
+            K-->>F: 200 OK (message de succès)
+            F-->>E: Retirer l’app de l’UI
+        end
+    else Admin/Enseignant
+        K->>K: Peut supprimer toute app LabOnDemand
+        K->>K8s: delete Deployment/Service(s)
+        K-->>F: 200 OK
+    end
 ```
 ### Démarrage de l'Application
 
@@ -257,6 +294,69 @@ Une fois démarré, l'application sera accessible aux adresses suivantes (par d�
         └── nginx.conf      # Configuration du proxy NGINX
 ```
 
+## 🧩 UML (modèle conceptuel)
+
+```mermaid
+classDiagram
+        direction LR
+        class User {
+            +int id
+            +string username
+            +UserRole role
+        }
+
+        class Session {
+            +string session_id
+            +datetime created_at
+            +int user_id
+        }
+
+        class Template {
+            +int id
+            +string key
+            +string name
+            +string deployment_type
+            +string default_image
+            +int default_port
+            +string[] tags
+            +bool active
+        }
+
+        class RuntimeConfig {
+            +int id
+            +string key
+            +string label
+            +bool allowed_for_students
+            +bool active
+        }
+
+        class AppInstance {
+            +string name
+            +string namespace
+            +string app_type
+            +map<string,string> labels // managed-by, user-id, stack-name, component
+        }
+
+        class QuotaLimits {
+            +int max_apps
+            +int cpu_m
+            +int mem_mi
+        }
+
+        class UsageSummary {
+            +int apps
+            +int cpu_m
+            +int mem_mi
+            +bool metrics_live
+        }
+
+        User "1" -- "*" AppInstance : possède
+        Template "1" -- "*" AppInstance : instancie
+        User "1" -- "1" QuotaLimits : selon rôle
+        User "1" -- "1" UsageSummary : consommation
+        RuntimeConfig "*" ..> Template : visibilité/affichage
+```
+
 ## 💡 Développement et Maintenance
 
 ### Contribution au Projet
@@ -275,6 +375,12 @@ Pour vous aider dans votre utilisation et développement avec LabOnDemand, voici
 * **[Installation d'un Cluster Kubernetes](https://makhal.fr/posts/k8s/k8s1-3/)** - Guide détaillé pour mettre en place votre propre cluster Kubernetes
 * **[Documentation Kubernetes Officielle](https://kubernetes.io/fr/docs/home/)** - Référence complète pour l'utilisation de Kubernetes
 * **[FastAPI Documentation](https://fastapi.tiangolo.com/)** - Documentation de FastAPI, utilisé pour le backend de l'application
+* **Docs du projet**
+    * `documentation/QUICKSTART.md` — Démarrage rapide (Docker Compose, kubeconfig)
+    * `documentation/auth-flow.md` — Détails d’authentification et sécurité des sessions
+    * `documentation/wordpress.md` — Stack WordPress (web + mariadb), notes de suppression
+    * `documentation/auth-summary.md` — Résumé des rôles et autorisations
+    * `documentation/pvc-mise-en-place.md` — Stockage persistant
 
 ## 📝 Licence
 
