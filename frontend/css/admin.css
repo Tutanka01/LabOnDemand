@@ -275,6 +275,12 @@ main {
     overflow-x: auto;
 }
 
+/* Barres de progression simples pour stats */
+.usage-bar {
+    display: inline-block;
+    min-width: 160px;
+}
+
 .users-table {
     width: 100%;
     border-collapse: collapse;

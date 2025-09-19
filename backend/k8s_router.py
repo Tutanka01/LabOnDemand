@@ -9,7 +9,7 @@ import urllib3
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
 from .models import User, UserRole, Template, RuntimeConfig
-from .k8s_utils import validate_k8s_name
+from .k8s_utils import validate_k8s_name, parse_cpu_to_millicores, parse_memory_to_mi
 from .deployment_service import deployment_service
 from .templates import get_deployment_templates, get_resource_presets_for_role
 from .config import settings
@@ -47,6 +47,178 @@ def _raise_k8s_http(e: Exception):
     except HTTPException:
         # Laisser passer tel quel
         raise
+
+
+# ============= ENDPOINT STATS CLUSTER/NODES (ADMIN) =============
+
+def _parse_cpu_metrics_to_millicores(cpu: str) -> float:
+    """Convertit une valeur CPU des metrics (ex: '123456789n', '250m', '1') en millicores."""
+    try:
+        s = str(cpu).strip()
+        if s.endswith('n'):  # nanocores -> m
+            return float(s[:-1]) / 1_000_000.0
+        if s.endswith('u'):  # microcores éventuels
+            return float(s[:-1]) / 1000.0
+        if s.endswith('m'):
+            return float(s[:-1])
+        # sinon considéré comme cores
+        return float(s) * 1000.0
+    except Exception:
+        # Fallback prudent
+        return 0.0
+
+
+@router.get("/stats/cluster")
+async def get_cluster_stats(
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_admin)
+):
+    """Statistiques globales du cluster et par nœud (admin seulement).
+    - Tente d'utiliser metrics-server; sinon fallback en sommant les requests des pods par nœud.
+    - Renvoie des unités simples: cpu_m (millicores), mem_mi (Mi), avec pourcentages calculés.
+    """
+    try:
+        core_v1 = client.CoreV1Api()
+        apps_v1 = client.AppsV1Api()
+
+        # Données globales
+        nodes_resp = core_v1.list_node()
+        deployments_resp = apps_v1.list_deployment_for_all_namespaces()
+        pods_resp = core_v1.list_pod_for_all_namespaces()
+        namespaces_resp = core_v1.list_namespace()
+
+        # Index pods par nœud (pour fallback)
+        pods_by_node: Dict[str, list] = {}
+        for pod in pods_resp.items:
+            node_name = getattr(pod.spec, 'node_name', None) or getattr(pod.spec, 'nodeName', None)
+            if node_name:
+                pods_by_node.setdefault(node_name, []).append(pod)
+
+        # Essayer de récupérer les metrics du cluster (metrics.k8s.io)
+        metrics_index: Dict[str, Dict[str, Any]] = {}
+        try:
+            custom_api = client.CustomObjectsApi()
+            metrics_nodes = custom_api.list_cluster_custom_object(
+                group="metrics.k8s.io", version="v1beta1", plural="nodes"
+            )
+            for item in metrics_nodes.get('items', []):
+                name = (item.get('metadata') or {}).get('name')
+                if name:
+                    metrics_index[name] = item.get('usage') or {}
+        except Exception:
+            # Pas de metrics-server ou accès refusé -> fallback
+            metrics_index = {}
+
+        # Compteurs globaux
+        deployments = deployments_resp.items
+        pods = pods_resp.items
+        namespaces = namespaces_resp.items
+
+        deployments_count = len(deployments)
+        pods_count = len(pods)
+        namespaces_count = len(namespaces)
+        nodes_count = len(nodes_resp.items)
+        ready_deployments = sum(1 for d in deployments if (getattr(d.status, 'ready_replicas', 0) or 0) > 0)
+        lab_apps_count = sum(1 for d in deployments if (getattr(d.metadata, 'labels', {}) or {}).get('managed-by') == 'labondemand')
+
+        # Détails par nœud
+        nodes_data: list[Dict[str, Any]] = []
+        for node in nodes_resp.items:
+            name = node.metadata.name
+            labels = node.metadata.labels or {}
+            alloc_cpu_m = parse_cpu_to_millicores(node.status.allocatable.get('cpu', '0')) if node.status.allocatable else 0.0
+            cap_cpu_m = parse_cpu_to_millicores(node.status.capacity.get('cpu', '0')) if node.status.capacity else 0.0
+            alloc_mem_mi = parse_memory_to_mi(node.status.allocatable.get('memory', '0Mi')) if node.status.allocatable else 0.0
+            cap_mem_mi = parse_memory_to_mi(node.status.capacity.get('memory', '0Mi')) if node.status.capacity else 0.0
+
+            # Usage CPU/Mem: metrics ou fallback requests
+            usage_cpu_m = 0.0
+            usage_mem_mi = 0.0
+            m = metrics_index.get(name)
+            if m:
+                usage_cpu_m = _parse_cpu_metrics_to_millicores(str(m.get('cpu', '0')))
+                usage_mem_mi = parse_memory_to_mi(str(m.get('memory', '0Mi')))
+            else:
+                for pod in pods_by_node.get(name, []):
+                    for c in (getattr(pod.spec, 'containers', None) or []):
+                        res = getattr(c, 'resources', None)
+                        if res and res.requests:
+                            cpu_req = res.requests.get('cpu')
+                            mem_req = res.requests.get('memory')
+                            if cpu_req:
+                                try:
+                                    usage_cpu_m += parse_cpu_to_millicores(str(cpu_req))
+                                except Exception:
+                                    pass
+                            if mem_req:
+                                try:
+                                    usage_mem_mi += parse_memory_to_mi(str(mem_req))
+                                except Exception:
+                                    pass
+
+            # Statut Ready
+            ready = False
+            for cond in (node.status.conditions or []):
+                if getattr(cond, 'type', '') == 'Ready':
+                    ready = (getattr(cond, 'status', '') == 'True')
+                    break
+
+            # Rôles
+            roles: list[str] = []
+            for k, v in labels.items():
+                if k.startswith('node-role.kubernetes.io/'):
+                    role = k.split('/', 1)[1] or 'worker'
+                    roles.append(role)
+            if not roles:
+                # heuristique simple
+                roles = ['control-plane'] if labels.get('node-role.kubernetes.io/control-plane') is not None else ['worker']
+
+            pods_on_node = len(pods_by_node.get(name, []))
+            version = getattr(getattr(node.status, 'node_info', None), 'kubelet_version', '')
+
+            def pct(part: float, whole: float) -> float:
+                return round((part / whole * 100.0), 1) if whole and part >= 0 else 0.0
+
+            nodes_data.append({
+                "name": name,
+                "ready": ready,
+                "roles": roles,
+                "kubelet_version": version,
+                "pods": pods_on_node,
+                "cpu": {
+                    "usage_m": round(usage_cpu_m, 1),
+                    "allocatable_m": round(alloc_cpu_m, 1),
+                    "capacity_m": round(cap_cpu_m, 1),
+                    "usage_pct": pct(usage_cpu_m, alloc_cpu_m or cap_cpu_m)
+                },
+                "memory": {
+                    "usage_mi": round(usage_mem_mi, 1),
+                    "allocatable_mi": round(alloc_mem_mi, 1),
+                    "capacity_mi": round(cap_mem_mi, 1),
+                    "usage_pct": pct(usage_mem_mi, alloc_mem_mi or cap_mem_mi)
+                }
+            })
+
+        return {
+            "k8s_available": True,
+            "cluster": {
+                "nodes": nodes_count,
+                "deployments": deployments_count,
+                "deployments_ready": ready_deployments,
+                "lab_apps": lab_apps_count,
+                "pods": pods_count,
+                "namespaces": namespaces_count,
+            },
+            "nodes": nodes_data,
+        }
+    except Exception as e:
+        # Mode dégradé
+        print(f"[cluster-stats] Erreur: {e}")
+        return {
+            "k8s_available": False,
+            "cluster": {"nodes": 0, "deployments": 0, "deployments_ready": 0, "lab_apps": 0, "pods": 0, "namespaces": 0},
+            "nodes": []
+        }
 
 @router.get("/ping")
 async def ping_k8s(current_user: User = Depends(get_current_user)):

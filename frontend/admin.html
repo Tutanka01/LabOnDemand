@@ -10,6 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Ajout de Font Awesome pour les icônes -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="icon" href="Images/banner-projet.jpeg" type="image/jpeg">
     <!-- Styles spécifiques pour l'administration -->
     <link rel="stylesheet" href="css/admin.css">
 </head>
@@ -24,6 +25,7 @@
                 <ul>
                     <li><a href="index.html"><i class="fas fa-home"></i> Accueil</a></li>
                     <li class="admin-only active"><a href="admin.html"><i class="fas fa-users-cog"></i> Administration</a></li>
+                    <li class="admin-only"><a href="admin-stats.html"><i class="fas fa-chart-line"></i> Statistiques</a></li>
                 </ul>
             </nav>
             <div class="user-info">
@@ -101,6 +103,8 @@
                     Suivant <i class="fas fa-chevron-right"></i>
                 </button>
             </div>
+
+            
 
             <!-- Gestion des Templates d'applications -->
             <section class="admin-section" id="templates-section">
@@ -244,6 +248,7 @@
                                 <option value="custom">Custom</option>
                                 <option value="vscode">VSCode</option>
                                 <option value="jupyter">Jupyter</option>
+                                <option value="wordpress">WordPress</option>
                             </select>
                         </div>
                     </div>
