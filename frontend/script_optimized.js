@@ -253,12 +253,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         card.innerHTML = `
             <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
-            <ul class="lab-details">
-                <li><i class="fas fa-tag"></i> <span>Nom: ${labDetails.id}</span></li>
-                <li><i class="fas fa-project-diagram"></i> <span>Namespace: ${labDetails.namespace}</span></li>
-                <li><i class="fas fa-microchip"></i> <span>CPU: ${labDetails.cpu}</span></li>
-                <li><i class="fas fa-memory"></i> <span>RAM: ${labDetails.ram}</span></li>
-            </ul>
+            <div class="lab-subtitle">
+                <span class="id-badge"><i class="fas fa-tag"></i>${labDetails.id}</span>
+            </div>
+            <div class="lab-meta">
+                <span class="meta-item"><i class="fas fa-microchip"></i>${labDetails.cpu}</span>
+                <span class="sep">•</span>
+                <span class="meta-item"><i class="fas fa-memory"></i>${labDetails.ram}</span>
+            </div>
             <div class="lab-actions">
                 <a href="${labDetails.link}" target="_blank" class="btn btn-primary ${labDetails.ready ? '' : 'disabled'}" id="access-btn-${labDetails.id}">
                     <i class="fas fa-external-link-alt"></i> ${labDetails.ready ? 'Accéder' : 'En préparation...'}
