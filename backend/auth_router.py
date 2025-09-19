@@ -11,6 +11,7 @@ from .security import (
     authenticate_user, create_session, get_password_hash, 
     get_current_user, delete_session, is_admin, is_teacher_or_admin
 )
+from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -50,10 +51,11 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
         key="session_id",
         value=session_id,
         httponly=True,
-        secure=False,  # Temporairement false pour déboguer
-        samesite="lax",
-        max_age=24 * 3600,  # 24 heures
+        secure=SECURE_COOKIES,
+        samesite=SESSION_SAMESITE.lower(),
+        max_age=SESSION_EXPIRY_HOURS * 3600,
         path="/",
+        domain=COOKIE_DOMAIN or None
     )
     print(f"[Login] Cookie session_id créé directement dans la réponse")
     

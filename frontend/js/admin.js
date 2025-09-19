@@ -30,53 +30,71 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeModalButtons = document.querySelectorAll('.close-modal');
     const confirmDeleteBtn = document.getElementById('confirm-delete');
 
+    const onUsersPage = !!userTableBody; // page administration utilisateurs
+
     // Vérification des droits d'administration
     checkAdminRights();
 
     // Initialiser l'affichage
-    loadUsers();
+    if (onUsersPage) {
+        loadUsers();
+    }
 
     // Écouteurs d'événements
-    prevPageBtn.addEventListener('click', () => {
-        if (currentPage > 1) {
-            currentPage--;
-            displayUsers();
-        }
-    });
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                displayUsers();
+            }
+        });
+    }
 
-    nextPageBtn.addEventListener('click', () => {
-        if (currentPage < totalPages) {
-            currentPage++;
-            displayUsers();
-        }
-    });
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener('click', () => {
+            if (currentPage < totalPages) {
+                currentPage++;
+                displayUsers();
+            }
+        });
+    }
 
-    searchInput.addEventListener('input', () => {
-        currentPage = 1;
-        filterUsers();
-    });
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            currentPage = 1;
+            filterUsers();
+        });
+    }
 
-    roleFilter.addEventListener('change', () => {
-        currentPage = 1;
-        filterUsers();
-    });
+    if (roleFilter) {
+        roleFilter.addEventListener('change', () => {
+            currentPage = 1;
+            filterUsers();
+        });
+    }
 
-    addUserBtn.addEventListener('click', () => {
-        openAddUserModal();
-    });
+    if (addUserBtn) {
+        addUserBtn.addEventListener('click', () => {
+            openAddUserModal();
+        });
+    }
 
-    userForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        if (selectedUserId) {
-            updateUser();
-        } else {
-            createUser();
-        }
-    });
+    if (userForm) {
+        userForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (selectedUserId) {
+                updateUser();
+            } else {
+                createUser();
+            }
+        });
+    }
 
-    confirmDeleteBtn.addEventListener('click', () => {
-        deleteUser(selectedUserId);
-    });
+    if (confirmDeleteBtn) {
+        confirmDeleteBtn.addEventListener('click', () => {
+            deleteUser(selectedUserId);
+        });
+    }
 
     closeButtons.forEach(button => {
         button.addEventListener('click', function() {
@@ -84,12 +102,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    closeModalButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            userModal.classList.remove('show');
-            deleteModal.classList.remove('show');
+    if (closeModalButtons && closeModalButtons.length) {
+        closeModalButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                if (userModal) userModal.classList.remove('show');
+                if (deleteModal) deleteModal.classList.remove('show');
+            });
         });
-    });
+    }
 
     // Fonctions
 
@@ -112,7 +132,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Mettre à jour l'affichage du rôle
             const roleElement = document.getElementById('user-role');
-            roleElement.innerHTML = `<span class="role-badge ${data.role}">${formatRole(data.role)}</span>`;
+            if (roleElement) {
+                roleElement.innerHTML = `<span class="role-badge ${data.role}">${formatRole(data.role)}</span>`;
+            }
             
             // Mettre à jour l'affichage du nom d'utilisateur
             const userInfo = JSON.parse(sessionStorage.getItem('user') || '{}');
@@ -121,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // Vérifier si l'utilisateur est un administrateur
-            if (!data.can_manage_users) {
+            if (!data.can_manage_users && onUsersPage) {
                 window.location.href = 'access-denied.html';
             }
         } catch (error) {
@@ -184,8 +206,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Afficher les utilisateurs paginés
     function displayUsers() {
-        // Vider le tableau
-        userTableBody.innerHTML = '';
+    // Vider le tableau (seulement si présent)
+    if (!userTableBody) return;
+    userTableBody.innerHTML = '';
         
         // Calculer la pagination
         totalPages = Math.ceil(filteredUsers.length / pageSize);
@@ -194,9 +217,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentUsers = filteredUsers.slice(startIndex, endIndex);
         
         // Mettre à jour l'information de pagination
-        pageInfo.textContent = `Page ${currentPage} sur ${totalPages || 1}`;
-        prevPageBtn.disabled = currentPage <= 1;
-        nextPageBtn.disabled = currentPage >= totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${currentPage} sur ${totalPages || 1}`;
+    if (prevPageBtn) prevPageBtn.disabled = currentPage <= 1;
+    if (nextPageBtn) nextPageBtn.disabled = currentPage >= totalPages;
         
         // Aucun utilisateur trouvé
         if (currentUsers.length === 0) {

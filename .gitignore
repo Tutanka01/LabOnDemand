@@ -67,3 +67,5 @@ kubeconfig.yaml
 *.bkp
 kubeconfig.yaml.cloud
 kubeconfig.*
+OLDkubeconfig.yaml
+.gitignore
