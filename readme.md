@@ -384,7 +384,7 @@ Pour vous aider dans votre utilisation et développement avec LabOnDemand, voici
 
 ## 📝 Licence
 
-Ce projet est sous licence [GNU General Public License v3.0](LICENSE) - voir le fichier LICENSE pour plus de détails.
+Ce projet est sous licence [GNU AFFERO GENERAL PUBLIC LICENSE v3](LICENSE) - voir le fichier LICENSE pour plus de détails.
 
 ---
 
