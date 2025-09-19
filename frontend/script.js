@@ -1187,7 +1187,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         let datasetsHtml = '';
         if (labDetails.datasets && labDetails.datasets.length > 0) {
-            datasetsHtml = `<li><i class="fas fa-database"></i> <span>Datasets: ${labDetails.datasets.join(', ')}</span></li>`;
+            datasetsHtml = `<div class="lab-datasets"><i class="fas fa-database"></i><span>Datasets: ${labDetails.datasets.join(', ')}</span></div>`;
         }
 
         // Déterminer l'indicateur d'état à afficher
@@ -1195,13 +1195,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             ? '<span class="status-indicator ready"><i class="fas fa-check-circle"></i> Prêt</span>'
             : '<span class="status-indicator pending"><i class="fas fa-spinner fa-spin"></i> En préparation...</span>';        card.innerHTML = `
             <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
-            <ul class="lab-details">
-                <li><i class="fas fa-tag"></i> <span>Nom: ${labDetails.id}</span></li>
-                <li><i class="fas fa-project-diagram"></i> <span>Namespace: ${labDetails.namespace}</span></li>
-                <li><i class="fas fa-microchip"></i> <span>CPU: ${labDetails.cpu}</span></li>
-                <li><i class="fas fa-memory"></i> <span>RAM: ${labDetails.ram}</span></li>
-                ${datasetsHtml}
-            </ul>
+            <div class="lab-subtitle">
+                <span class="id-badge"><i class="fas fa-tag"></i>${labDetails.id}</span>
+            </div>
+            <div class="lab-meta">
+                <span class="meta-item"><i class="fas fa-microchip"></i>${labDetails.cpu}</span>
+                <span class="sep">•</span>
+                <span class="meta-item"><i class="fas fa-memory"></i>${labDetails.ram}</span>
+            </div>
+            ${datasetsHtml}
             ${!labDetails.ready ? `
                 <div class="app-availability pending" id="app-status-${labDetails.id}">
                     <i class="fas fa-hourglass-half app-availability-icon"></i>
