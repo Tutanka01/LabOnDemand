@@ -7,6 +7,7 @@ import os
 SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
 SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
+SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Lax")  # Lax ou Strict
 
 # Exécution périodique du nettoyage des sessions expirées
 def setup_session_handler(app: FastAPI):
@@ -50,11 +51,11 @@ def setup_session_handler(app: FastAPI):
                 key="session_id",
                 value=session_id,
                 httponly=True,  # Toujours true pour la sécurité
-                secure=False,    # Temporairement mis à False pour déboguer
-                samesite="lax",
+                secure=SECURE_COOKIES,
+                samesite=SESSION_SAMESITE.lower(),
                 max_age=SESSION_EXPIRY_HOURS * 3600,  # En secondes
                 path="/",
-                domain=None      # Pour s'assurer que le cookie est envoyé au domaine courant
+                domain=COOKIE_DOMAIN or None
             )
             print(f"[Session Middleware] Cookie session_id créé (expiration: {SESSION_EXPIRY_HOURS}h)")
         else:
