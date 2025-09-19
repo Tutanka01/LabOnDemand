@@ -6,6 +6,7 @@
     <title>LabOnDemand - Dashboard</title>    <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="css/lab-status.css">
     <link rel="stylesheet" href="css/app-status.css">
+    <link rel="stylesheet" href="css/quotas.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -38,6 +39,14 @@
                 <button id="show-launch-view-btn" class="btn btn-primary">
                     <i class="fas fa-plus-circle"></i> Lancer une Nouvelle Application
                 </button>
+            </div>
+
+            <div class="card quotas-card" id="my-quotas-card">
+                <div class="quotas-header">
+                    <h2><i class="fas fa-gauge-high"></i> Vos ressources</h2>
+                    <button id="refresh-quotas" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                </div>
+                <div id="quotas-content" class="quotas-content">Chargement...</div>
             </div>
 
             <h2><i class="fas fa-rocket"></i> Applications Actives</h2>

@@ -140,10 +140,13 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
         if role == "student":
             rq_hard = {
                 "pods": "5",
-                "requests.cpu": "1000m",
-                "requests.memory": "2Gi",
-                "limits.cpu": "2",
-                "limits.memory": "4Gi",
+                "requests.cpu": "2000m",
+                "requests.memory": "6Gi",
+                "limits.cpu": "4",
+                "limits.memory": "8Gi",
+                # Limites d'objets (quotas par rôle)
+                "count/deployments.apps": "8",
+                "count/services": "10",
             }
             lr_default = {"cpu": "500m", "memory": "512Mi"}
             lr_request = {"cpu": "100m", "memory": "128Mi"}
@@ -154,6 +157,8 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
                 "requests.memory": "8Gi",
                 "limits.cpu": "8",
                 "limits.memory": "16Gi",
+                "count/deployments.apps": "20",
+                "count/services": "25",
             }
             lr_default = {"cpu": "1000m", "memory": "1Gi"}
             lr_request = {"cpu": "250m", "memory": "256Mi"}
@@ -207,6 +212,38 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
     except Exception as e:
         print(f"[namespace-baseline] Erreur sur {namespace_name}: {e}")
         return False
+
+
+def get_role_limits(role: str) -> Dict[str, Any]:
+    """Exposer des plafonds cohérents utilisés à la fois pour les ResourceQuota et les vérifications applicatives.
+    Retourne: {
+      max_apps: int,  # notion logique d'apps (stack wordpress = 1)
+      max_requests_cpu_m: int,
+      max_requests_mem_mi: int,
+      max_pods: int
+    }
+    """
+    if role == "student":
+        return {
+            "max_apps": 4,
+            "max_requests_cpu_m": 2000,
+            "max_requests_mem_mi": 6144,
+            "max_pods": 5,
+        }
+    elif role == "teacher":
+        return {
+            "max_apps": 10,
+            "max_requests_cpu_m": 4000,
+            "max_requests_mem_mi": 8192,
+            "max_pods": 20,
+        }
+    else:  # admin
+        return {
+            "max_apps": 100,
+            "max_requests_cpu_m": 16000,
+            "max_requests_mem_mi": 65536,
+            "max_pods": 100,
+        }
 
 async def ensure_namespace_exists(namespace_name: str) -> bool:
     """

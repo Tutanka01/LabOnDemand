@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const logoutBtn = document.getElementById('logout-btn');
     const catalogSearch = document.getElementById('catalog-search');
     const tagFiltersEl = document.getElementById('tag-filters');
+    const quotasContent = document.getElementById('quotas-content');
+    const refreshQuotasBtn = document.getElementById('refresh-quotas');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -111,6 +113,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             return { api: false, k8s: false };
         }
+    }
+
+    // --- Quotas: fetch + rendu ---
+    async function fetchMyQuotas() {
+        const resp = await fetch(`${API_V1}/quotas/me`, { credentials: 'include' });
+        if (!resp.ok) throw new Error('Quotas indisponibles');
+        return await resp.json();
+    }
+    function pct(part, whole) { return whole ? Math.min(100, Math.round((part / whole) * 100)) : 0; }
+    function barClass(p) { return p < 70 ? 'pb-green' : (p < 90 ? 'pb-amber' : 'pb-red'); }
+    function renderQuotasCard(data) {
+        if (!quotasContent) return;
+        const { limits, usage } = data || {};
+        if (!limits || !usage) {
+            quotasContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> Quotas indisponibles</div>`;
+            return;
+        }
+        const rows = [
+            { title: 'Applications', icon: 'fa-layer-group', used: usage.apps_used, max: limits.max_apps, unit: '' },
+            { title: 'CPU', icon: 'fa-microchip', used: usage.cpu_m_used, max: limits.max_requests_cpu_m, unit: 'm' },
+            { title: 'Mémoire', icon: 'fa-memory', used: usage.mem_mi_used, max: limits.max_requests_mem_mi, unit: 'Mi' },
+        ];
+        quotasContent.innerHTML = rows.map(r => {
+            const p = pct(r.used, r.max);
+            return `
+            <div class="quota-item">
+              <h4><i class="fas ${r.icon}"></i> ${r.title}</h4>
+              <div class="quota-metric"><i class="fas fa-chart-bar"></i> ${r.used} / ${r.max} ${r.unit}</div>
+              <div class="progress"><div class="progress-bar ${barClass(p)}" style="width:${p}%"></div></div>
+              <div class="quota-legend">Reste: ${Math.max(r.max - r.used, 0)} ${r.unit}</div>
+            </div>`;
+        }).join('');
+    }
+    async function refreshQuotas() {
+        if (!quotasContent) return;
+        quotasContent.innerHTML = 'Chargement...';
+        try { renderQuotasCard(await fetchMyQuotas()); }
+        catch (e) { quotasContent.innerHTML = `<div class="error-message"><i class=\"fas fa-exclamation-triangle\"></i> ${e.message || 'Erreur quotas'}</div>`; }
+    }
+    if (refreshQuotasBtn) {
+        refreshQuotasBtn.addEventListener('click', refreshQuotas);
+        setInterval(() => { refreshQuotas(); }, 45000);
     }
 
     // --- Rendu des namespaces (admin/teacher) ---
@@ -232,6 +276,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         const deploymentsListEl = document.getElementById('deployments-list');
         
         try {
+            // 1) Récupérer les métriques d’usage par application (facultatif)
+            let usageIndex = {};
+            try {
+                const usageResp = await fetch(`${API_V1}/k8s/usage/my-apps`);
+                if (usageResp.ok) {
+                    const usageData = await usageResp.json();
+                    (usageData.items || []).forEach(it => {
+                        const key = `$${it.namespace}::$${it.name}`;
+                        usageIndex[key] = it;
+                    });
+                }
+            } catch (e) {
+                // Ne pas bloquer si indisponible
+            }
+            window.__myAppsUsageIndex = usageIndex;
+
             // Utiliser l'endpoint spécialisé qui ne récupère que les déploiements LabOnDemand
             const response = await fetch(`${API_V1}/k8s/deployments/labondemand`);
             if (!response.ok) throw new Error('Erreur lors de la récupération des déploiements');
@@ -251,6 +311,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <th>Nom</th>
                             <th>Namespace</th>
                             <th>Type</th>
+                            <th>CPU</th>
+                            <th>Mémoire</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -275,11 +337,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     break;
                             }
                             
+                            // Chercher les métriques d’usage pour cette app
+                            const u = (window.__myAppsUsageIndex || {})[`$${dep.namespace}::$${dep.name}`] || null;
+                            const cpuDisplay = u ? `${u.cpu_m} m` : 'N/A';
+                            const memDisplay = u ? `${u.mem_mi} Mi` : 'N/A';
+                            const srcBadge = u ? `<span class="usage-source ${u.source === 'live' ? 'live' : 'requests'}" title="${u.source === 'live' ? 'Mesures live (metrics-server)' : 'Estimation par requests'}">${u.source === 'live' ? 'Live' : 'Req'}</span>` : '';
+
                             return `
                                 <tr>
                                     <td><i class="fas ${icon}"></i> ${dep.name}</td>
                                     <td>${dep.namespace}</td>
                                     <td>${typeBadge}</td>
+                                    <td>${cpuDisplay} ${srcBadge}</td>
+                                    <td>${memDisplay}</td>
                                     <td class="action-cell">
                                         <button class="btn btn-secondary btn-view-deployment" 
                                                 data-name="${dep.name}" 
@@ -672,6 +742,38 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             showView('config-view');
 
+            // Prévalidation quotas côté client
+            const warnElId = 'quota-warning';
+            function ensureWarn() {
+                let w = document.getElementById(warnElId);
+                if (!w) { w = document.createElement('div'); w.id = warnElId; w.className = 'error-message'; configForm.prepend(w); }
+                return w;
+            }
+            function toMillicores(cpu) { return cpu.endsWith('m') ? parseInt(cpu) : Math.round(parseFloat(cpu) * 1000); }
+            function toMi(mem) { if (mem.endsWith('Mi')) return parseInt(mem); if (mem.endsWith('Gi')) return parseInt(mem)*1024; if (mem.endsWith('Ki')) return Math.round(parseInt(mem)/1024); return parseInt(mem); }
+            async function prevalidateQuotas() {
+                const w = ensureWarn();
+                try {
+                    const q = await fetchMyQuotas();
+                    const cpuMap = { 'very-low':'100m','low':'250m','medium':'500m','high':'1000m','very-high':'2000m' };
+                    const ramMap = { 'very-low':'128Mi','low':'256Mi','medium':'512Mi','high':'1Gi','very-high':'2Gi' };
+                    const cpuReq = cpuMap[document.getElementById('cpu').value] || '100m';
+                    const memReq = ramMap[document.getElementById('ram').value] || '128Mi';
+                    const replicas = (deploymentType === 'custom') ? parseInt(document.getElementById('deployment-replicas').value || '1', 10) : 1;
+                    let plannedApps = 1, plannedPods = replicas, plannedCpuM = toMillicores(cpuReq) * replicas, plannedMemMi = toMi(memReq) * replicas;
+                    if (deploymentType === 'wordpress') { plannedPods = 2; plannedCpuM = toMillicores('250m') + toMillicores('250m'); plannedMemMi = toMi('256Mi') + toMi('512Mi'); }
+                    const over = [];
+                    if (q.usage.apps_used + plannedApps > q.limits.max_apps) over.push('Applications');
+                    if (q.usage.cpu_m_used + plannedCpuM > q.limits.max_requests_cpu_m) over.push('CPU');
+                    if (q.usage.mem_mi_used + plannedMemMi > q.limits.max_requests_mem_mi) over.push('Mémoire');
+                    const btn = configForm.querySelector('.btn-launch');
+                    if (over.length) { w.innerHTML = `<i class=\"fas fa-ban\"></i> Lancement impossible: dépassement ${over.join(', ')}.`; w.style.display = 'block'; if (btn) btn.disabled = true; }
+                    else { w.style.display = 'none'; if (btn) btn.disabled = false; }
+                } catch { const btn = configForm.querySelector('.btn-launch'); const w = ensureWarn(); w.textContent = 'Quotas indisponibles. Réessayez plus tard.'; w.style.display = 'block'; if (btn) btn.disabled = true; }
+            }
+            prevalidateQuotas();
+            ['cpu','ram','deployment-replicas'].forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('change', prevalidateQuotas); });
+
             // Appliquer la politique ressources par rôle (UI):
             const cpuSelect = document.getElementById('cpu');
             const ramSelect = document.getElementById('ram');
@@ -871,6 +973,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (configForm) {
         configForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            // Double check quotas côté client
+            try { await (async ()=>{ await fetchMyQuotas(); })(); } catch { return; }
             
             // Récupérer les informations du formulaire
             const serviceName = serviceTypeInput.value;
@@ -1509,7 +1613,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Nettoyer tous les timers existants au démarrage
         clearAllDeploymentTimers();
         
-        initUserInfo();
+    initUserInfo();
+    if (quotasContent) { refreshQuotas(); }
     // Charger le catalogue dynamiquement
     await loadTemplates();
         // Vérifier la connexion à l'API

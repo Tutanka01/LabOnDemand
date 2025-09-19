@@ -976,4 +976,17 @@ footer {
 .list-group-item[data-managed="labondemand"] {
     border-left: 3px solid var(--labondemand-green);
     background-color: rgba(153, 204, 51, 0.05);
+
+/* Badges source métriques (Live vs Requests) */
+.usage-source {
+    display:inline-block;
+    font-size: 10px;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    margin-left: 6px;
+    color: #fff;
+}
+.usage-source.live { background: #16a34a; }
+.usage-source.requests { background: #64748b; }
 }

@@ -17,7 +17,10 @@ from .k8s_utils import (
     build_user_namespace,
     ensure_namespace_baseline,
     max_resource,
-    clamp_resources_for_role
+    clamp_resources_for_role,
+    parse_cpu_to_millicores,
+    parse_memory_to_mi,
+    get_role_limits,
 )
 from .templates import DeploymentConfig
 
@@ -50,7 +53,7 @@ class DeploymentService:
                     raise HTTPException(status_code=403, detail="Type non autorisé pour les étudiants")
     
     def apply_deployment_config(
-        self, 
+        self,
         deployment_type: str,
         image: str,
         cpu_request: str,
@@ -59,7 +62,7 @@ class DeploymentService:
         memory_limit: str,
         service_target_port: int,
         create_service: bool,
-        service_type: str
+        service_type: str,
     ) -> Dict[str, Any]:
         """
         Applique la configuration selon le type de déploiement
@@ -115,6 +118,134 @@ class DeploymentService:
             "create_service": create_service,
             "service_type": service_type,
             "has_runtime_config": bool(config_db)
+        }
+
+    def _get_user_usage(self, user: User) -> Dict[str, Any]:
+        """Calcule l'utilisation actuelle (logique) dans le namespace de l'utilisateur.
+        Retourne: {apps_used, pods_used, cpu_m_used, mem_mi_used}
+        """
+        ns = build_user_namespace(user)
+        apps = client.AppsV1Api()
+        cpu_m_total = 0.0
+        mem_mi_total = 0.0
+        pods_used = 0
+        app_keys = set()
+        try:
+            dep_list = apps.list_namespaced_deployment(ns, label_selector="managed-by=labondemand")
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Mesure d'usage indisponible (K8s: {e})")
+
+        for dep in getattr(dep_list, "items", []) or []:
+            labels = getattr(dep.metadata, "labels", {}) or {}
+            if labels.get("user-id") != str(user.id):
+                continue
+            replicas = getattr(dep.spec, "replicas", 1) or 1
+            pods_used += replicas
+
+            # Clé logique d'application: stack-name si présent, sinon label app puis nom
+            gkey = labels.get("stack-name") or labels.get("app") or dep.metadata.name
+            app_keys.add(gkey)
+
+            containers = (getattr(getattr(dep.spec, "template", None), "spec", None) or {}).get("containers") if isinstance(getattr(getattr(dep.spec, "template", None), "spec", None), dict) else None
+            # Certaines versions du client retournent des objets; gérons les deux cas
+            tmpl_spec = getattr(getattr(dep.spec, "template", None), "spec", None)
+            if hasattr(tmpl_spec, "containers"):
+                containers = tmpl_spec.containers
+            if not containers:
+                containers = []
+            for c in containers:
+                resources = getattr(c, "resources", None)
+                req = getattr(resources, "requests", None) if resources else None
+                # Compat dict
+                cpu_s = None
+                mem_s = None
+                if isinstance(req, dict):
+                    cpu_s = req.get("cpu")
+                    mem_s = req.get("memory")
+                else:
+                    cpu_s = getattr(req, "get", lambda x: None)("cpu") if req else None
+                    mem_s = getattr(req, "get", lambda x: None)("memory") if req else None
+                if cpu_s:
+                    cpu_m_total += parse_cpu_to_millicores(str(cpu_s)) * replicas
+                if mem_s:
+                    mem_mi_total += parse_memory_to_mi(str(mem_s)) * replicas
+
+        return {
+            "apps_used": len(app_keys),
+            "pods_used": pods_used,
+            "cpu_m_used": int(cpu_m_total),
+            "mem_mi_used": int(mem_mi_total),
+        }
+
+    def _assert_user_quota(
+        self,
+        current_user: User,
+        planned_apps: int,
+        planned_pods: int,
+        planned_cpu_request_m: int,
+        planned_memory_request_mi: int,
+    ) -> None:
+        """Vérifie que l'ajout planifié ne dépasse pas les plafonds applicatifs.
+        Lève HTTPException 403/400 en cas de dépassement.
+        """
+        role_val = getattr(current_user.role, "value", str(current_user.role))
+        limits = get_role_limits(str(role_val))
+        usage = self._get_user_usage(current_user)
+
+        apps_total = usage["apps_used"] + planned_apps
+        pods_total = usage["pods_used"] + planned_pods
+        cpu_total = usage["cpu_m_used"] + planned_cpu_request_m
+        mem_total = usage["mem_mi_used"] + planned_memory_request_mi
+
+        violations = []
+        if apps_total > limits["max_apps"]:
+            violations.append(f"apps: {apps_total}/{limits['max_apps']}")
+        if pods_total > limits["max_pods"]:
+            violations.append(f"pods: {pods_total}/{limits['max_pods']}")
+        if cpu_total > limits["max_requests_cpu_m"]:
+            violations.append(f"cpu(m): {cpu_total}/{limits['max_requests_cpu_m']}")
+        if mem_total > limits["max_requests_mem_mi"]:
+            violations.append(f"mem(Mi): {mem_total}/{limits['max_requests_mem_mi']}")
+
+        if violations:
+            raise HTTPException(
+                status_code=403,
+                detail="Quota dépassé: " + ", ".join(violations),
+            )
+
+    def get_user_quota_summary(self, current_user: User) -> Dict[str, Any]:
+        role_val = getattr(current_user.role, "value", str(current_user.role))
+        limits = get_role_limits(str(role_val))
+        usage = self._get_user_usage(current_user)
+        remaining = {
+            "apps": max(limits["max_apps"] - usage["apps_used"], 0),
+            "pods": max(limits["max_pods"] - usage["pods_used"], 0),
+            "cpu_m": max(limits["max_requests_cpu_m"] - usage["cpu_m_used"], 0),
+            "mem_mi": max(limits["max_requests_mem_mi"] - usage["mem_mi_used"], 0),
+        }
+        return {
+            "role": str(role_val),
+            "limits": limits,
+            "usage": usage,
+            "remaining": remaining,
+        }
+
+    def get_user_quota_summary(self, user: User) -> Dict[str, Any]:
+        """Retourne un résumé des quotas: role, usage courant, limites et restants."""
+        role_val = getattr(user.role, "value", str(user.role))
+        limits = get_role_limits(str(role_val))
+        usage = self._get_user_usage(user)
+        remaining = {
+            "apps": max(limits["max_apps"] - usage["apps_used"], 0),
+            "pods": max(limits["max_pods"] - usage["pods_used"], 0),
+            "cpu_m": max(limits["max_requests_cpu_m"] - usage["cpu_m_used"], 0),
+            "mem_mi": max(limits["max_requests_mem_mi"] - usage["mem_mi_used"], 0),
+        }
+        return {
+            "role": str(role_val),
+            "limits": limits,
+            "usage": usage,
+            "remaining": remaining,
         }
     
     def create_deployment_manifest(
@@ -275,6 +406,13 @@ class DeploymentService:
 
         # Cas spécial: application multi-composants (WordPress)
         if deployment_type == "wordpress":
+            # Estimation des ressources planifiées (2 pods: DB + WP)
+            role_val = getattr(current_user.role, "value", str(current_user.role))
+            db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
+            wp_res = clamp_resources_for_role(str(role_val), "250m", "1000m", "512Mi", "1Gi", 1)
+            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(parse_cpu_to_millicores(wp_res["cpu_request"]))
+            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(parse_memory_to_mi(wp_res["memory_request"]))
+            self._assert_user_quota(current_user, planned_apps=1, planned_pods=2, planned_cpu_request_m=planned_cpu_m, planned_memory_request_mi=planned_mem_mi)
             return await self._create_wordpress_stack(
                 name=name,
                 effective_namespace=effective_namespace,
@@ -311,6 +449,17 @@ class DeploymentService:
             config["memory_request"],
             config["memory_limit"],
             replicas,
+        )
+
+        # Vérification des quotas logiques (apps, CPU requests, RAM requests, pods) avant création
+        planned_cpu_m = int(parse_cpu_to_millicores(clamped["cpu_request"]) * clamped["replicas"])
+        planned_mem_mi = int(parse_memory_to_mi(clamped["memory_request"]) * clamped["replicas"])
+        self._assert_user_quota(
+            current_user,
+            planned_apps=1,
+            planned_pods=int(clamped["replicas"]),
+            planned_cpu_request_m=planned_cpu_m,
+            planned_memory_request_mi=planned_mem_mi,
         )
 
         # Créer les labels

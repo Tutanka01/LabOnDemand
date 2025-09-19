@@ -148,9 +148,11 @@ def ensure_admin_exists():
 # Routeurs d'authentification et de laboratoires
 from .auth_router import router as auth_router
 from .k8s_router import router as k8s_router
+from .k8s_router import quotas_router
 
 app.include_router(auth_router)
 app.include_router(k8s_router)
+app.include_router(quotas_router)
 
 # ============= ENDPOINTS DE BASE =============
 

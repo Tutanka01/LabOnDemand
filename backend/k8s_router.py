@@ -279,6 +279,138 @@ async def get_deployments(current_user: User = Depends(get_current_user), _: boo
     except Exception:
         return {"deployments": [], "k8s_available": False}
 
+# ============= USAGE PAR APPLICATION (UTILISATEUR) =============
+
+@router.get("/usage/my-apps")
+async def get_my_apps_usage(current_user: User = Depends(get_current_user)):
+    """Retourne l’usage CPU/Mémoire par application de l’utilisateur courant.
+    - Tente d’utiliser metrics-server (metrics.k8s.io) pour l’usage temps-réel.
+    - Fallback: somme des requests des containers si metrics indisponible.
+    - Agrégation par stack-name si présent, sinon par label app (nom du déploiement).
+    - Uniquement les ressources managées par LabOnDemand (labels managed-by=labondemand,user-id=<id>)."""
+    try:
+        core_v1 = client.CoreV1Api()
+        # Lister les pods de l’utilisateur (labels)
+        label_selector = f"managed-by=labondemand,user-id={current_user.id}"
+        pods_list = core_v1.list_pod_for_all_namespaces(label_selector=label_selector)
+
+        # Index pods -> labels utiles
+        tracked_pods = {}
+        for pod in pods_list.items:
+            labels = pod.metadata.labels or {}
+            namespace = pod.metadata.namespace
+            name = pod.metadata.name
+            group_key = labels.get("stack-name") or labels.get("app") or name
+            app_type = labels.get("app-type", labels.get("component", "custom"))
+            tracked_pods[(namespace, name)] = {
+                "group": group_key,
+                "namespace": namespace,
+                "app_type": app_type,
+            }
+
+        # Préparer l’agrégateur
+        usage_index: dict[tuple[str, str], dict] = {}
+
+        # Essayer metrics-server
+        metrics_ok = False
+        try:
+            custom_api = client.CustomObjectsApi()
+            pods_metrics = custom_api.list_cluster_custom_object(
+                group="metrics.k8s.io", version="v1beta1", plural="pods"
+            )
+            for item in pods_metrics.get("items", []):
+                ns = (item.get("metadata") or {}).get("namespace")
+                pod_name = (item.get("metadata") or {}).get("name")
+                key = (ns, pod_name)
+                if key not in tracked_pods:
+                    continue
+                entry = tracked_pods[key]
+                grp = (entry["namespace"], entry["group"])  # (namespace, app/stack)
+                agg = usage_index.setdefault(grp, {
+                    "name": entry["group"],
+                    "namespace": entry["namespace"],
+                    "app_type": entry["app_type"],
+                    "cpu_m": 0.0,
+                    "mem_mi": 0.0,
+                    "pods": set(),
+                })
+                # Additionner les containers
+                for c in item.get("containers", []):
+                    usage = c.get("usage", {})
+                    cpu = _parse_cpu_metrics_to_millicores(str(usage.get("cpu", "0")))
+                    mem_mi = parse_memory_to_mi(str(usage.get("memory", "0Mi")))
+                    agg["cpu_m"] += cpu
+                    agg["mem_mi"] += mem_mi
+                agg["pods"].add(pod_name)
+            metrics_ok = True
+        except Exception:
+            metrics_ok = False
+
+        # Fallback: si aucun metrics, utiliser requests
+        if not metrics_ok:
+            for pod in pods_list.items:
+                key = (pod.metadata.namespace, pod.metadata.name)
+                entry = tracked_pods.get(key)
+                if not entry:
+                    continue
+                grp = (entry["namespace"], entry["group"])  # (namespace, app/stack)
+                agg = usage_index.setdefault(grp, {
+                    "name": entry["group"],
+                    "namespace": entry["namespace"],
+                    "app_type": entry["app_type"],
+                    "cpu_m": 0.0,
+                    "mem_mi": 0.0,
+                    "pods": set(),
+                })
+                # Somme des requests des containers
+                for c in (getattr(pod.spec, 'containers', None) or []):
+                    res = getattr(c, 'resources', None)
+                    if res and res.requests:
+                        cpu_req = res.requests.get('cpu')
+                        mem_req = res.requests.get('memory')
+                        if cpu_req:
+                            try:
+                                agg["cpu_m"] += parse_cpu_to_millicores(str(cpu_req))
+                            except Exception:
+                                pass
+                        if mem_req:
+                            try:
+                                agg["mem_mi"] += parse_memory_to_mi(str(mem_req))
+                            except Exception:
+                                pass
+                agg["pods"].add(pod.metadata.name)
+
+        # Construire la réponse, triée par CPU desc
+        items = []
+        for (_, _), v in usage_index.items():
+            items.append({
+                "name": v["name"],
+                "namespace": v["namespace"],
+                "app_type": v["app_type"],
+                "cpu_m": round(v["cpu_m"], 1),
+                "mem_mi": round(v["mem_mi"], 1),
+                "pods": len(v["pods"]),
+                "source": "live" if metrics_ok else "requests"
+            })
+        items.sort(key=lambda x: x["cpu_m"], reverse=True)
+        return {"items": items, "k8s_available": True, "metrics": metrics_ok}
+
+    except Exception as e:
+        print(f"[my-apps-usage] Erreur: {e}")
+        return {"items": [], "k8s_available": False, "metrics": False}
+
+# ============= ENDPOINT QUOTAS UTILISATEUR =============
+
+from fastapi import APIRouter as _APIRouter2  # évite l'erreur d'import croisé si renommage
+quotas_router = _APIRouter2(prefix="/api/v1/quotas", tags=["quotas"])
+
+@quotas_router.get("/me")
+async def get_my_quotas(current_user: User = Depends(get_current_user)):
+    try:
+        return deployment_service.get_user_quota_summary(current_user)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur quotas: {e}")
+
 @router.get("/deployments/labondemand")
 async def get_labondemand_deployments(current_user: User = Depends(get_current_user)):
     """Récupérer uniquement les déploiements LabOnDemand"""
@@ -379,23 +511,27 @@ async def get_deployment_details(
         apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
         
-        # Récupérer le déploiement, avec fallback stack (stack-name)
+        # Récupérer le déploiement, avec fallbacks (stack-name puis label app)
         try:
             deployment = apps_v1.read_namespaced_deployment(name, namespace)
         except client.exceptions.ApiException as e:
-            if e.status == 404:
-                # Chercher un composant de la stack (priorité wordpress)
-                label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
-                lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
-                if not lst.items:
-                    raise HTTPException(status_code=404, detail="Déploiement non trouvé")
-                # Choisir de préférence le composant wordpress sinon le premier
+            # Tenter par stack-name (WordPress regroupe plusieurs composants)
+            label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
+            lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+            if lst.items:
                 wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
                 deployment = wp[0] if wp else lst.items[0]
-                # Pour continuer les sélecteurs/pods/services, utiliser son nom
                 name = deployment.metadata.name
             else:
-                raise
+                # Tentative secondaire: via label app=name
+                lst2 = apps_v1.list_namespaced_deployment(namespace, label_selector=f"app={name}")
+                if lst2.items:
+                    deployment = lst2.items[0]
+                    name = deployment.metadata.name
+                else:
+                    if e.status == 404:
+                        raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+                    raise
         # Enforcer l'isolation: un étudiant ne peut voir que ses propres déploiements
         if current_user.role == UserRole.student:
             labels = deployment.metadata.labels or {}
@@ -715,9 +851,13 @@ async def delete_deployment(
     name: str,
     delete_service: bool = True,
     current_user: User = Depends(get_current_user),
-    _: bool = Depends(is_teacher_or_admin)
 ):
-    """Supprimer un déploiement et son service"""
+    """Supprimer un déploiement et son service.
+
+    Règles d'accès:
+    - Admin/Teacher: peuvent supprimer n'importe quel déploiement LabOnDemand.
+    - Student: peut supprimer uniquement ses propres déploiements (labels managed-by=labondemand,user-id=<id>).
+    """
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     
@@ -725,14 +865,53 @@ async def delete_deployment(
         apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
 
-        # Lire le déploiement principal
-        dep = apps_v1.read_namespaced_deployment(name, namespace)
+        # Résoudre le déploiement cible avec fallbacks (stack-name puis label app)
+        stack_mode = False
+        try:
+            dep = apps_v1.read_namespaced_deployment(name, namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                # Tenter par stack-name (ex: WordPress)
+                try:
+                    # Pour les étudiants, restreindre au user-id courant. Pour admin/teacher, ne pas filtrer par user-id.
+                    if current_user.role == UserRole.student:
+                        label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
+                    else:
+                        label_selector = f"managed-by=labondemand,stack-name={name}"
+                    lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+                except Exception:
+                    lst = client.V1DeploymentList(items=[])
+                if lst and lst.items:
+                    # Si composant wordpress présent, l'utiliser comme référence
+                    wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
+                    dep = wp[0] if wp else lst.items[0]
+                    stack_mode = True
+                    # Ajuster name vers le vrai nom du déploiement résolu
+                    name = dep.metadata.name
+                else:
+                    # Tentative secondaire: via label app=<name>
+                    lst2 = apps_v1.list_namespaced_deployment(namespace, label_selector=f"app={name}")
+                    if lst2.items:
+                        dep = lst2.items[0]
+                        name = dep.metadata.name
+                    else:
+                        raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+            else:
+                raise
+
         labels = dep.metadata.labels or {}
         app_type = labels.get("app-type", "custom")
 
+        # Autorisation: un étudiant ne peut supprimer que ses propres ressources LabOnDemand
+        if current_user.role == UserRole.student:
+            owner_id = labels.get("user-id")
+            managed = labels.get("managed-by")
+            if owner_id != str(current_user.id) or managed != "labondemand":
+                raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
+
         deleted = []
 
-        if app_type == "wordpress":
+        if app_type == "wordpress" or stack_mode:
             # Supprimer la stack complète (web + db) sans toucher PVC/Secret
             stack_name = labels.get("stack-name") or name
             wp_name = stack_name
@@ -790,8 +969,8 @@ async def get_deployment_templates_endpoint(
             if rc.allowed_for_students:
                 allowed_set.add(rc.key)
     else:
-        # Fallback historique
-        allowed_set = {"jupyter", "vscode"}
+        # Fallback historique (étendu): autoriser aussi WordPress aux étudiants
+        allowed_set = {"jupyter", "vscode", "wordpress"}
 
     def map_template(t: Template):
         return {
