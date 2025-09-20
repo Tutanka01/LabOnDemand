@@ -135,10 +135,6 @@
     return `
       <button class="edit-rc" data-id="${rc.id}"><i class="fas fa-edit"></i></button>
       <button class="del-rc" data-id="${rc.id}"><i class="fas fa-trash-alt"></i></button>
-      <label class="toggle">
-        <input type="checkbox" class="toggle-allowed" data-id="${rc.id}" ${rc.allowed_for_students ? 'checked' : ''}>
-        <span>Étudiants</span>
-      </label>
     `;
   }
 
@@ -149,7 +145,18 @@
         <table class="users-table">
           <thead>
             <tr>
-              <th>ID</th><th>Clé</th><th>Image</th><th>Port cible</th><th>Accès</th><th>Min CPU</th><th>Min RAM</th><th>Min CPU Lim</th><th>Min RAM Lim</th><th>Actif</th><th>Actions</th>
+              <th>ID</th>
+              <th>Clé</th>
+              <th>Image</th>
+              <th>Port cible</th>
+              <th>Accès</th>
+              <th>Min CPU</th>
+              <th>Min RAM</th>
+              <th>Min CPU Lim</th>
+              <th>Min RAM Lim</th>
+              <th>Étudiants</th>
+              <th>Actif</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -164,6 +171,15 @@
                 <td>${rc.min_memory_request || '-'}</td>
                 <td>${rc.min_cpu_limit || '-'}</td>
                 <td>${rc.min_memory_limit || '-'}</td>
+                <td>
+                  <span class="status-badge ${rc.allowed_for_students ? 'active' : 'inactive'}">
+                    ${rc.allowed_for_students ? 'Autorisé' : 'Interdit'}
+                  </span>
+                  <label class="toggle" title="Autoriser l'accès aux étudiants">
+                    <input type="checkbox" class="toggle-allowed" data-id="${rc.id}" ${rc.allowed_for_students ? 'checked' : ''}>
+                    <span>Toggle</span>
+                  </label>
+                </td>
                 <td><span class="status-badge ${rc.active ? 'active' : 'inactive'}">${rc.active ? 'Actif' : 'Inactif'}</span></td>
                 <td class="action-icons">${rowActions(rc)}</td>
               </tr>`).join('')}
@@ -173,7 +189,9 @@
       // Bind edits
       listEl.querySelectorAll('.edit-rc').forEach(btn => btn.addEventListener('click', () => {
         const id = parseInt(btn.getAttribute('data-id'), 10);
-        const row = btn.closest('tr').children;
+        const tr = btn.closest && btn.closest('tr');
+        if (!tr) return;
+        const row = tr.children;
         const rc = {
           id,
           key: row[1].textContent,
@@ -184,9 +202,10 @@
           min_memory_request: row[6].textContent === '-' ? '' : row[6].textContent,
           min_cpu_limit: row[7].textContent === '-' ? '' : row[7].textContent,
           min_memory_limit: row[8].textContent === '-' ? '' : row[8].textContent,
-          active: row[9].querySelector('.status-badge').classList.contains('active'),
-          // allowed_for_students est géré via le toggle; on le récupère depuis l'attribut du checkbox si présent
-          allowed_for_students: row[10]?.querySelector?.('.toggle-allowed')?.checked ?? true
+          // Colonne Étudiants est désormais à l'index 9
+          allowed_for_students: row[9]?.querySelector?.('.toggle-allowed')?.checked ?? true,
+          // Colonne Actif est désormais à l'index 10
+          active: row[10].querySelector('.status-badge').classList.contains('active')
         };
         openModal(true, rc);
       }));
@@ -207,6 +226,16 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ allowed_for_students: allowed })
           });
+          // Mettre à jour le badge
+          const cell = e.currentTarget.closest('td');
+          if (cell) {
+            const badge = cell.querySelector('.status-badge');
+            if (badge) {
+              badge.classList.toggle('active', allowed);
+              badge.classList.toggle('inactive', !allowed);
+              badge.textContent = allowed ? 'Autorisé' : 'Interdit';
+            }
+          }
         } catch (err) {
           alert('Erreur: ' + err.message);
           e.currentTarget.checked = !allowed; // revert
@@ -220,7 +249,8 @@
   addBtn.addEventListener('click', () => openModal(false));
 
   document.addEventListener('click', (e) => {
-    if (e.target.closest && e.target.closest('.close-rc-modal')) closeModal();
+    const t = e && e.target;
+    if (t && t.closest && t.closest('.close-rc-modal')) closeModal();
   });
 
   document.addEventListener('submit', async (e) => {

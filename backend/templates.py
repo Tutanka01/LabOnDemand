@@ -21,6 +21,17 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "tags": ["générique", "docker", "custom", "service"]
             },
             {
+                "id": "mysql",
+                "name": "MySQL + phpMyAdmin",
+                "description": "Base MySQL (ClusterIP) avec interface phpMyAdmin exposée pour l’apprentissage.",
+                "icon": "fa-solid fa-database",
+                "default_image": "mysql:9",  # indicatif; ignoré côté backend stack
+                "default_port": 8080,
+                "deployment_type": "mysql",
+                "default_service_type": "NodePort",
+                "tags": ["database", "mysql", "phpmyadmin", "apprentissage"]
+            },
+            {
                 "id": "wordpress",
                 "name": "WordPress (Web + DB)",
                 "description": "Déployer WordPress avec base MariaDB, clés générées automatiquement.",
@@ -136,11 +147,24 @@ class DeploymentConfig:
         "min_memory_limit": "1Gi"
     }
     
+    MYSQL_PMA_CONFIG = {
+        # L'image côté UI est indicative; la stack utilise mysql:8.0 + phpmyadmin:latest
+        "image": "phpmyadmin:latest",
+        "target_port": 8080,  # service externe cible 8080 (NodePort), targetPort=80 dans le pod pma
+        "service_type": "NodePort",
+        # Minimums pour l’UI générique (peu utilisés car stack spécifique)
+        "min_cpu_request": "150m",
+        "min_memory_request": "128Mi",
+        "min_cpu_limit": "300m",
+        "min_memory_limit": "256Mi"
+    }
+    
     @classmethod
     def get_config(cls, deployment_type: str) -> Dict[str, Any]:
         """Retourne la configuration pour un type de déploiement"""
         configs = {
             "vscode": cls.VSCODE_CONFIG,
-            "jupyter": cls.JUPYTER_CONFIG
+            "jupyter": cls.JUPYTER_CONFIG,
+            "mysql": cls.MYSQL_PMA_CONFIG
         }
         return configs.get(deployment_type, {})
