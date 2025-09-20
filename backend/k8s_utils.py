@@ -138,15 +138,19 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
         core = client.CoreV1Api()
         # Baselines différentes selon le rôle (plus strict pour les étudiants)
         if role == "student":
+            # Preset "standard" étudiant: 2 apps mono-pod + 1 stack WP (2 pods) + marge
             rq_hard = {
-                "pods": "5",
-                "requests.cpu": "2000m",
+                "pods": "6",
+                "requests.cpu": "2500m",
                 "requests.memory": "6Gi",
-                "limits.cpu": "4",
+                "limits.cpu": "5",
                 "limits.memory": "8Gi",
                 # Limites d'objets (quotas par rôle)
                 "count/deployments.apps": "8",
                 "count/services": "10",
+                # Persistance légère (optionnelle): 2 PVC, 2Gi de stockage
+                "count/persistentvolumeclaims": "2",
+                "requests.storage": "2Gi",
             }
             lr_default = {"cpu": "500m", "memory": "512Mi"}
             lr_request = {"cpu": "100m", "memory": "128Mi"}
@@ -163,10 +167,24 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
             lr_default = {"cpu": "1000m", "memory": "1Gi"}
             lr_request = {"cpu": "250m", "memory": "256Mi"}
 
-        # ResourceQuota
+        # ResourceQuota (créer ou mettre à jour pour matcher les valeurs désirées)
         rq_name = "baseline-quota"
         try:
-            core.read_namespaced_resource_quota(rq_name, namespace_name)
+            existing_rq = core.read_namespaced_resource_quota(rq_name, namespace_name)
+            # Si déjà présent, vérifier et patcher si différent
+            existing_hard = (getattr(getattr(existing_rq, "spec", None), "hard", None) or {})
+            # On patch si au moins une valeur diffère
+            needs_patch = False
+            for k, v in rq_hard.items():
+                if str(existing_hard.get(k)) != str(v):
+                    needs_patch = True
+                    break
+            if needs_patch:
+                core.patch_namespaced_resource_quota(
+                    name=rq_name,
+                    namespace=namespace_name,
+                    body={"spec": {"hard": rq_hard}},
+                )
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 rq_manifest = {
@@ -182,10 +200,37 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
             else:
                 raise
 
-        # LimitRange
+        # LimitRange (créer ou mettre à jour)
         lr_name = "baseline-limits"
         try:
-            core.read_namespaced_limit_range(lr_name, namespace_name)
+            existing_lr = core.read_namespaced_limit_range(lr_name, namespace_name)
+            # Vérifier les valeurs et patcher si nécessaire
+            # Structure attendue: spec.limits[0].default / defaultRequest
+            desired_spec = {
+                "limits": [
+                    {
+                        "type": "Container",
+                        "default": lr_default,
+                        "defaultRequest": lr_request,
+                    }
+                ]
+            }
+            current_spec = getattr(existing_lr, "spec", None)
+            needs_patch = True
+            try:
+                if current_spec and current_spec.limits:
+                    cur = current_spec.limits[0]
+                    cur_def = getattr(cur, "default", {}) or {}
+                    cur_req = getattr(cur, "default_request", None) or getattr(cur, "defaultRequest", {}) or {}
+                    needs_patch = not (str(cur_def) == str(lr_default) and str(cur_req) == str(lr_request))
+            except Exception:
+                needs_patch = True
+            if needs_patch:
+                core.patch_namespaced_limit_range(
+                    name=lr_name,
+                    namespace=namespace_name,
+                    body={"spec": desired_spec},
+                )
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 lr_manifest = {
@@ -224,11 +269,12 @@ def get_role_limits(role: str) -> Dict[str, Any]:
     }
     """
     if role == "student":
+        # Aligné avec ResourceQuota étudiant "standard"
         return {
             "max_apps": 4,
-            "max_requests_cpu_m": 2000,
+            "max_requests_cpu_m": 2500,
             "max_requests_mem_mi": 6144,
-            "max_pods": 5,
+            "max_pods": 6,
         }
     elif role == "teacher":
         return {
