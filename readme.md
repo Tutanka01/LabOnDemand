@@ -28,7 +28,48 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   Accès Simplifié : exposition via NodePort (par défaut), configurable.
 *   Templates Dynamiques : templates en base (icône/desc/tags) + runtime-configs pour piloter l’affichage aux étudiants.
 
-## 🏗️ Architecture du Projet
+## Quotas pour les étudiants (valeurs et justification)
+
+Pour garantir une expérience fluide pour tous et éviter la saturation du cluster par un seul utilisateur, des quotas spécifiques s’appliquent aux comptes « étudiant ».
+
+- Applications (logiques): 4 max — une stack WordPress (web + DB) compte pour 1 application.
+- Pods: 6 max — permet 2 apps mono-pod + 1 stack WordPress (2 pods) avec une marge.
+- Somme des requests CPU: 2500m par namespace étudiant.
+- Somme des requests mémoire: 6Gi par namespace étudiant.
+- Objets K8s: jusqu’à 8 Deployments et 10 Services.
+- Stockage: jusqu’à 2 PVC et 2Gi de requests.storage.
+- Plafonds par conteneur (côté API/LimitRange):
+    - CPU: request ≤ 500m, limit ≤ 1000m
+    - Mémoire: request ≤ 512Mi, limit ≤ 1Gi
+    - Réplicas: ≤ 1 par application étudiante
+
+Pourquoi ces limites ? Exemple concret:
+
+- Cas d’usage visé: un étudiant lance 2 environnements VS Code + 1 WordPress (web + DB).
+- Ressources typiques par pod (defaults/maximums étudiants): 500m CPU, 512Mi mémoire.
+- Consommation totale: 4 pods × (500m, 512Mi) = 2000m CPU et ~2Gi mémoire — bien sous les plafonds (2500m, 6Gi), laissant:
+    - ~500m CPU pour respirer (pics, tâches système)
+    - ~4Gi de mémoire de marge (évite l’OOM et conserve de la capacité cluster)
+
+Ce dimensionnement:
+
+- offre une vraie autonomie (plusieurs ateliers en parallèle),
+- reste aligné avec les bonnes pratiques Kubernetes (requests réalistes, limits raisonnables),
+- protège l’infrastructure partagée des abus involontaires.
+
+Où c’est implémenté dans le code:
+
+- `backend/k8s_utils.py`
+    - `get_role_limits('student')` → max_apps=4, max_requests_cpu_m=2500, max_requests_mem_mi=6144, max_pods=6
+    - `ensure_namespace_baseline()` → ResourceQuota (pods, requests.cpu=2500m, requests.memory=6Gi, limits.cpu=5, limits.memory=8Gi, counts Deployments/Services, PVC/requests.storage) et LimitRange (defaults/requests)
+    - `clamp_resources_for_role('student', ...)` → plafonds par conteneur et réplicas
+- `backend/deployment_service.py`
+    - `_assert_user_quota()` et prévalidation K8s → refus explicite si dépassement
+    - `get_user_quota_summary()` → données pour la carte « Vos ressources »
+- UI: carte Quotas sur le dashboard (`frontend/index.html`, `frontend/script.js`) alimentée par `GET /api/v1/quotas/me`.
+
+
+## �🏗️ Architecture du Projet
 
 LabOnDemand est structuré autour de trois composants principaux :
 
