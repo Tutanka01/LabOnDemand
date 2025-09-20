@@ -762,6 +762,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const replicas = (deploymentType === 'custom') ? parseInt(document.getElementById('deployment-replicas').value || '1', 10) : 1;
                     let plannedApps = 1, plannedPods = replicas, plannedCpuM = toMillicores(cpuReq) * replicas, plannedMemMi = toMi(memReq) * replicas;
                     if (deploymentType === 'wordpress') { plannedPods = 2; plannedCpuM = toMillicores('250m') + toMillicores('250m'); plannedMemMi = toMi('256Mi') + toMi('512Mi'); }
+                    if (deploymentType === 'mysql') { plannedPods = 2; plannedCpuM = toMillicores('250m') + toMillicores('150m'); plannedMemMi = toMi('256Mi') + toMi('128Mi'); }
                     const over = [];
                     if (q.usage.apps_used + plannedApps > q.limits.max_apps) over.push('Applications');
                     if (q.usage.cpu_m_used + plannedCpuM > q.limits.max_requests_cpu_m) over.push('CPU');
@@ -1034,6 +1035,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serviceType = 'NodePort';
                 servicePort = 8080;
                 serviceTargetPort = 8080;
+            } else if (deploymentType === 'mysql') {
+                // MySQL + phpMyAdmin: seule l'UI phpMyAdmin est exposée côté serveur
+                // L'image côté client n'est pas utilisée mais on fixe les ports d'accès
+                image = 'phpmyadmin:latest';
+                createService = true;
+                serviceType = 'NodePort';
+                servicePort = 8080;        // accessible depuis l'extérieur
+                serviceTargetPort = 80;    // phpMyAdmin écoute sur 80
             }
             
             // Obtenir les valeurs réelles CPU/RAM
@@ -1697,6 +1706,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             } else if (deployment.type === "wordpress") {
                                 serviceIcon = "fa-brands fa-wordpress";
                                 serviceName = "WordPress";
+                            } else if (deployment.type === "mysql") {
+                                serviceIcon = "fa-solid fa-database";
+                                serviceName = "MySQL + phpMyAdmin";
                             }
                             
                             // Déterminer l'URL d'accès

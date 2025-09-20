@@ -538,14 +538,30 @@ async def get_deployment_details(
             if owner_id != str(current_user.id):
                 raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
         
-        # Récupérer les pods associés
-        pods = core_v1.list_namespaced_pod(
-            namespace, 
-            label_selector=f"app={name}"
-        )
-        
-        # Récupérer les services associés
-        services = core_v1.list_namespaced_service(namespace, label_selector=f"app={name}")
+        # Déterminer si on est dans une "stack" (wordpress/mysql) pour agréger via stack-name
+        dep_labels = deployment.metadata.labels or {}
+        stack_name = dep_labels.get("stack-name")
+
+        # Récupérer les pods associés (par stack-name si disponible)
+        if stack_name:
+            pods = core_v1.list_namespaced_pod(
+                namespace,
+                label_selector=f"managed-by=labondemand,stack-name={stack_name}"
+            )
+        else:
+            pods = core_v1.list_namespaced_pod(
+                namespace,
+                label_selector=f"app={name}"
+            )
+
+        # Récupérer les services associés (par stack-name si disponible)
+        if stack_name:
+            services = core_v1.list_namespaced_service(
+                namespace,
+                label_selector=f"managed-by=labondemand,stack-name={stack_name}"
+            )
+        else:
+            services = core_v1.list_namespaced_service(namespace, label_selector=f"app={name}")
         
         # Récupérer l'IP externe du cluster
         def get_cluster_external_ip():
@@ -672,37 +688,46 @@ async def get_deployment_credentials(
         core_v1 = client.CoreV1Api()
 
         # Vérifier le déploiement et les droits (avec fallback stack)
+        requested_name = name  # conserver le nom demandé (peut être le nom de stack)
         try:
             deployment = apps_v1.read_namespaced_deployment(name, namespace)
         except client.exceptions.ApiException as e:
             if e.status == 404:
+                # Essayer de retrouver par stack-name (= nom logique de la pile)
                 label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
                 lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
                 if not lst.items:
                     raise HTTPException(status_code=404, detail="Application introuvable pour récupérer les identifiants")
                 wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
                 deployment = wp[0] if wp else lst.items[0]
-                name = deployment.metadata.name
+                # Ne pas écraser le nom de stack; conserver requested_name comme identifiant de pile
             else:
                 raise
         labels = deployment.metadata.labels or {}
         owner_id = labels.get("user-id")
         app_type = labels.get("app-type", "custom")
+        stack_name = labels.get("stack-name") or requested_name or deployment.metadata.name
 
         if current_user.role == UserRole.student and owner_id != str(current_user.id):
             raise HTTPException(status_code=403, detail="Accès refusé à ces identifiants")
 
         # Rechercher le secret par label stack-name=name ou fallback {name}-secret
-        selector = f"managed-by=labondemand,stack-name={name}"
+        selector = f"managed-by=labondemand,stack-name={stack_name}"
         secrets_list = core_v1.list_namespaced_secret(namespace, label_selector=selector)
         secret_obj = None
         if secrets_list.items:
             secret_obj = secrets_list.items[0]
         else:
             # Fallback par nom conventionnel
-            secret_name = f"{name}-secret"
+            # WordPress: {stack}-secret ; MySQL: {stack}-db-secret ; sinon: {stack}-secret
+            wp_secret = f"{stack_name}-secret"
+            mysql_secret = f"{stack_name}-db-secret"
             try:
-                secret_obj = core_v1.read_namespaced_secret(secret_name, namespace)
+                # tenter MySQL d'abord si c'est une stack MySQL, sinon WordPress, sinon générique
+                if app_type == "mysql":
+                    secret_obj = core_v1.read_namespaced_secret(mysql_secret, namespace)
+                else:
+                    secret_obj = core_v1.read_namespaced_secret(wp_secret, namespace)
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     raise HTTPException(status_code=404, detail="Aucun identifiant trouvé pour cette application")
@@ -729,7 +754,7 @@ async def get_deployment_credentials(
             db_pass = dec("MARIADB_PASSWORD") or dec("WORDPRESS_DATABASE_PASSWORD")
             db_name = dec("MARIADB_DATABASE") or dec("WORDPRESS_DATABASE_NAME")
             # Host/port conventionnels pour la stack
-            db_host = f"{name}-mariadb-service"
+            db_host = f"{stack_name}-mariadb-service"
             db_port = 3306
 
             return {
@@ -746,6 +771,24 @@ async def get_deployment_credentials(
                     "password": db_pass,
                     "database": db_name,
                 },
+            }
+
+        if app_type == "mysql":
+            # Secrets MySQL + interface phpMyAdmin
+            db_user = dec("MYSQL_USER")
+            db_pass = dec("MYSQL_PASSWORD")
+            db_name = dec("MYSQL_DATABASE")
+            db_host = f"{stack_name}-mysql-service"
+            return {
+                "type": "mysql",
+                "database": {
+                    "host": db_host,
+                    "port": 3306,
+                    "username": db_user,
+                    "password": db_pass,
+                    "database": db_name,
+                },
+                "phpmyadmin": {"url_hint": "http://<NODE_IP>:<NODE_PORT>/"},
             }
 
         # Par défaut: retourner toutes les paires décodées disponibles
@@ -782,7 +825,7 @@ async def create_pod(
                     "ports": [{"containerPort": 80}]
                 }]
             }
-        }
+            }
         v1.create_namespaced_pod(namespace, pod_manifest)
         return {"message": f"Pod {name} créé avec succès dans le namespace {namespace}"}
     except Exception as e:
@@ -910,7 +953,7 @@ async def delete_deployment(
 
         deleted = []
 
-        if app_type == "wordpress" or stack_mode:
+        if app_type == "wordpress" or (stack_mode and (labels.get("app-type") == "wordpress" or labels.get("component") == "wordpress")):
             # Supprimer la stack complète (web + db) sans toucher PVC/Secret
             stack_name = labels.get("stack-name") or name
             wp_name = stack_name
@@ -934,6 +977,30 @@ async def delete_deployment(
                         pass
 
             return {"message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"}
+        elif app_type == "mysql" or stack_mode:
+            # Supprimer la stack MySQL + phpMyAdmin
+            stack_name = labels.get("stack-name") or name
+            db_name = f"{stack_name}-mysql"
+            pma_name = f"{stack_name}-phpmyadmin"
+
+            # Supprimer deployments
+            for dep_name in [db_name, pma_name]:
+                try:
+                    apps_v1.delete_namespaced_deployment(dep_name, namespace)
+                    deleted.append(dep_name)
+                except client.exceptions.ApiException as e:
+                    if e.status != 404:
+                        raise
+
+            # Supprimer services si demandé
+            if delete_service:
+                for svc_name in [f"{db_name}-service", f"{pma_name}-service"]:
+                    try:
+                        core_v1.delete_namespaced_service(svc_name, namespace)
+                    except client.exceptions.ApiException:
+                        pass
+
+            return {"message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"}
         else:
             # Comportement standard pour les apps unitaires
             apps_v1.delete_namespaced_deployment(name, namespace)
@@ -968,8 +1035,8 @@ async def get_deployment_templates_endpoint(
             if rc.allowed_for_students:
                 allowed_set.add(rc.key)
     else:
-        # Fallback historique (étendu): autoriser aussi WordPress aux étudiants
-        allowed_set = {"jupyter", "vscode", "wordpress"}
+        # Fallback historique (étendu): autoriser aussi WordPress et MySQL aux étudiants
+        allowed_set = {"jupyter", "vscode", "wordpress", "mysql"}
 
     def map_template(t: Template):
         return {
