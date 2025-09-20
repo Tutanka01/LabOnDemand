@@ -122,6 +122,7 @@ class RuntimeConfigUpdate(BaseModel):
     default_image: Optional[str] = Field(None, max_length=200)
     target_port: Optional[int] = Field(None, ge=1, le=65535)
     default_service_type: Optional[str] = Field(None, pattern=r"^(ClusterIP|NodePort|LoadBalancer)$")
+    allowed_for_students: Optional[bool] = None
     min_cpu_request: Optional[str] = Field(None, max_length=20)
     min_memory_request: Optional[str] = Field(None, max_length=20)
     min_cpu_limit: Optional[str] = Field(None, max_length=20)

@@ -529,9 +529,8 @@ async def get_deployment_details(
                     deployment = lst2.items[0]
                     name = deployment.metadata.name
                 else:
-                    if e.status == 404:
-                        raise HTTPException(status_code=404, detail="Déploiement non trouvé")
-                    raise
+                    # Si aucune correspondance n'est trouvée, renvoyer 404, peu importe le status initial
+                    raise HTTPException(status_code=404, detail="Déploiement non trouvé")
         # Enforcer l'isolation: un étudiant ne peut voir que ses propres déploiements
         if current_user.role == UserRole.student:
             labels = deployment.metadata.labels or {}

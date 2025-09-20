@@ -70,6 +70,7 @@ def ensure_admin_exists():
                     "default_image VARCHAR(200),"
                     "target_port INTEGER,"
                     "default_service_type VARCHAR(30) NOT NULL DEFAULT 'NodePort',"
+                    "allowed_for_students BOOLEAN DEFAULT TRUE,"
                     "min_cpu_request VARCHAR(20),"
                     "min_memory_request VARCHAR(20),"
                     "min_cpu_limit VARCHAR(20),"
@@ -79,6 +80,12 @@ def ensure_admin_exists():
                     "updated_at DATETIME NULL"
                     ")"
                 ))
+                db.commit()
+            except Exception:
+                pass
+            # Migration douce: ajouter la colonne allowed_for_students si absente
+            try:
+                db.execute(text("ALTER TABLE runtime_configs ADD COLUMN allowed_for_students BOOLEAN DEFAULT TRUE"))
                 db.commit()
             except Exception:
                 pass
@@ -111,6 +118,24 @@ def ensure_admin_exists():
                         active=True,
                     ))
                 db.commit()
+            else:
+                # Assurer la présence du template WordPress s'il est manquant
+                tpl_wp = db.query(Template).filter(Template.key == "wordpress").first()
+                if not tpl_wp:
+                    defaults = {t.get("id"): t for t in get_deployment_templates().get("templates", [])}
+                    d = defaults.get("wordpress", {})
+                    db.add(Template(
+                        key="wordpress",
+                        name=d.get("name", "WordPress"),
+                        description=d.get("description"),
+                        icon=d.get("icon"),
+                        deployment_type="wordpress",
+                        default_image=d.get("default_image", "bitnami/wordpress:latest"),
+                        default_port=d.get("default_port", 8080),
+                        default_service_type=d.get("default_service_type", "NodePort"),
+                        active=True,
+                    ))
+                    db.commit()
             # Seed des runtime configs si vide (dynamiques pour remplacer le hardcode)
             if db.query(RuntimeConfig).count() == 0:
                 # valeurs inspirées de templates.DeploymentConfig
@@ -138,7 +163,31 @@ def ensure_admin_exists():
                     min_memory_limit="1Gi",
                     active=True,
                 ))
+                db.add(RuntimeConfig(
+                    key="wordpress",
+                    default_image="bitnami/wordpress:latest",
+                    target_port=8080,
+                    default_service_type="NodePort",
+                    allowed_for_students=True,
+                    active=True,
+                ))
                 db.commit()
+            else:
+                # S'assurer que WordPress existe et est autorisé aux étudiants
+                wp = db.query(RuntimeConfig).filter(RuntimeConfig.key == "wordpress").first()
+                if not wp:
+                    db.add(RuntimeConfig(
+                        key="wordpress",
+                        default_image="bitnami/wordpress:latest",
+                        target_port=8080,
+                        default_service_type="NodePort",
+                        allowed_for_students=True,
+                        active=True,
+                    ))
+                    db.commit()
+                elif wp.allowed_for_students is None:
+                    wp.allowed_for_students = True
+                    db.commit()
     except Exception as e:
         # On ne casse pas le démarrage pour éviter l'indisponibilité totale
         print(f"[startup] Impossible d'assurer la présence de l'admin: {e}")

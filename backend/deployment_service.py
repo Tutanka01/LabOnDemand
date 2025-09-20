@@ -213,6 +213,116 @@ class DeploymentService:
                 detail="Quota dépassé: " + ", ".join(violations),
             )
 
+    def _preflight_k8s_quota(
+        self,
+        namespace: str,
+        planned_requests_cpu_m: int,
+        planned_limits_cpu_m: int,
+        planned_requests_mem_mi: int,
+        planned_limits_mem_mi: int,
+        planned_pods: int,
+        planned_deployments: int,
+    ) -> None:
+        """Vérifie les ResourceQuota Kubernetes du namespace et lève 403 si l'ajout planned dépasse.
+        On examine toutes les ResourceQuota présentes et on s'assure que pour chaque ressource définie,
+        used + planned <= hard. En cas de dépassement, on liste les violations.
+        """
+        try:
+            core = client.CoreV1Api()
+            rqs = core.list_namespaced_resource_quota(namespace)
+        except Exception as e:
+            # Si on ne peut pas lire les quotas, on ne bloque pas ici (RBAC restreint) -> laisser K8s refuser plus tard si besoin
+            return
+
+        if not getattr(rqs, "items", None):
+            return
+
+        def parse_cpu(s: str) -> int:
+            try:
+                return int(parse_cpu_to_millicores(str(s)))
+            except Exception:
+                return 0
+
+        def parse_mem(s: str) -> int:
+            try:
+                return int(parse_memory_to_mi(str(s)))
+            except Exception:
+                return 0
+
+        def parse_int(s: str) -> int:
+            try:
+                return int(str(s))
+            except Exception:
+                return 0
+
+        violations: list[str] = []
+
+        # Agréger contre chaque quota; si un seul quota est violé, on refuse.
+        for rq in rqs.items:
+            hard = (getattr(getattr(rq, "status", None), "hard", None) or {})
+            used = (getattr(getattr(rq, "status", None), "used", None) or {})
+
+            def chk(key: str, used_val: int, hard_val: int, add_val: int, unit: str) -> None:
+                if hard_val > 0 and (used_val + add_val) > hard_val:
+                    violations.append(
+                        f"{key}: {used_val}+{add_val}>{hard_val} {unit} (quota='{rq.metadata.name}')"
+                    )
+
+            if "requests.cpu" in hard:
+                chk(
+                    "requests.cpu(m)",
+                    parse_cpu(used.get("requests.cpu", "0")),
+                    parse_cpu(hard.get("requests.cpu", "0")),
+                    planned_requests_cpu_m,
+                    "m",
+                )
+            if "limits.cpu" in hard:
+                chk(
+                    "limits.cpu(m)",
+                    parse_cpu(used.get("limits.cpu", "0")),
+                    parse_cpu(hard.get("limits.cpu", "0")),
+                    planned_limits_cpu_m,
+                    "m",
+                )
+            if "requests.memory" in hard:
+                chk(
+                    "requests.memory(Mi)",
+                    parse_mem(used.get("requests.memory", "0Mi")),
+                    parse_mem(hard.get("requests.memory", "0Mi")),
+                    planned_requests_mem_mi,
+                    "Mi",
+                )
+            if "limits.memory" in hard:
+                chk(
+                    "limits.memory(Mi)",
+                    parse_mem(used.get("limits.memory", "0Mi")),
+                    parse_mem(hard.get("limits.memory", "0Mi")),
+                    planned_limits_mem_mi,
+                    "Mi",
+                )
+            if "pods" in hard:
+                chk(
+                    "pods",
+                    parse_int(used.get("pods", "0")),
+                    parse_int(hard.get("pods", "0")),
+                    planned_pods,
+                    "",
+                )
+            if "count/deployments.apps" in hard:
+                chk(
+                    "count/deployments.apps",
+                    parse_int(used.get("count/deployments.apps", "0")),
+                    parse_int(hard.get("count/deployments.apps", "0")),
+                    planned_deployments,
+                    "",
+                )
+
+        if violations:
+            raise HTTPException(
+                status_code=403,
+                detail="Quota Kubernetes dépassé: " + "; ".join(violations),
+            )
+
     def get_user_quota_summary(self, current_user: User) -> Dict[str, Any]:
         role_val = getattr(current_user.role, "value", str(current_user.role))
         limits = get_role_limits(str(role_val))
@@ -379,7 +489,16 @@ class DeploymentService:
         effective_namespace = build_user_namespace(current_user)
 
         # S'assurer que le namespace existe (idempotent)
-        await ensure_namespace_exists(effective_namespace)
+        ns_ok = await ensure_namespace_exists(effective_namespace)
+        if not ns_ok:
+            # Échec explicite si on ne peut pas assurer le namespace
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Impossible d'assurer le namespace '{effective_namespace}'. "
+                    f"Vérifiez les droits RBAC et la configuration Kubernetes."
+                ),
+            )
         # Appliquer des garde-fous de base (idempotent, best-effort)
         try:
             role_val = getattr(current_user.role, "value", str(current_user.role))
@@ -413,6 +532,19 @@ class DeploymentService:
             planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(parse_cpu_to_millicores(wp_res["cpu_request"]))
             planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(parse_memory_to_mi(wp_res["memory_request"]))
             self._assert_user_quota(current_user, planned_apps=1, planned_pods=2, planned_cpu_request_m=planned_cpu_m, planned_memory_request_mi=planned_mem_mi)
+
+            # Préflight contre ResourceQuota Kubernetes (requests+limits et pods/deployments)
+            planned_limits_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_limit"])) + int(parse_cpu_to_millicores(wp_res["cpu_limit"]))
+            planned_limits_mem_mi = int(parse_memory_to_mi(db_res["memory_limit"])) + int(parse_memory_to_mi(wp_res["memory_limit"]))
+            self._preflight_k8s_quota(
+                effective_namespace,
+                planned_requests_cpu_m=planned_cpu_m,
+                planned_limits_cpu_m=planned_limits_cpu_m,
+                planned_requests_mem_mi=planned_mem_mi,
+                planned_limits_mem_mi=planned_limits_mem_mi,
+                planned_pods=2,
+                planned_deployments=2,
+            )
             return await self._create_wordpress_stack(
                 name=name,
                 effective_namespace=effective_namespace,
@@ -460,6 +592,19 @@ class DeploymentService:
             planned_pods=int(clamped["replicas"]),
             planned_cpu_request_m=planned_cpu_m,
             planned_memory_request_mi=planned_mem_mi,
+        )
+
+        # Vérifier aussi les ResourceQuota Kubernetes du namespace
+        planned_limits_cpu_m = int(parse_cpu_to_millicores(clamped["cpu_limit"]) * clamped["replicas"])
+        planned_limits_mem_mi = int(parse_memory_to_mi(clamped["memory_limit"]) * clamped["replicas"])
+        self._preflight_k8s_quota(
+            effective_namespace,
+            planned_requests_cpu_m=planned_cpu_m,
+            planned_limits_cpu_m=planned_limits_cpu_m,
+            planned_requests_mem_mi=planned_mem_mi,
+            planned_limits_mem_mi=planned_limits_mem_mi,
+            planned_pods=int(clamped["replicas"]),
+            planned_deployments=1,
         )
 
         # Créer les labels
@@ -619,7 +764,7 @@ class DeploymentService:
             },
         }
 
-        # PVC pour la DB
+        # PVC pour la DB (peut échouer si pas de StorageClass par défaut)
         pvc_manifest = {
             "apiVersion": "v1",
             "kind": "PersistentVolumeClaim",
@@ -658,6 +803,10 @@ class DeploymentService:
                 "template": {
                     "metadata": {"labels": {"app": db_name, **labels_db}},
                     "spec": {
+                        "securityContext": {
+                            "fsGroup": 1001,
+                            "seccompProfile": {"type": "RuntimeDefault"}
+                        },
                         "containers": [
                             {
                                 "name": "mariadb",
@@ -668,6 +817,12 @@ class DeploymentService:
                                     "requests": {"cpu": db_res["cpu_request"], "memory": db_res["memory_request"]},
                                     "limits": {"cpu": db_res["cpu_limit"], "memory": db_res["memory_limit"]},
                                 },
+                                "securityContext": {
+                                    "runAsUser": 1001,
+                                    "runAsNonRoot": True,
+                                    "allowPrivilegeEscalation": False,
+                                    "capabilities": {"drop": ["ALL"]}
+                                },
                                 "livenessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 30, "periodSeconds": 10},
                                 "readinessProbe": {"tcpSocket": {"port": 3306}, "initialDelaySeconds": 10, "periodSeconds": 5},
                                 "volumeMounts": [
@@ -675,7 +830,7 @@ class DeploymentService:
                                 ],
                             }
                         ],
-                        "volumes": [
+                        "volumes": [  # par défaut: PVC; pourra être remplacé par emptyDir si pas de StorageClass
                             {"name": "data", "persistentVolumeClaim": {"claimName": pvc_db}}
                         ],
                     },
@@ -706,6 +861,10 @@ class DeploymentService:
                 "template": {
                     "metadata": {"labels": {"app": wp_name, **labels_wp}},
                     "spec": {
+                        "securityContext": {
+                            "fsGroup": 1001,
+                            "seccompProfile": {"type": "RuntimeDefault"}
+                        },
                         "containers": [
                             {
                                 "name": "wordpress",
@@ -723,6 +882,12 @@ class DeploymentService:
                                 "resources": {
                                     "requests": {"cpu": wp_res["cpu_request"], "memory": wp_res["memory_request"]},
                                     "limits": {"cpu": wp_res["cpu_limit"], "memory": wp_res["memory_limit"]},
+                                },
+                                "securityContext": {
+                                    "runAsUser": 1001,
+                                    "runAsNonRoot": True,
+                                    "allowPrivilegeEscalation": False,
+                                    "capabilities": {"drop": ["ALL"]}
                                 },
                                 "readinessProbe": {
                                     "httpGet": {"path": "/", "port": 8080},
@@ -744,11 +909,43 @@ class DeploymentService:
         try:
             # Créer les ressources dans un ordre logique
             self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
-            self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+
+            # Essayer de créer le PVC; fallback emptyDir si impossible (ex: pas de StorageClass par défaut, RBAC restreint)
+            use_pvc = True
+            try:
+                self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+            except client.exceptions.ApiException as e:
+                msg = (getattr(e, "body", "") or "").lower()
+                if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
+                    # Fallback sans persistance
+                    use_pvc = False
+                else:
+                    raise
+
             self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
+
+            # Adapter le volume de la DB si pas de PVC disponible
+            if not use_pvc:
+                dep_db_manifest["spec"]["template"]["spec"]["volumes"] = [
+                    {"name": "data", "emptyDir": {}}
+                ]
+
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_db_manifest)
             created_wp_svc = self.core_v1.create_namespaced_service(effective_namespace, svc_wp_manifest)
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_wp_manifest)
+
+            # Vérification rapide: s'assurer que les Deployments existent bien
+            try:
+                apps_v1 = client.AppsV1Api()
+                lbl = f"managed-by=labondemand,stack-name={name},user-id={current_user.id}"
+                _lst = apps_v1.list_namespaced_deployment(effective_namespace, label_selector=lbl)
+                if not (_lst.items or []):
+                    raise HTTPException(status_code=500, detail="Stack WordPress créée partiellement: aucun Deployment trouvé juste après la création")
+            except HTTPException:
+                raise
+            except Exception:
+                # Non bloquant: si lister échoue, on continue mais on retournera les noms créés
+                pass
 
             node_port = None
             if service_type in ["NodePort", "LoadBalancer"]:
@@ -769,6 +966,12 @@ class DeploymentService:
                     "port": service_port,
                     "node_port": node_port,
                 },
+                "created_objects": {
+                    "secret": secret_name,
+                    "pvc": pvc_db,
+                    "services": [svc_db, svc_wp],
+                    "deployments": [db_name, wp_name],
+                },
                 "credentials": {
                     "wordpress": {"username": wp_admin_user, "password": wp_admin_pass},
                     "database": {
@@ -781,7 +984,10 @@ class DeploymentService:
                 },
             }
         except client.exceptions.ApiException as e:
-            raise HTTPException(status_code=e.status, detail=f"Erreur WordPress: {e.reason} - {e.body}")
+            raise HTTPException(status_code=e.status or 500, detail=f"Erreur WordPress: {e.reason} - {e.body}")
+        except Exception as e:
+            # Garde-fou générique pour éviter un 200 silencieux
+            raise HTTPException(status_code=500, detail=f"Erreur WordPress inattendue: {e}")
 
 # Instance globale du service
 deployment_service = DeploymentService()

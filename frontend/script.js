@@ -859,14 +859,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!resp.ok) throw new Error('Erreur de chargement des templates');
             const data = await resp.json();
             const templates = data.templates || [];
-            const isElevated = authManager.isAdmin() || authManager.isTeacher();
-            // Filtrer pour les étudiants: uniquement jupyter et vscode (côté UI, le backend filtre aussi via RuntimeConfig)
-            const filteredTemplates = isElevated
-                ? templates
-                : templates.filter(t => {
-                    const dt = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
-                    return dt === 'jupyter' || dt === 'vscode';
-                });
+            // Laisser le backend décider des apps visibles selon RuntimeConfig.allowed_for_students
+            const filteredTemplates = templates;
             if (!serviceCatalog) return;
             if (filteredTemplates.length === 0) {
                 serviceCatalog.innerHTML = '<div class="no-items-message">Aucune application disponible</div>';
@@ -1438,8 +1432,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             
             const data = await response.json();
-            const available = data.deployment.available_replicas > 0;
-            const podsReady = data.pods.every(pod => pod.status === 'Running');
+            const available = (data.deployment && (data.deployment.available_replicas || 0) > 0);
+            // Ne pas considérer "pods prêts" si la liste est vide (every([]) === true -> piège)
+            const podsReady = Array.isArray(data.pods) && data.pods.length > 0 && data.pods.every(pod => pod.status === 'Running');
             
             console.log(`Vérification déploiement ${name}: available=${available}, podsReady=${podsReady}, tentative=${attempts+1}/${maxAttempts}`);
             
