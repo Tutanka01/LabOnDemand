@@ -939,7 +939,23 @@ class DeploymentService:
 
         try:
             # Créer les ressources dans un ordre logique
-            self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+            # Secret: rendre idempotent. Si déjà existant (409), ne pas écraser les données (pour rester cohérent avec un PVC existant),
+            # mais patcher les labels afin qu'il soit bien rattaché à la stack et découvrable.
+            try:
+                self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+            except client.exceptions.ApiException as e:
+                if e.status == 409:  # AlreadyExists
+                    try:
+                        self.core_v1.patch_namespaced_secret(
+                            name=secret_manifest["metadata"]["name"],
+                            namespace=effective_namespace,
+                            body={"metadata": {"labels": secret_manifest["metadata"].get("labels", {})}},
+                        )
+                    except Exception:
+                        # En dernier recours, ignorer; on utilisera le secret existant tel quel
+                        pass
+                else:
+                    raise
 
             # Essayer de créer le PVC; fallback emptyDir si impossible (ex: pas de StorageClass par défaut, RBAC restreint)
             use_pvc = True
@@ -1173,7 +1189,21 @@ class DeploymentService:
         }
 
         try:
-            self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+            # Secret MySQL: idem, idempotent
+            try:
+                self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+            except client.exceptions.ApiException as e:
+                if e.status == 409:
+                    try:
+                        self.core_v1.patch_namespaced_secret(
+                            name=secret_manifest["metadata"]["name"],
+                            namespace=effective_namespace,
+                            body={"metadata": {"labels": secret_manifest["metadata"].get("labels", {})}},
+                        )
+                    except Exception:
+                        pass
+                else:
+                    raise
             use_pvc = True
             try:
                 self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)

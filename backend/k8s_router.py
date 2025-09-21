@@ -892,6 +892,7 @@ async def delete_deployment(
     namespace: str,
     name: str,
     delete_service: bool = True,
+    delete_persistent: bool = True,
     current_user: User = Depends(get_current_user),
 ):
     """Supprimer un déploiement et son service.
@@ -954,7 +955,7 @@ async def delete_deployment(
         deleted = []
 
         if app_type == "wordpress" or (stack_mode and (labels.get("app-type") == "wordpress" or labels.get("component") == "wordpress")):
-            # Supprimer la stack complète (web + db) sans toucher PVC/Secret
+            # Supprimer la stack complète (web + db). Par défaut, on supprime aussi PVC/Secret pour éviter les conflits au redeploy.
             stack_name = labels.get("stack-name") or name
             wp_name = stack_name
             db_name = f"{stack_name}-mariadb"
@@ -975,6 +976,19 @@ async def delete_deployment(
                         core_v1.delete_namespaced_service(svc_name, namespace)
                     except client.exceptions.ApiException:
                         pass
+
+            # Supprimer PVC et Secret si demandé
+            if delete_persistent:
+                # PVC DB
+                try:
+                    core_v1.delete_namespaced_persistent_volume_claim(f"{db_name}-pvc", namespace)
+                except client.exceptions.ApiException:
+                    pass
+                # Secret WP
+                try:
+                    core_v1.delete_namespaced_secret(f"{stack_name}-secret", namespace)
+                except client.exceptions.ApiException:
+                    pass
 
             return {"message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"}
         elif app_type == "mysql" or stack_mode:
@@ -999,6 +1013,18 @@ async def delete_deployment(
                         core_v1.delete_namespaced_service(svc_name, namespace)
                     except client.exceptions.ApiException:
                         pass
+
+            if delete_persistent:
+                # PVC DB
+                try:
+                    core_v1.delete_namespaced_persistent_volume_claim(f"{db_name}-pvc", namespace)
+                except client.exceptions.ApiException:
+                    pass
+                # Secret DB
+                try:
+                    core_v1.delete_namespaced_secret(f"{stack_name}-db-secret", namespace)
+                except client.exceptions.ApiException:
+                    pass
 
             return {"message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"}
         else:
