@@ -91,16 +91,24 @@ def ensure_admin_exists():
                 pass
             admin = db.query(User).filter(User.role == UserRole.admin).first()
             if not admin:
+                # Mot de passe admin via variable d'environnement (sécurisé). Fallback: mot de passe aléatoire.
+                import secrets
+                admin_password = settings.ADMIN_DEFAULT_PASSWORD
+                if not admin_password:
+                    admin_password = secrets.token_urlsafe(24)
+                    print("[startup] ADMIN_DEFAULT_PASSWORD non défini. Un mot de passe admin aléatoire a été généré (affiché ci-dessous).")
+
                 admin = User(
                     username="admin",
                     email="admin@labondemand.local",
                     full_name="Administrateur",
-                    hashed_password=get_password_hash("admin123"),
+                    hashed_password=get_password_hash(admin_password),
                     role=UserRole.admin,
                     is_active=True,
                 )
                 db.add(admin)
                 db.commit()
+                print(f"[startup] Compte admin créé. Nom d'utilisateur=admin, Mot de passe={admin_password}")
 
             # Seed des templates de base si vide
             if db.query(Template).count() == 0:
