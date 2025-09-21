@@ -44,5 +44,12 @@ class Settings:
         "custom": "labondemand-custom"
     }
 
+    # Sessions (Redis)
+    REDIS_URL = os.getenv("REDIS_URL", None)
+    SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
+    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Lax")
+    SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
+    COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
+
 # Instance globale des paramètres
 settings = Settings()

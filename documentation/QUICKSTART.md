@@ -89,3 +89,16 @@ Si problème de connexion :
 - La base de données est maintenant correctement initialisée
 - L'interface de login gère les erreurs proprement
 - L'architecture est maintenable et extensible
+
+## 🔐 Sessions (Redis)
+
+- L'API utilise Redis pour stocker les sessions (TTL géré côté Redis).
+- En dev, le service `redis` est lancé par `compose.yaml` et `REDIS_URL` est défini pour l'API.
+- Variables utiles:
+	- `REDIS_URL=redis://redis:6379/0`
+	- `SESSION_EXPIRY_HOURS=24`
+	- `SECURE_COOKIES=False` (dev) / `True` (prod)
+	- `SESSION_SAMESITE=Lax` | `Strict`
+	- `COOKIE_DOMAIN=example.com` (prod)
+
+En prod, utilisez un Redis externe/HA (pas le service compose) et mettez `SECURE_COOKIES=True`.
