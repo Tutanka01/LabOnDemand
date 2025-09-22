@@ -21,6 +21,17 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "tags": ["générique", "docker", "custom", "service"]
             },
             {
+                "id": "lamp",
+                "name": "Stack LAMP",
+                "description": "Apache + PHP (web), MySQL (DB) et phpMyAdmin (admin DB) en une pile prête à l'emploi.",
+                "icon": "fa-solid fa-server",
+                "default_image": "php:8.2-apache",  # indicatif; la stack gère les composants
+                "default_port": 8080,
+                "deployment_type": "lamp",
+                "default_service_type": "NodePort",
+                "tags": ["web", "php", "apache", "mysql", "phpmyadmin", "apprentissage"]
+            },
+            {
                 "id": "mysql",
                 "name": "MySQL + phpMyAdmin",
                 "description": "Base MySQL (ClusterIP) avec interface phpMyAdmin exposée pour l’apprentissage.",
@@ -159,12 +170,24 @@ class DeploymentConfig:
         "min_memory_limit": "256Mi"
     }
     
+    LAMP_CONFIG = {
+        # Vue d'ensemble pour le runtime; la stack crée 3 composants (web, db, pma)
+        "image": "php:8.2-apache",
+        "target_port": 8080,  # exposition principale: site web
+        "service_type": "NodePort",
+        "min_cpu_request": "250m",
+        "min_memory_request": "256Mi",
+        "min_cpu_limit": "500m",
+        "min_memory_limit": "512Mi"
+    }
+    
     @classmethod
     def get_config(cls, deployment_type: str) -> Dict[str, Any]:
         """Retourne la configuration pour un type de déploiement"""
         configs = {
             "vscode": cls.VSCODE_CONFIG,
             "jupyter": cls.JUPYTER_CONFIG,
-            "mysql": cls.MYSQL_PMA_CONFIG
+            "mysql": cls.MYSQL_PMA_CONFIG,
+            "lamp": cls.LAMP_CONFIG
         }
         return configs.get(deployment_type, {})

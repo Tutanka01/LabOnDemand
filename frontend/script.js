@@ -445,7 +445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         ${data.access_urls.map(url => `
                             <li>
                                 <a href="${url.url}" target="_blank">
-                                    <i class="fas fa-external-link-alt"></i> ${url.url}
+                                    <i class="fas fa-external-link-alt"></i> ${url.label ? `${url.label} – ` : ''}${url.url}
                                 </a> (exposé par: ${url.service}, NodePort: ${url.node_port})
                             </li>
                         `).join('')}
@@ -498,6 +498,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         <i class="fas fa-unlock"></i> Afficher les identifiants
                                     </button>
                                     <div id="credentials-content" class="credentials-content" style="display:none;"></div>
+                                </div>
+                                <hr>
+                                <h4><i class="fas fa-terminal"></i> Console intégrée (beta)</h4>
+                                <p class="muted">Terminal web directement dans votre pod (sans SSH). Accès limité à vos ressources LabOnDemand.</p>
+                                <div class="terminal-controls">
+                                   <label>Sélection du pod:
+                                        <select id="terminal-pod-select"></select>
+                                   </label>
+                                   <button class="btn btn-secondary" id="open-terminal"><i class="fas fa-terminal"></i> Ouvrir</button>
+                                   <button class="btn" id="close-terminal" style="display:none;"><i class="fas fa-times"></i> Fermer</button>
+                                </div>
+                                <div id="terminal-wrapper" style="display:none; border:1px solid var(--border-color); border-radius:8px; margin-top:10px;">
+                                   <div id="xterm" style="height:320px; width:100%; background:#111;"></div>
                                 </div>
                             </div>
                         </div>
@@ -586,6 +599,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Bouton pour charger les credentials
             const loadBtn = modalContent.querySelector('#load-credentials');
             const credContent = modalContent.querySelector('#credentials-content');
+            const podSelect = modalContent.querySelector('#terminal-pod-select');
+            const openTermBtn = modalContent.querySelector('#open-terminal');
+            const closeTermBtn = modalContent.querySelector('#close-terminal');
+            const termWrapper = modalContent.querySelector('#terminal-wrapper');
+            let term = null, fitAddon = null, ws = null;
+
+            // Pré-remplir la liste des pods dans le select
+            try {
+                const r = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
+                if (r.ok) {
+                    const d = await r.json();
+                    const pods = d.pods || [];
+                    if (podSelect) {
+                        podSelect.innerHTML = pods.map(p => `<option value="${p.name}">${p.name} (${p.status})</option>`).join('');
+                    }
+                }
+            } catch {}
             if (loadBtn) {
                 loadBtn.addEventListener('click', async () => {
                     loadBtn.disabled = true;
@@ -620,6 +650,140 @@ document.addEventListener('DOMContentLoaded', async () => {
                         loadBtn.innerHTML = '<i class="fas fa-unlock"></i> Afficher les identifiants';
                     }
                 });
+            }
+
+            function ensureTerminal() {
+                if (!term) {
+                    // Utiliser la classe globale fournie par le CDN (window.Terminal)
+                    const TerminalCtor = (typeof window !== 'undefined' && window.Terminal) ? window.Terminal : null;
+                    if (!TerminalCtor) {
+                        alert('Le composant terminal n\'est pas chargé. Rechargez la page (Ctrl+F5).');
+                        throw new Error('xterm.js non chargé');
+                    }
+                    term = new TerminalCtor({
+                        cursorBlink: true,
+                        convertEol: true,
+                        fontFamily: 'Consolas, Menlo, monospace',
+                        fontSize: 13,
+                        theme: { background: '#111111' }
+                    });
+                    // Fit addon (UMD): peut être exposé comme window.FitAddon.FitAddon ou window.FitAddon
+                    const FitCtor = (typeof window !== 'undefined' && window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon))
+                        ? (window.FitAddon.FitAddon || window.FitAddon)
+                        : null;
+                    if (FitCtor) {
+                        fitAddon = new FitCtor();
+                        term.loadAddon(fitAddon);
+                    }
+                    term.open(modalContent.querySelector('#xterm'));
+                    setTimeout(() => { try { fitAddon && fitAddon.fit(); } catch {} }, 50);
+                }
+                return term;
+            }
+
+            function closeTerminal() {
+                if (ws) { try { ws.close(); } catch {} ws = null; }
+                if (term) { try { term.dispose(); } catch {} term = null; }
+                termWrapper.style.display = 'none';
+                openTermBtn.style.display = '';
+                closeTermBtn.style.display = 'none';
+            }
+
+            // Charge dynamiquement xterm.js si nécessaire
+            function loadXtermIfNeeded() {
+                return new Promise((resolve, reject) => {
+                    if (typeof window !== 'undefined' && window.Terminal) return resolve();
+                    // Charger xterm puis l'addon fit
+                    const sources = [
+                        // Priorité: URLs sans version (conseillées par vous)
+                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.min.js' },
+                        { xterm: 'https://unpkg.com/xterm/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit/lib/xterm-addon-fit.min.js' },
+                        // Fallbacks versionnés
+                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js' },
+                        { xterm: 'https://unpkg.com/xterm@5.5.0/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js' }
+                    ];
+
+                    function loadScript(src) {
+                        return new Promise((res, rej) => {
+                            const s = document.createElement('script');
+                            s.src = src;
+                            s.async = true;
+                            s.onload = () => res();
+                            s.onerror = () => rej(new Error('Failed to load ' + src));
+                            document.head.appendChild(s);
+                        });
+                    }
+
+                    (async () => {
+                        let lastErr = null;
+                        for (const cdn of sources) {
+                            try {
+                                await loadScript(cdn.xterm);
+                                // xterm peut mettre un petit délai à init le global
+                                await new Promise(r => setTimeout(r, 30));
+                                if (!window.Terminal) throw new Error('Terminal global missing');
+                                try { await loadScript(cdn.fit); } catch {}
+                                return resolve();
+                            } catch (e) {
+                                lastErr = e;
+                                continue;
+                            }
+                        }
+                        reject(lastErr || new Error('Impossible de charger xterm.js'));
+                    })();
+                });
+            }
+
+            if (openTermBtn) {
+                openTermBtn.addEventListener('click', async () => {
+                    try {
+                        await loadXtermIfNeeded();
+                    } catch (e) {
+                        alert("Impossible de charger le composant terminal (xterm.js).\nVérifiez votre connexion réseau puis réessayez.");
+                        return;
+                    }
+                    const podName = podSelect?.value;
+                    if (!podName) { alert('Aucun pod disponible'); return; }
+                    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+                    const base = `${proto}://${window.location.host}`;
+                    const wsUrl = `${base}/api/v1/k8s/terminal/${encodeURIComponent(namespace)}/${encodeURIComponent(podName)}`;
+                    // Ouvrir socket
+                    try { closeTerminal(); } catch {}
+                    ensureTerminal();
+                    termWrapper.style.display = 'block';
+                    openTermBtn.style.display = 'none';
+                    closeTermBtn.style.display = '';
+                    ws = new WebSocket(wsUrl);
+                    ws.onopen = () => {
+                        term.write('\r\n$ ');
+                        try { fitAddon.fit(); } catch {}
+                    };
+                    ws.onmessage = (ev) => {
+                        term.write(ev.data);
+                    };
+                    ws.onclose = () => {
+                        term.write('\r\n[connexion fermée]\r\n');
+                        closeTermBtn.style.display = 'none';
+                        openTermBtn.style.display = '';
+                    };
+                    ws.onerror = () => {
+                        term.write('\r\n[erreur websocket]\r\n');
+                    };
+                    term.onData((data) => {
+                        if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+                    });
+                    // Ajuster la taille du TTY côté pod
+                    function sendResize() {
+                        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                        const cols = term.cols || 80, rows = term.rows || 24;
+                        try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {}
+                    }
+                    setTimeout(sendResize, 150);
+                    window.addEventListener('resize', () => { try { fitAddon && fitAddon.fit(); sendResize(); } catch {} });
+                });
+            }
+            if (closeTermBtn) {
+                closeTermBtn.addEventListener('click', closeTerminal);
             }
         } catch (error) {
             console.error('Erreur:', error);
@@ -1035,6 +1199,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serviceType = 'NodePort';
                 servicePort = 8080;
                 serviceTargetPort = 8080;
+            } else if (deploymentType === 'lamp') {
+                // LAMP: Web exposé sur 8080 (->80), phpMyAdmin exposé séparément (->80 via 8081)
+                image = 'php:8.2-apache';
+                createService = true;
+                serviceType = 'NodePort';
+                servicePort = 8080;        // Web principal
+                serviceTargetPort = 80;    // Apache écoute sur 80
             } else if (deploymentType === 'mysql') {
                 // MySQL + phpMyAdmin: seule l'UI phpMyAdmin est exposée côté serveur
                 // L'image côté client n'est pas utilisée mais on fixe les ports d'accès
@@ -1703,6 +1874,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             } else if (deployment.type === "vscode") {
                                 serviceIcon = "fa-solid fa-code";
                                 serviceName = "VS Code";
+                            } else if (deployment.type === "lamp") {
+                                serviceIcon = "fa-solid fa-server";
+                                serviceName = "Stack LAMP";
                             } else if (deployment.type === "wordpress") {
                                 serviceIcon = "fa-brands fa-wordpress";
                                 serviceName = "WordPress";
@@ -1714,7 +1888,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                             // Déterminer l'URL d'accès
                             let accessUrl = '';
                             if (detailsData.access_urls && detailsData.access_urls.length > 0) {
-                                accessUrl = detailsData.access_urls[0].url;
+                                // Pour LAMP, préférer l'URL Web si disponible
+                                if (deployment.type === 'lamp') {
+                                    const web = detailsData.access_urls.find(u => (u.label||'').toLowerCase().includes('web'));
+                                    accessUrl = (web && web.url) || detailsData.access_urls[0].url;
+                                } else {
+                                    accessUrl = detailsData.access_urls[0].url;
+                                }
                             } else {
                                 // URL générique fallback
                                 accessUrl = `http://${deployment.name}-service`;

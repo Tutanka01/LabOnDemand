@@ -3,11 +3,13 @@ Routeur pour les opérations Kubernetes
 Principe KISS : endpoints focalisés et simples
 """
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi import WebSocket, WebSocketDisconnect
 from kubernetes import client
 from typing import List, Dict, Any, Optional
 import urllib3
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
+from .session_store import session_store
 from .models import User, UserRole, Template, RuntimeConfig
 from .k8s_utils import validate_k8s_name, parse_cpu_to_millicores, parse_memory_to_mi
 from .deployment_service import deployment_service
@@ -17,6 +19,9 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from . import schemas
 import base64
+import asyncio
+import threading
+from kubernetes.stream import stream as k8s_stream
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
@@ -47,6 +52,186 @@ def _raise_k8s_http(e: Exception):
     except HTTPException:
         # Laisser passer tel quel
         raise
+
+
+# ============= AUTH POUR WEBSOCKETS (TERMINAL) =============
+
+async def _ws_authenticate_and_authorize_terminal(websocket: WebSocket, namespace: str, pod_name: str) -> dict:
+    """Vérifie la session via cookie et l'accès au pod ciblé.
+    Retourne un dict {user_id, role} en cas de succès, sinon lève HTTPException-like via close.
+    """
+    # Extraire le cookie de session
+    session_id = (websocket.cookies or {}).get("session_id")
+    if not session_id:
+        await websocket.close(code=4401)
+        raise WebSocketDisconnect(code=4401)
+
+    sess = session_store.get(session_id)
+    if not sess:
+        await websocket.close(code=4401)
+        raise WebSocketDisconnect(code=4401)
+
+    # Vérifier le pod et les labels
+    core_v1 = client.CoreV1Api()
+    try:
+        pod = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+    except Exception:
+        await websocket.close(code=4404)
+        raise WebSocketDisconnect(code=4404)
+
+    labels = pod.metadata.labels or {}
+    managed = labels.get("managed-by")
+    owner_id = labels.get("user-id")
+    role = sess.get("role")
+    user_id = sess.get("user_id")
+
+    # Autorisation: les étudiants ne peuvent accéder qu'à leurs pods LabOnDemand
+    if role == UserRole.student.value:
+        if managed != "labondemand" or owner_id != str(user_id):
+            await websocket.close(code=4403)
+            raise WebSocketDisconnect(code=4403)
+        # Durcissement: empêcher l'accès terminal aux pods de base de données (mysql/mariadb)
+        comp = (pod.metadata.labels or {}).get("component", "")
+        app_type = (pod.metadata.labels or {}).get("app-type", "")
+        if comp == "database" and app_type in {"mysql", "wordpress", "lamp"}:
+            await websocket.close(code=4403)
+            raise WebSocketDisconnect(code=4403)
+    else:
+        # Enseignants/Admins: limiter aux ressources LabOnDemand par prudence
+        if managed != "labondemand":
+            await websocket.close(code=4403)
+            raise WebSocketDisconnect(code=4403)
+
+    return {"user_id": user_id, "role": role}
+
+
+# ============= WEBSOCKET TERMINAL POD (exec) =============
+
+@router.websocket("/terminal/{namespace}/{pod}")
+async def ws_pod_terminal(websocket: WebSocket, namespace: str, pod: str):
+    """Terminal web sans SSH: ouvre un exec /bin/sh dans le pod ciblé (TTY),
+    et relaye l'entrée/sortie via WebSocket. Limité aux ressources LabOnDemand.
+    Requiert cookie de session pour auth.
+    """
+    namespace = validate_k8s_name(namespace)
+    pod = validate_k8s_name(pod)
+
+    await websocket.accept()
+
+    # Auth + autorisation
+    try:
+        _ = await _ws_authenticate_and_authorize_terminal(websocket, namespace, pod)
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        try:
+            await websocket.close(code=1011)
+        finally:
+            return
+
+    # Paramètres optionnels: container & commande par query string
+    container = websocket.query_params.get("container")
+    # Commande par défaut: /bin/sh
+    cmd = websocket.query_params.get("cmd") or "/bin/sh"
+    command = [cmd]
+    # Ajuster pour un environnement coloré (non bloquant si absent)
+    if cmd == "/bin/sh":
+        command = ["/bin/sh"]
+
+    core_v1 = client.CoreV1Api()
+    ws_client = None
+    loop = asyncio.get_event_loop()
+    closed = False
+
+    try:
+        # Ouvrir un exec websocket vers le pod
+        ws_client = k8s_stream(
+            core_v1.connect_get_namespaced_pod_exec,
+            pod,
+            namespace,
+            container=container,
+            command=command,
+            stderr=True,
+            stdin=True,
+            stdout=True,
+            tty=True,
+            _preload_content=False,
+        )
+
+        # Thread lecteur depuis le pod -> client
+        def _reader():
+            try:
+                while True:
+                    out = None
+                    err = None
+                    try:
+                        out = ws_client.read_stdout(timeout=1)
+                    except Exception:
+                        pass
+                    try:
+                        err = ws_client.read_stderr(timeout=1)
+                    except Exception:
+                        pass
+                    if out:
+                        loop.call_soon_threadsafe(asyncio.create_task, websocket.send_text(out))
+                    if err:
+                        loop.call_soon_threadsafe(asyncio.create_task, websocket.send_text(err))
+                    if getattr(ws_client, "is_closed", False):
+                        break
+            except Exception:
+                # Fin silencieuse
+                pass
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+
+        # Envoyer une première taille si fournie par le client via message JSON
+        # Boucle de réception: texte normal -> stdin; JSON {type: 'resize', cols, rows}
+        while True:
+            try:
+                msg = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                break
+            if not msg:
+                continue
+            # Détecter un JSON de resize
+            if msg.startswith("{"):
+                try:
+                    import json as _json
+                    payload = _json.loads(msg)
+                    if payload.get("type") == "resize":
+                        cols = int(payload.get("cols") or 80)
+                        rows = int(payload.get("rows") or 24)
+                        try:
+                            ws_client.resize_terminal(width=cols, height=rows)
+                        except Exception:
+                            pass
+                        continue
+                except Exception:
+                    # Si pas un JSON valide, traiter comme entrée utilisateur
+                    pass
+            # Écrire sur stdin du conteneur
+            try:
+                ws_client.write_stdin(msg)
+            except Exception:
+                break
+
+    finally:
+        try:
+            closed = True
+            if ws_client is not None:
+                try:
+                    ws_client.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                if websocket.client_state.value == 1:  # CONNECTED
+                    await websocket.close()
+            except Exception:
+                pass
 
 
 # ============= ENDPOINT STATS CLUSTER/NODES (ADMIN) =============
@@ -606,11 +791,11 @@ async def get_deployment_details(
 
         cluster_ip = get_cluster_external_ip()
         print(f"[DEBUG] IP du cluster détectée: {cluster_ip}")  # Pour debug
-        
+
         # Construire les URLs d'accès si des services NodePort existent
         access_urls = []
         service_data = []
-        
+
         for svc in services.items:
             service_info = {
                 "name": svc.metadata.name,
@@ -631,11 +816,25 @@ async def get_deployment_details(
                     port_info["node_port"] = port.node_port
                     # Construire l'URL d'accès pour les services NodePort
                     if svc.spec.type == "NodePort":
+                        # Nommer intelligemment les endpoints pour LAMP (web vs phpMyAdmin)
+                        label = ""
+                        try:
+                            lbls = svc.metadata.labels or {}
+                            comp = lbls.get("component", "")
+                            app_type = lbls.get("app-type", "")
+                            if app_type == "lamp":
+                                if comp == "web":
+                                    label = "Web (Apache/PHP)"
+                                elif comp == "phpmyadmin":
+                                    label = "phpMyAdmin"
+                        except Exception:
+                            pass
                         access_urls.append({
                             "url": f"http://{cluster_ip}:{port.node_port}",
                             "service": svc.metadata.name,
                             "node_port": port.node_port,
-                            "cluster_ip": cluster_ip
+                            "cluster_ip": cluster_ip,
+                            "label": label or None
                         })
                 
                 service_info["ports"].append(port_info)
@@ -781,6 +980,23 @@ async def get_deployment_credentials(
             db_host = f"{stack_name}-mysql-service"
             return {
                 "type": "mysql",
+                "database": {
+                    "host": db_host,
+                    "port": 3306,
+                    "username": db_user,
+                    "password": db_pass,
+                    "database": db_name,
+                },
+                "phpmyadmin": {"url_hint": "http://<NODE_IP>:<NODE_PORT>/"},
+            }
+        if app_type == "lamp":
+            # Stack LAMP: même secret que MySQL; ajouter un hint phpMyAdmin
+            db_user = dec("MYSQL_USER")
+            db_pass = dec("MYSQL_PASSWORD")
+            db_name = dec("MYSQL_DATABASE")
+            db_host = f"{stack_name}-mysql-service"
+            return {
+                "type": "lamp",
                 "database": {
                     "host": db_host,
                     "port": 3306,
@@ -991,7 +1207,7 @@ async def delete_deployment(
                     pass
 
             return {"message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"}
-        elif app_type == "mysql" or stack_mode:
+        elif app_type == "mysql" or stack_mode and (labels.get("app-type") == "mysql" or labels.get("component") in {"database", "phpmyadmin"}):
             # Supprimer la stack MySQL + phpMyAdmin
             stack_name = labels.get("stack-name") or name
             db_name = f"{stack_name}-mysql"
@@ -1027,6 +1243,43 @@ async def delete_deployment(
                     pass
 
             return {"message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"}
+        elif app_type == "lamp" or stack_mode and labels.get("app-type") == "lamp":
+            # Supprimer la stack LAMP (web + db + pma)
+            stack_name = labels.get("stack-name") or name
+            web_name = f"{stack_name}-web"
+            db_name = f"{stack_name}-mysql"
+            pma_name = f"{stack_name}-phpmyadmin"
+
+            # Supprimer deployments
+            for dep_name in [web_name, db_name, pma_name]:
+                try:
+                    apps_v1.delete_namespaced_deployment(dep_name, namespace)
+                    deleted.append(dep_name)
+                except client.exceptions.ApiException as e:
+                    if e.status != 404:
+                        raise
+
+            # Supprimer services si demandé
+            if delete_service:
+                for svc_name in [f"{web_name}-service", f"{db_name}-service", f"{pma_name}-service"]:
+                    try:
+                        core_v1.delete_namespaced_service(svc_name, namespace)
+                    except client.exceptions.ApiException:
+                        pass
+
+            if delete_persistent:
+                # PVC DB
+                try:
+                    core_v1.delete_namespaced_persistent_volume_claim(f"{db_name}-pvc", namespace)
+                except client.exceptions.ApiException:
+                    pass
+                # Secret DB
+                try:
+                    core_v1.delete_namespaced_secret(f"{stack_name}-db-secret", namespace)
+                except client.exceptions.ApiException:
+                    pass
+
+            return {"message": f"Stack LAMP '{stack_name}' supprimée: {', '.join(deleted)}"}
         else:
             # Comportement standard pour les apps unitaires
             apps_v1.delete_namespaced_deployment(name, namespace)
