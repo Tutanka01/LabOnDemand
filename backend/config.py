@@ -45,6 +45,9 @@ class Settings:
     DEFAULT_NAMESPACES = {
         "jupyter": "labondemand-jupyter",
         "vscode": "labondemand-vscode",
+        "wordpress": "labondemand-wordpress",
+        "mysql": "labondemand-mysql",
+        "lamp": "labondemand-lamp",
         "custom": "labondemand-custom"
     }
 
