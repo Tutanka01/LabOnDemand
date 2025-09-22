@@ -35,6 +35,14 @@ docker-compose up -d
 - URL : http://localhost:8000/login.html
 - Identifiants : admin / admin123
 
+### 5. Lancer une stack LAMP et ouvrir un terminal
+1. Dans le dashboard, ouvrez le catalogue et choisissez « Stack LAMP »
+2. Donnez un nom et validez; attendez que les 3 pods (web, db, phpmyadmin) soient Running
+3. Dans les détails, utilisez les URLs affichées pour le Web et phpMyAdmin
+4. Ouvrez le terminal du pod web pour éditer /var/www/html (non-root)
+
+Docs: voir documentation/lamp.md et documentation/terminal.md
+
 ## 🔧 Scripts utiles
 
 ### Test de connexion

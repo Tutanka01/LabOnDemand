@@ -696,6 +696,36 @@ class DeploymentService:
                 labels,
             )
 
+            # Persistance best-effort pour VSCode/Jupyter
+            if deployment_type in {"vscode", "jupyter"}:
+                pvc_name = f"{name}-pvc"
+                pvc_manifest = {
+                    "apiVersion": "v1",
+                    "kind": "PersistentVolumeClaim",
+                    "metadata": {"name": pvc_name, "labels": labels},
+                    "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "2Gi"}}},
+                }
+                use_pvc = True
+                try:
+                    self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+                except client.exceptions.ApiException as e:
+                    msg = (getattr(e, "body", "") or "").lower()
+                    if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
+                        use_pvc = False
+                    else:
+                        raise
+
+                # Monter sur chemin de travail usuel
+                mount_path = "/home/jovyan/work" if deployment_type == "jupyter" else "/home/coder/project"
+                pod_spec = deployment_manifest["spec"]["template"]["spec"]
+                # Pod security context pour permissions
+                pod_spec["securityContext"] = {**(pod_spec.get("securityContext") or {}), "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}}
+                # VolumeMounts conteneur
+                container = pod_spec["containers"][0]
+                container.setdefault("volumeMounts", []).append({"name": "data", "mountPath": mount_path})
+                # Volumes pod
+                pod_spec["volumes"] = [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}] if use_pvc else [{"name": "data", "emptyDir": {}}]
+
             self.apps_v1.create_namespaced_deployment(effective_namespace, deployment_manifest)
 
             result_message = (
@@ -963,7 +993,13 @@ class DeploymentService:
                                     "initialDelaySeconds": 30,
                                     "periodSeconds": 10,
                                 },
+                                "volumeMounts": [
+                                    {"name": "wp-content", "mountPath": "/bitnami/wordpress"}
+                                ],
                             }
+                        ],
+                        "volumes": [
+                            {"name": "wp-content", "emptyDir": {}}
                         ],
                     },
                 },
@@ -1499,7 +1535,7 @@ chmod 644 /workdir/index.php
                                 "volumeMounts": [{"name": "www", "mountPath": "/var/www/html"}],
                             }
                         ],
-                        "volumes": [{"name": "www", "emptyDir": {}}],
+                        "volumes": [{"name": "www", "persistentVolumeClaim": {"claimName": f"{web_name}-pvc"}}],
                     },
                 },
             },
@@ -1577,6 +1613,25 @@ chmod 644 /workdir/index.php
 
             # Déploiements
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_db_manifest)
+            # PVC best-effort pour le web LAMP
+            pvc_web = f"{web_name}-pvc"
+            pvc_web_manifest = {
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "metadata": {"name": pvc_web, "labels": labels_web},
+                "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}},
+            }
+            use_web_pvc = True
+            try:
+                self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_web_manifest)
+            except client.exceptions.ApiException as e:
+                msg = (getattr(e, "body", "") or "").lower()
+                if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
+                    use_web_pvc = False
+                else:
+                    raise
+            if not use_web_pvc:
+                dep_web_manifest["spec"]["template"]["spec"]["volumes"] = [{"name": "www", "emptyDir": {}}]
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_web_manifest)
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_pma_manifest)
 
