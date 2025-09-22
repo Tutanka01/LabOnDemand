@@ -401,6 +401,39 @@ main {
     margin-top: 3px;
     width: 16px;
 }
+
+/* Terminal intégré (xterm) */
+#terminal-wrapper {
+    background: #0b1220;
+    border: 1px solid #243244 !important;
+    border-radius: 10px !important;
+    overflow: hidden;
+    box-shadow: 0 6px 18px rgba(15, 22, 41, 0.45);
+}
+#terminal-wrapper .xterm-viewport {
+    background-color: #0b1220 !important;
+}
+#terminal-wrapper .xterm .xterm-screen canvas {
+    filter: none;
+}
+#terminal-wrapper .xterm .xterm-helpers {
+    color: #e6edf3;
+}
+.terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0 6px;
+}
+.terminal-controls select {
+    border: 1px solid var(--grey-border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: #fff;
+}
+.terminal-controls .btn {
+    padding: 8px 14px;
+}
 .lab-actions {
     margin-top: 8px;
     display: flex;

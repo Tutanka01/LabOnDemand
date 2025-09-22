@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from database import engine
 from models import User, UserRole
 from security import get_password_hash
+from config import settings
 
 def reset_admin_account():
     """
@@ -27,8 +28,13 @@ def reset_admin_account():
     try:
         # Définir les identifiants administrateur
         admin_username = "admin"
-        admin_password = "admin123"
         admin_email = "admin@labondemand.local"
+        admin_password = settings.ADMIN_DEFAULT_PASSWORD
+        if not admin_password:
+            # Fallback si non défini, mais avertissement pour la sécurité
+            import secrets
+            admin_password = secrets.token_urlsafe(24)
+            print("[reset_admin] ADMIN_DEFAULT_PASSWORD non défini. Génération d'un mot de passe aléatoire (affiché ci-dessous).")
         
         print(f"Recherche d'un utilisateur admin existant avec le nom d'utilisateur '{admin_username}'...")
         

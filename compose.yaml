@@ -16,11 +16,14 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
       - CLUSTER_EXTERNAL_IP=${CLUSTER_EXTERNAL_IP:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - SECURE_COOKIES=${SECURE_COOKIES:-False}
     restart: unless-stopped
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
     depends_on:
       - db
+      - redis
     command: sh -c "sleep 15 && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:
@@ -50,6 +53,14 @@ services:
       - "${DB_PORT:-3306}:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    container_name: labondemand-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped
 
 volumes:

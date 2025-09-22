@@ -25,8 +25,17 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   Statistiques Admin : vue dédiée pour l’état cluster/noeuds (si metrics-server présent), avec agrégations utiles.
 *   WordPress pour Étudiants : stack complète WordPress + MariaDB gérée; suppression traite la stack (web + db) proprement.
 *   Sécurité des Sessions : cookies HttpOnly, Secure, SameSite, domaine/expiration configurables; contrôles de rôle côté API.
+*   Sessions distribuées via Redis : stockage des sessions dans Redis externe pour scalabilité et HA (plus de SPOF en mémoire).
 *   Accès Simplifié : exposition via NodePort (par défaut), configurable.
 *   Templates Dynamiques : templates en base (icône/desc/tags) + runtime-configs pour piloter l’affichage aux étudiants.
+*   Terminal Web intégré (sans SSH) : terminal in-browser vers un pod, avec Xterm.js (fit/attach/webgl), resize dynamique, keepalive, faible latence. Accès DB pods restreint pour les étudiants.
+*   Stack LAMP clé en main : Apache+PHP, MySQL, phpMyAdmin avec plusieurs URLs dans les détails de déploiement; index.php par défaut stylé UPPA; web non-root et capacités minimales.
+*   Persistance « best-effort » : montages PVC pour VS Code, Jupyter et le web LAMP (fallback en emptyDir si StorageClass indisponible). MariaDB/WordPress DB en PVC 1Gi par défaut.
+
+Voir aussi:
+- Documentation LAMP: documentation/lamp.md
+- Terminal web: documentation/terminal.md
+- WordPress: documentation/wordpress.md
 
 ## Quotas pour les étudiants (valeurs et justification)
 
@@ -161,6 +170,8 @@ graph TD
 *   **`kubectl` :** Configuré pour interagir avec votre cluster.
 *   **Helm (Optionnel, mais recommandé) :** Pour l'installation de l'Ingress Controller.
 *   **Fichier `kubeconfig` :** Un fichier `kubeconfig` valide pour l'accès à votre cluster Kubernetes.
+
+Conseil stockage (dev): pour bénéficier de la persistance best-effort (PVC), assurez-vous qu’une StorageClass par défaut est disponible (ex. local-path sur k3s). Sinon, les apps démarrent en mémoire (emptyDir) et les données ne survivent pas aux redémarrages.
 
 ### Configuration Initiale
 
@@ -301,6 +312,26 @@ Une fois démarré, l'application sera accessible aux adresses suivantes (par d�
 
 *   **Frontend LabOnDemand :** [http://localhost](http://localhost) (ou `http://localhost:${FRONTEND_PORT}`)
 *   **API LabOnDemand :** [http://localhost:8000](http://localhost:8000) (ou `http://localhost:${API_PORT}`)
+
+### Terminal intégré (sans SSH)
+
+Depuis le tableau de bord, ouvrez les détails d’un déploiement puis lancez le terminal intégré pour ce pod. Le terminal utilise Xterm.js avec un rendu WebGL (si disponible) et un attachement direct au flux exec du pod (AttachAddon), offrant une latence très basse et une bonne compatibilité. Le redimensionnement est géré automatiquement.
+
+Restrictions de sécurité:
+- Les étudiants ne peuvent pas ouvrir un terminal sur les pods de base de données (labels component=database des stacks mysql/wordpress/lamp).
+- Les conteneurs web (ex. LAMP) tournent en non-root, capabilities minimales, seccomp=RuntimeDefault.
+
+Voir la doc: documentation/terminal.md
+### Sessions (Redis)
+
+Par défaut en développement, un service Redis local est démarré via `compose.yaml` et l'API l'utilise pour stocker les sessions.
+
+- Variable d'environnement principale: `REDIS_URL` (ex: `redis://redis:6379/0`)
+- Durée de vie des sessions: `SESSION_EXPIRY_HOURS` (défaut: 24h)
+- Cookies: `SECURE_COOKIES` (False en dev via Compose; mettez True en prod), `SESSION_SAMESITE`, `COOKIE_DOMAIN`
+
+En production, pointez `REDIS_URL` vers un Redis managé/HA.
+
 *   **Documentation API (Swagger UI) :** [http://localhost:8000/docs](http://localhost:8000/docs)
 *   **Documentation API (ReDoc) :** [http://localhost:8000/redoc](http://localhost:8000/redoc)
 

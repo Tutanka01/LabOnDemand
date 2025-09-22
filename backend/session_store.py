@@ -1,162 +1,96 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 import os
 from typing import Dict, Any, Optional
 import json
-import pickle
-from pathlib import Path
 
-# Définition de la classe pour le stockage des sessions
-class SessionStore:
-    """
-    Classe pour gérer le stockage des sessions utilisateur.
-    Cette implémentation utilise un stockage en mémoire avec persistance sur disque optionnelle,
-    mais peut être étendue pour utiliser Redis ou une base de données.
-    """
-    def __init__(self, persist_path: Optional[str] = None, expiry_time_hours: int = 24):
-        """
-        Initialise le gestionnaire de sessions
-        
-        Args:
-            persist_path: Chemin où les sessions seront sauvegardées (None pour pas de persistance)
-            expiry_time_hours: Durée de vie des sessions en heures
-        """
-        self.sessions: Dict[str, Dict[str, Any]] = {}
-        self.expiry_time = timedelta(hours=expiry_time_hours)
-        self.persist_path = persist_path
-        
-        # Créer le répertoire de persistance s'il n'existe pas
-        if persist_path:
-            path = Path(persist_path)
-            if not path.exists():
-                path.mkdir(parents=True, exist_ok=True)
-            
-            # Charger les sessions existantes s'il y en a
-            self._load_sessions()
-    
+# Nouveau backend: Redis
+try:
+    import redis
+except ImportError as e:
+    raise RuntimeError(
+        "Le paquet 'redis' est requis pour le stockage des sessions. Ajoutez-le à requirements.txt."
+    ) from e
+
+# Configuration via variables d'environnement (simples et explicites)
+REDIS_URL = os.getenv("REDIS_URL")
+SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
+SESSION_TTL_SECONDS = SESSION_EXPIRY_HOURS * 3600
+REDIS_NAMESPACE = os.getenv("REDIS_NAMESPACE", "session:")
+
+
+import time
+
+
+class RedisSessionStore:
+    """Stockage des sessions dans Redis avec TTL par clé (pas d'overengineering)."""
+
+    def __init__(self, redis_url: str, ttl_seconds: int, namespace: str = "session:"):
+        if not redis_url:
+            raise RuntimeError(
+                "REDIS_URL n'est pas défini. Configurez un Redis externe (ex: redis://redis:6379/0)."
+            )
+        # decode_responses=True pour travailler avec des str et non des bytes
+        self._r = redis.from_url(redis_url, decode_responses=True)
+        # Vérification avec quelques retries pour tolérer le démarrage lent de Redis
+        last_err: Optional[Exception] = None
+        for attempt in range(6):  # ~12s max (0.5,1,2,3,3,3)
+            try:
+                self._r.ping()
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                sleep_s = 0.5 if attempt == 0 else min(3, attempt)
+                time.sleep(sleep_s)
+        if last_err:
+            raise RuntimeError(f"Impossible de se connecter à Redis: {last_err}") from last_err
+        self.ttl = ttl_seconds
+        self.ns = namespace
+
+    def _key(self, session_id: str) -> str:
+        return f"{self.ns}{session_id}"
+
     def set(self, session_id: str, data: Dict[str, Any]) -> None:
-        """
-        Stocke une session avec ses données
-        
-        Args:
-            session_id: Identifiant unique de la session
-            data: Données à associer à la session
-        """
-        expiry = datetime.utcnow() + self.expiry_time
-        self.sessions[session_id] = {
-            "data": data,
-            "expiry": expiry
-        }
-        
-        # Persister les sessions si configuré
-        if self.persist_path:
-            self._persist_sessions()
-    
+        payload = json.dumps(data, separators=(",", ":"))
+        # setex applique le TTL sur la clé
+        self._r.setex(self._key(session_id), self.ttl, payload)
+
     def get(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Récupère les données d'une session
-        
-        Args:
-            session_id: Identifiant unique de la session
-            
-        Returns:
-            Les données de la session ou None si la session n'existe pas ou a expiré
-        """
-        if session_id not in self.sessions:
+        raw = self._r.get(self._key(session_id))
+        if raw is None:
             return None
-        
-        session = self.sessions[session_id]
-        
-        # Vérifier si la session a expiré
-        if datetime.utcnow() > session["expiry"]:
-            self.delete(session_id)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            # Si le contenu est corrompu, on supprime la clé pour éviter des erreurs futures
+            try:
+                self.delete(session_id)
+            except Exception:
+                pass
             return None
-        
-        return session["data"]
-    
+
     def delete(self, session_id: str) -> bool:
-        """
-        Supprime une session
-        
-        Args:
-            session_id: Identifiant unique de la session
-            
-        Returns:
-            True si la session a été supprimée, False sinon
-        """
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            
-            # Mettre à jour la persistance
-            if self.persist_path:
-                self._persist_sessions()
-            return True
-        return False
-    
+        return self._r.delete(self._key(session_id)) > 0
+
     def cleanup(self) -> int:
         """
-        Supprime toutes les sessions expirées
-        
-        Returns:
-            Nombre de sessions supprimées
+        Pas nécessaire avec Redis (expiration gérée par le serveur).
+        Conservée pour compatibilité avec l'appelant; retourne toujours 0.
         """
-        now = datetime.utcnow()
-        expired_sessions = [
-            sid for sid, session in self.sessions.items()
-            if now > session["expiry"]
-        ]
-        
-        for sid in expired_sessions:
-            del self.sessions[sid]
-        
-        # Mettre à jour la persistance
-        if self.persist_path and expired_sessions:
-            self._persist_sessions()
-        
-        return len(expired_sessions)
-    
-    def _persist_sessions(self) -> None:
-        """
-        Sauvegarde les sessions sur disque
-        """
-        if not self.persist_path:
-            return
-        
-        try:
-            sessions_file = Path(self.persist_path) / "sessions.pkl"
-            with open(sessions_file, 'wb') as f:
-                pickle.dump(self.sessions, f)
-        except Exception as e:
-            print(f"Erreur lors de la persistance des sessions: {e}")
-    
-    def _load_sessions(self) -> None:
-        """
-        Charge les sessions depuis le disque
-        """
-        if not self.persist_path:
-            return
-        
-        sessions_file = Path(self.persist_path) / "sessions.pkl"
-        if not sessions_file.exists():
-            return
-        
-        try:
-            with open(sessions_file, 'rb') as f:
-                self.sessions = pickle.load(f)
-                
-            # Nettoyer les sessions expirées au chargement
-            self.cleanup()
-        except Exception as e:
-            print(f"Erreur lors du chargement des sessions: {e}")
-            # En cas d'erreur, commencer avec un stockage vide
-            self.sessions = {}
+        return 0
 
-# Création d'une instance globale du gestionnaire de sessions
-# Le chemin de persistance est facultatif et peut être configuré via une variable d'environnement
-SESSION_PERSIST_PATH = os.getenv("SESSION_PERSIST_PATH", "./sessions")
-SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
+    @property
+    def sessions(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Propriété de compatibilité pour le code de debug existant qui itère
+        sur session_store.sessions. Pour Redis, on évite le SCAN coûteux ici.
+        """
+        return {}
+
 
 # Instance globale du gestionnaire de sessions
-session_store = SessionStore(
-    persist_path=SESSION_PERSIST_PATH,
-    expiry_time_hours=SESSION_EXPIRY_HOURS
+session_store = RedisSessionStore(
+    redis_url=REDIS_URL,
+    ttl_seconds=SESSION_TTL_SECONDS,
+    namespace=REDIS_NAMESPACE,
 )

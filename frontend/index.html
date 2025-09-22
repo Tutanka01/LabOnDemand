@@ -7,11 +7,18 @@
     <link rel="stylesheet" href="css/lab-status.css">
     <link rel="stylesheet" href="css/app-status.css">
     <link rel="stylesheet" href="css/quotas.css">
+    <!-- xterm.js CSS pour le terminal web -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Ajout de Font Awesome pour les icônes -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">    <!-- Charger les scripts au format module -->
+    <!-- xterm.js pour terminal intégré (chargé globalement AVANT les modules) -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-attach/lib/xterm-addon-attach.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl/lib/xterm-addon-webgl.min.js"></script>
     <script type="module" src="index-auth.js"></script>
     <script type="module" src="script.js"></script>
 </head>

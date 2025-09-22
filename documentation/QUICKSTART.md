@@ -35,6 +35,14 @@ docker-compose up -d
 - URL : http://localhost:8000/login.html
 - Identifiants : admin / admin123
 
+### 5. Lancer une stack LAMP et ouvrir un terminal
+1. Dans le dashboard, ouvrez le catalogue et choisissez « Stack LAMP »
+2. Donnez un nom et validez; attendez que les 3 pods (web, db, phpmyadmin) soient Running
+3. Dans les détails, utilisez les URLs affichées pour le Web et phpMyAdmin
+4. Ouvrez le terminal du pod web pour éditer /var/www/html (non-root)
+
+Docs: voir documentation/lamp.md et documentation/terminal.md
+
 ## 🔧 Scripts utiles
 
 ### Test de connexion
@@ -89,3 +97,16 @@ Si problème de connexion :
 - La base de données est maintenant correctement initialisée
 - L'interface de login gère les erreurs proprement
 - L'architecture est maintenable et extensible
+
+## 🔐 Sessions (Redis)
+
+- L'API utilise Redis pour stocker les sessions (TTL géré côté Redis).
+- En dev, le service `redis` est lancé par `compose.yaml` et `REDIS_URL` est défini pour l'API.
+- Variables utiles:
+	- `REDIS_URL=redis://redis:6379/0`
+	- `SESSION_EXPIRY_HOURS=24`
+	- `SECURE_COOKIES=False` (dev) / `True` (prod)
+	- `SESSION_SAMESITE=Lax` | `Strict`
+	- `COOKIE_DOMAIN=example.com` (prod)
+
+En prod, utilisez un Redis externe/HA (pas le service compose) et mettez `SECURE_COOKIES=True`.

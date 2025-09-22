@@ -91,16 +91,24 @@ def ensure_admin_exists():
                 pass
             admin = db.query(User).filter(User.role == UserRole.admin).first()
             if not admin:
+                # Mot de passe admin via variable d'environnement (sécurisé). Fallback: mot de passe aléatoire.
+                import secrets
+                admin_password = settings.ADMIN_DEFAULT_PASSWORD
+                if not admin_password:
+                    admin_password = secrets.token_urlsafe(24)
+                    print("[startup] ADMIN_DEFAULT_PASSWORD non défini. Un mot de passe admin aléatoire a été généré (affiché ci-dessous).")
+
                 admin = User(
                     username="admin",
                     email="admin@labondemand.local",
                     full_name="Administrateur",
-                    hashed_password=get_password_hash("admin123"),
+                    hashed_password=get_password_hash(admin_password),
                     role=UserRole.admin,
                     is_active=True,
                 )
                 db.add(admin)
                 db.commit()
+                print(f"[startup] Compte admin créé. Nom d'utilisateur=admin, Mot de passe={admin_password}")
 
             # Seed des templates de base si vide
             if db.query(Template).count() == 0:
@@ -119,7 +127,7 @@ def ensure_admin_exists():
                     ))
                 db.commit()
             else:
-                # Assurer la présence des templates essentiels (WordPress, MySQL)
+                # Assurer la présence des templates essentiels (WordPress, MySQL, LAMP)
                 defaults = {t.get("id"): t for t in get_deployment_templates().get("templates", [])}
 
                 tpl_wp = db.query(Template).filter(Template.key == "wordpress").first()
@@ -150,6 +158,23 @@ def ensure_admin_exists():
                         default_image=d.get("default_image", "mysql:9"),
                         default_port=d.get("default_port", 8080),
                         default_service_type=d.get("default_service_type", "NodePort"),
+                        active=True,
+                    ))
+                    db.commit()
+
+                tpl_lamp = db.query(Template).filter(Template.key == "lamp").first()
+                if not tpl_lamp:
+                    d = defaults.get("lamp", {})
+                    db.add(Template(
+                        key="lamp",
+                        name=d.get("name", "Stack LAMP"),
+                        description=d.get("description"),
+                        icon=d.get("icon"),
+                        deployment_type="lamp",
+                        default_image=d.get("default_image", "php:8.2-apache"),
+                        default_port=d.get("default_port", 8080),
+                        default_service_type=d.get("default_service_type", "NodePort"),
+                        tags=",".join(d.get("tags", []) or []),
                         active=True,
                     ))
                     db.commit()
@@ -188,6 +213,14 @@ def ensure_admin_exists():
                     allowed_for_students=True,
                     active=True,
                 ))
+                db.add(RuntimeConfig(
+                    key="lamp",
+                    default_image="php:8.2-apache",
+                    target_port=8080,
+                    default_service_type="NodePort",
+                    allowed_for_students=True,
+                    active=True,
+                ))
                 db.commit()
             else:
                 # S'assurer que WordPress et MySQL existent et sont autorisés aux étudiants
@@ -210,6 +243,17 @@ def ensure_admin_exists():
                     db.add(RuntimeConfig(
                         key="mysql",
                         default_image="phpmyadmin:latest",
+                        target_port=8080,
+                        default_service_type="NodePort",
+                        allowed_for_students=True,
+                        active=True,
+                    ))
+                    db.commit()
+                lamp_rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == "lamp").first()
+                if not lamp_rc:
+                    db.add(RuntimeConfig(
+                        key="lamp",
+                        default_image="php:8.2-apache",
                         target_port=8080,
                         default_service_type="NodePort",
                         allowed_for_students=True,
