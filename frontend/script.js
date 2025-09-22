@@ -665,7 +665,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         convertEol: true,
                         fontFamily: 'Consolas, Menlo, monospace',
                         fontSize: 13,
-                        theme: { background: '#111111' }
+                        theme: { background: '#111111' },
+                        rendererType: 'webgl' // préférer WebGL si dispo
                     });
                     // Fit addon (UMD): peut être exposé comme window.FitAddon.FitAddon ou window.FitAddon
                     const FitCtor = (typeof window !== 'undefined' && window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon))
@@ -675,6 +676,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                         fitAddon = new FitCtor();
                         term.loadAddon(fitAddon);
                     }
+                    // Activer WebGL si dispo
+                    try {
+                        const WebglCtor = (window.WebglAddon && (window.WebglAddon.WebglAddon || window.WebglAddon)) ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
+                        if (WebglCtor) {
+                            const webglAddon = new WebglCtor();
+                            term.loadAddon(webglAddon);
+                        }
+                    } catch {}
                     term.open(modalContent.querySelector('#xterm'));
                     setTimeout(() => { try { fitAddon && fitAddon.fit(); } catch {} }, 50);
                 }
@@ -696,11 +705,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // Charger xterm puis l'addon fit
                     const sources = [
                         // Priorité: URLs sans version (conseillées par vous)
-                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.min.js' },
-                        { xterm: 'https://unpkg.com/xterm/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit/lib/xterm-addon-fit.min.js' },
+                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.min.js', attach: 'https://cdn.jsdelivr.net/npm/xterm-addon-attach/lib/xterm-addon-attach.min.js', webgl: 'https://cdn.jsdelivr.net/npm/xterm-addon-webgl/lib/xterm-addon-webgl.min.js' },
+                        { xterm: 'https://unpkg.com/xterm/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit/lib/xterm-addon-fit.min.js', attach: 'https://unpkg.com/xterm-addon-attach/lib/xterm-addon-attach.min.js', webgl: 'https://unpkg.com/xterm-addon-webgl/lib/xterm-addon-webgl.min.js' },
                         // Fallbacks versionnés
-                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js' },
-                        { xterm: 'https://unpkg.com/xterm@5.5.0/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js' }
+                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js', attach: 'https://cdn.jsdelivr.net/npm/xterm-addon-attach@0.7.0/lib/xterm-addon-attach.min.js', webgl: 'https://cdn.jsdelivr.net/npm/xterm-addon-webgl@0.15.0/lib/xterm-addon-webgl.min.js' },
+                        { xterm: 'https://unpkg.com/xterm@5.5.0/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js', attach: 'https://unpkg.com/xterm-addon-attach@0.7.0/lib/xterm-addon-attach.min.js', webgl: 'https://unpkg.com/xterm-addon-webgl@0.15.0/lib/xterm-addon-webgl.min.js' }
                     ];
 
                     function loadScript(src) {
@@ -723,6 +732,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 await new Promise(r => setTimeout(r, 30));
                                 if (!window.Terminal) throw new Error('Terminal global missing');
                                 try { await loadScript(cdn.fit); } catch {}
+                                try { await loadScript(cdn.attach); } catch {}
+                                try { await loadScript(cdn.webgl); } catch {}
                                 return resolve();
                             } catch (e) {
                                 lastErr = e;
@@ -754,24 +765,37 @@ document.addEventListener('DOMContentLoaded', async () => {
                     openTermBtn.style.display = 'none';
                     closeTermBtn.style.display = '';
                     ws = new WebSocket(wsUrl);
+                    ws.binaryType = 'arraybuffer';
                     ws.onopen = () => {
-                        term.write('\r\n$ ');
-                        try { fitAddon.fit(); } catch {}
-                    };
-                    ws.onmessage = (ev) => {
-                        term.write(ev.data);
+                        try { fitAddon && fitAddon.fit(); } catch {}
+                        // Envoyer immédiatement les dimensions pour un prompt correct
+                        const cols = term.cols || 80, rows = term.rows || 24;
+                        try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {}
+                        // Keepalive
+                        ws.__kalive = setInterval(() => { try { ws.send('\u0000'); } catch {} }, 25000);
+                        // Utiliser AttachAddon pour un écho sans perte
+                        try {
+                            const AttachCtor = (window.AttachAddon && (window.AttachAddon.AttachAddon || window.AttachAddon)) ? (window.AttachAddon.AttachAddon || window.AttachAddon) : null;
+                            if (AttachCtor) {
+                                const attach = new AttachCtor(ws, { bidirectional: true, useUtf8: true });
+                                term.loadAddon(attach);
+                            } else {
+                                // Fallback manuel
+                                ws.onmessage = (ev) => { term.write(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data)); };
+                                term.onData((data) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(data); });
+                            }
+                        } catch {}
                     };
                     ws.onclose = () => {
                         term.write('\r\n[connexion fermée]\r\n');
+                        if (ws.__kalive) try { clearInterval(ws.__kalive); } catch {}
                         closeTermBtn.style.display = 'none';
                         openTermBtn.style.display = '';
                     };
                     ws.onerror = () => {
                         term.write('\r\n[erreur websocket]\r\n');
                     };
-                    term.onData((data) => {
-                        if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
-                    });
+                    // term.onData est géré par AttachAddon si dispo (fallback ci-dessus)
                     // Ajuster la taille du TTY côté pod
                     function sendResize() {
                         if (!ws || ws.readyState !== WebSocket.OPEN) return;

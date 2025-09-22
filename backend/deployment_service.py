@@ -1443,7 +1443,7 @@ echo '<!doctype html>
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
             <img src="https://upload.wikimedia.org/wikipedia/fr/4/41/Logo_UPPA.svg" 
                      alt="UPPA Logo" style="height:64px;background:#fff;padding:6px;border-radius:8px">
-            <h2 style="margin:0;color:#A6BE0B">🚀 It works! – Stack LAMP</h2>
+            <h2 style="margin:0;color:#A6BE0B"> Ça marche ! – Stack LAMP</h2>
         </div>
 
         <p style="opacity:.85;font-size:15px">
@@ -1457,7 +1457,7 @@ echo '<!doctype html>
         <hr style="margin:24px 0;border:0;border-top:1px solid #243244">
 
         <footer style="font-size:13px;color:#9ca3af">
-            UPPA – Université de Pau et des Pays de l’Adour
+            UPPA – Université de Pau et des Pays de l’Adour - by makhal
         </footer>
 
     </div>

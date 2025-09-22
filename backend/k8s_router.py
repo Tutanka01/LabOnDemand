@@ -22,6 +22,7 @@ import base64
 import asyncio
 import threading
 from kubernetes.stream import stream as k8s_stream
+import time
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
@@ -160,24 +161,41 @@ async def ws_pod_terminal(websocket: WebSocket, namespace: str, pod: str):
 
         # Thread lecteur depuis le pod -> client
         def _reader():
+            """Boucle de lecture avec faible latence.
+            Utilise des timeouts courts et des rafales pour réduire la latence d'écho dans le terminal.
+            """
             try:
+                short = 0.02  # 20ms
+                idle_sleep = 0.012
                 while True:
-                    out = None
-                    err = None
-                    try:
-                        out = ws_client.read_stdout(timeout=1)
-                    except Exception:
-                        pass
-                    try:
-                        err = ws_client.read_stderr(timeout=1)
-                    except Exception:
-                        pass
-                    if out:
-                        loop.call_soon_threadsafe(asyncio.create_task, websocket.send_text(out))
-                    if err:
-                        loop.call_soon_threadsafe(asyncio.create_task, websocket.send_text(err))
-                    if getattr(ws_client, "is_closed", False):
-                        break
+                    got_data = False
+                    # Rafale: tenter plusieurs petites lectures successives pour drainer les buffers
+                    for _ in range(6):
+                        try:
+                            out = ws_client.read_stdout(timeout=short)
+                        except Exception:
+                            out = None
+                        if out:
+                            got_data = True
+                            loop.call_soon_threadsafe(asyncio.create_task, websocket.send_text(out))
+
+                        try:
+                            err = ws_client.read_stderr(timeout=short)
+                        except Exception:
+                            err = None
+                        if err:
+                            got_data = True
+                            loop.call_soon_threadsafe(asyncio.create_task, websocket.send_text(err))
+
+                        if getattr(ws_client, "is_closed", False):
+                            return
+
+                    if not got_data:
+                        # Eviter le busy-loop en l'absence de données
+                        time.sleep(idle_sleep)
+                    else:
+                        # Micro-pause pour laisser l'event loop pousser les messages
+                        time.sleep(0.001)
             except Exception:
                 # Fin silencieuse
                 pass
