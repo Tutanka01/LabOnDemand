@@ -240,9 +240,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!details) return {};
         const services = details.services || [];
         const accessUrls = details.access_urls || [];
-        let nodePort = null;
-        let url = null;
-        let hostname = null;
+    let nodePort = null;
+    let url = null;
+    let hostname = null;
+    let protocol = null;
+    let secure = null;
 
         services.forEach(service => {
             (service.ports || []).forEach(port => {
@@ -257,6 +259,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                         } catch (err) {
                             hostname = candidate.cluster_ip || hostname;
                         }
+                        if (candidate.protocol) {
+                            protocol = candidate.protocol.toLowerCase();
+                        } else if (candidate.url) {
+                            if (candidate.url.startsWith('https://')) {
+                                protocol = 'https';
+                            } else if (candidate.url.startsWith('http://')) {
+                                protocol = 'http';
+                            }
+                        }
+                        if (candidate.secure !== undefined && candidate.secure !== null) {
+                            secure = Boolean(candidate.secure);
+                        }
+                    } else if (!protocol) {
+                        protocol = 'https';
+                        secure = true;
                     }
                 }
             });
@@ -271,9 +288,30 @@ document.addEventListener('DOMContentLoaded', async () => {
             } catch (err) {
                 hostname = first.cluster_ip || hostname;
             }
+            if (!protocol) {
+                if (first.protocol) {
+                    protocol = first.protocol.toLowerCase();
+                } else if (first.url) {
+                    if (first.url.startsWith('https://')) {
+                        protocol = 'https';
+                    } else if (first.url.startsWith('http://')) {
+                        protocol = 'http';
+                    }
+                }
+            }
+            if (secure === null && first.secure !== undefined) {
+                secure = Boolean(first.secure);
+            }
         }
 
-        return { nodePort, url, hostname };
+        if (!protocol && nodePort && Number(nodePort) === 6901) {
+            protocol = 'https';
+            if (secure === null) {
+                secure = true;
+            }
+        }
+
+        return { nodePort, url, hostname, protocol, secure };
     }
 
     function registerNovncEndpoint(deploymentId, namespace, info = {}) {
@@ -289,6 +327,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!Number.isNaN(numeric)) {
                     merged.nodePort = numeric;
                 }
+                return;
+            }
+            if (key === 'protocol') {
+                if (typeof value === 'string' && value.trim()) {
+                    merged.protocol = value.trim().toLowerCase();
+                }
+                return;
+            }
+            if (key === 'secure') {
+                merged.secure = Boolean(value);
                 return;
             }
             if (key === 'credentials' && typeof value === 'object') {
@@ -307,15 +355,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!info || !info.nodePort) return null;
         const host = info.hostname || window.location.hostname;
         const port = info.nodePort;
+        const preferredScheme = (() => {
+            if (typeof info.protocol === 'string' && info.protocol.trim()) {
+                const normalized = info.protocol.trim().toLowerCase();
+                if (normalized.startsWith('https')) return 'https';
+                if (normalized.startsWith('http')) return 'http';
+            }
+            if (info.secure === true) return 'https';
+            if (info.urlTemplate) {
+                if (info.urlTemplate.startsWith('https://')) return 'https';
+                if (info.urlTemplate.startsWith('http://')) return 'http';
+            }
+            if (info.url) {
+                if (info.url.startsWith('https://')) return 'https';
+                if (info.url.startsWith('http://')) return 'http';
+            }
+            return null;
+        })();
         if (info.urlTemplate) {
             return info.urlTemplate
                 .replace(/<IP_DU_NOEUD>/g, host)
+                .replace(/<IP_EXTERNE>/g, host)
                 .replace(/<NODE_PORT>/g, port);
         }
         if (info.url && !info.url.includes('<')) {
             return info.url;
         }
-        const protocol = info.urlTemplate?.startsWith('https://') ? 'https:' : 'http:';
+        const protocol = preferredScheme === 'http' ? 'http:' : 'https:';
         return `${protocol}//${host}:${port}/`;
     }
 
@@ -1678,6 +1744,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
 
+                const prefersHttps = deploymentType === 'netbeans';
+
                 if (connectionHints?.novnc) {
                     const hint = connectionHints.novnc;
                     if (!nodePort && hint.node_port) {
@@ -1688,7 +1756,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             ? hint.url_template.replace('<NODE_PORT>', hint.node_port)
                             : hint.url_template;
                     } else if (hint.node_port) {
-                        accessUrl = `http://<IP_DU_NOEUD>:${hint.node_port}/`;
+                        const hintProtocol = (hint.protocol || (hint.secure ? 'https' : null) || (prefersHttps ? 'https' : 'http')).toLowerCase();
+                        const scheme = hintProtocol === 'http' ? 'http' : 'https';
+                        accessUrl = `${scheme}://<IP_DU_NOEUD>:${hint.node_port}/`;
                     }
                 }
 
@@ -1718,13 +1788,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
 
                     if (!accessUrl) {
-                        accessUrl = nodePort ? `http://<IP_DU_NOEUD>:${nodePort}/` : '';
+                        const fallbackScheme = prefersHttps ? 'https' : 'http';
+                        accessUrl = nodePort ? `${fallbackScheme}://<IP_DU_NOEUD>:${nodePort}/` : '';
                     }
                 } else if (!accessUrl) {
+                    const scheme = prefersHttps ? 'https' : 'http';
                     if (serviceType === 'NodePort' || serviceType === 'LoadBalancer') {
-                        accessUrl = `http://<IP_EXTERNE>:${servicePort}/`;
+                        accessUrl = `${scheme}://<IP_EXTERNE>:${servicePort}/`;
                     } else {
-                        accessUrl = `http://${deploymentName}-service:${servicePort}/`;
+                        accessUrl = `${scheme}://${deploymentName}-service:${servicePort}/`;
                     }
                 }
 
@@ -1744,6 +1816,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         nodePort: nodePort ? Number(nodePort) : undefined,
                         urlTemplate: connectionHints?.novnc?.url_template,
                         url: accessUrl && !accessUrl.includes('<') ? accessUrl : undefined,
+                        protocol: connectionHints?.novnc?.protocol || 'https',
+                        secure: connectionHints?.novnc?.secure ?? true,
                         credentials: novncCredentials,
                     });
                 }
@@ -1762,6 +1836,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     deploymentType,
                     nodePort: nodePort ? Number(nodePort) : undefined,
                     urlTemplate: connectionHints?.novnc?.url_template,
+                    protocol: connectionHints?.novnc?.protocol || (prefersHttps ? 'https' : undefined),
+                    secure: connectionHints?.novnc?.secure ?? prefersHttps,
                     credentials: connectionHints?.novnc ? {
                         username: connectionHints.novnc.username,
                         password: connectionHints.novnc.password,
@@ -1970,6 +2046,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 nodePort: labDetails.nodePort,
                 urlTemplate: labDetails.urlTemplate,
                 url: labDetails.link && !labDetails.link.includes('IP_DU_NOEUD') && !labDetails.link.includes('NODE_PORT') ? labDetails.link : undefined,
+                protocol: labDetails.protocol,
+                secure: labDetails.secure,
                 credentials: labDetails.credentials,
             });
         }
@@ -2202,6 +2280,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     nodePort: novncInfo.nodePort,
                     url: novncInfo.url,
                     hostname: novncInfo.hostname,
+                    protocol: novncInfo.protocol,
+                    secure: novncInfo.secure,
                 });
             } else {
                 updateNovncButtonsAvailability(deploymentId);
@@ -2424,6 +2504,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 deploymentType: deployment.type,
                                 nodePort: novncInfo.nodePort,
                                 urlTemplate: undefined,
+                                protocol: novncInfo.protocol,
+                                secure: novncInfo.secure,
                                 credentials: deployment.type === 'netbeans' ? { username: 'kasm_user', password: 'password' } : undefined
                             });
                         } else {

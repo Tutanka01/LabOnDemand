@@ -735,6 +735,8 @@ class DeploymentService:
                 {"name": "KASM_ENABLE_SSL", "value": "false"},
                 {"name": "KASM_NO_VNC_SSL", "value": "1"},
                 {"name": "KASM_REQUIRE_SSL", "value": "false"},
+                {"name": "VNC_PW", "value": "password"},
+                {"name": "VNC_VIEW_ONLY_PW", "value": "password"},
             ]
 
         try:
@@ -870,9 +872,11 @@ class DeploymentService:
                     connection_hints = {
                         "novnc": {
                             "description": "Bureau distant via navigateur (NoVNC)",
-                            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
+                            "url_template": "https://<IP_DU_NOEUD>:<NODE_PORT>",
                             "target_port": config["service_target_port"],
                             "node_port": _find_node_port("novnc", config["service_target_port"]),
+                            "protocol": "https",
+                            "secure": True,
                             "username": "kasm_user",
                             "password": "password",
                         },
