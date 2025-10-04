@@ -8,7 +8,7 @@ Cette fonctionnalité permet à chaque utilisateur de déployer une instance Wor
   - Secret (mots de passe auto-générés)
   - PVC 1Gi pour la base de données
   - Service + Deployment MariaDB
-  - Service + Deployment WordPress (image bitnami/wordpress)
+  - Service + Deployment WordPress (image bitnamilegacy/wordpress:6.8.2-debian-12-r5)
 - Accès par NodePort (par défaut): le port est assigné par Kubernetes, l’URL publique est visible dans les détails du déploiement (frontend) une fois prêt.
 - Isolation par utilisateur: labels `managed-by=labondemand` et `user-id=<id>` + namespace dédié.
 
@@ -60,6 +60,6 @@ Idempotence: si un Secret `<name>-secret` existe déjà (par exemple après une 
 ---
 
 Notes techniques:
-- Images: `bitnami/wordpress:latest` (HTTP sur 8080), `bitnami/mariadb:latest`.
+- Images: `bitnamilegacy/wordpress:6.8.2-debian-12-r5` (HTTP sur 8080), `bitnamilegacy/mariadb:12.0.2-debian-12-r0`.
 - Probes HTTP prêtes/vivantes configurées sur `/` port 8080 pour WordPress.
 - Le Service WordPress respecte le type choisi (NodePort par défaut).

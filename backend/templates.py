@@ -47,7 +47,7 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "name": "WordPress (Web + DB)",
                 "description": "Déployer WordPress avec base MariaDB, clés générées automatiquement.",
                 "icon": "fa-brands fa-wordpress",
-                "default_image": "bitnami/wordpress:latest",
+                "default_image": "bitnamilegacy/wordpress:6.8.2-debian-12-r5",
                 "default_port": 8080,
                 "deployment_type": "wordpress",
                 "default_service_type": "NodePort",

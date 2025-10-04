@@ -1217,8 +1217,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 servicePort = 8080;
                 serviceTargetPort = 8080;
             } else if (deploymentType === 'wordpress') {
-                // WordPress: l'image sera ignorée côté serveur (bitnami/wordpress), mais on garde NodePort 8080
-                image = 'bitnami/wordpress:latest';
+                // WordPress: l'image sera ignorée côté serveur (bitnamilegacy/wordpress), mais on garde NodePort 8080
+                image = 'bitnamilegacy/wordpress:6.8.2-debian-12-r5';
                 createService = true;
                 serviceType = 'NodePort';
                 servicePort = 8080;
