@@ -139,7 +139,7 @@ def ensure_admin_exists():
                         description=d.get("description"),
                         icon=d.get("icon"),
                         deployment_type="wordpress",
-                        default_image=d.get("default_image", "bitnami/wordpress:latest"),
+                        default_image=d.get("default_image", "bitnamilegacy/wordpress:6.8.2-debian-12-r5"),
                         default_port=d.get("default_port", 8080),
                         default_service_type=d.get("default_service_type", "NodePort"),
                         active=True,
@@ -207,7 +207,7 @@ def ensure_admin_exists():
                 ))
                 db.add(RuntimeConfig(
                     key="wordpress",
-                    default_image="bitnami/wordpress:latest",
+                    default_image="bitnamilegacy/wordpress:6.8.2-debian-12-r5",
                     target_port=8080,
                     default_service_type="NodePort",
                     allowed_for_students=True,
@@ -228,7 +228,7 @@ def ensure_admin_exists():
                 if not wp:
                     db.add(RuntimeConfig(
                         key="wordpress",
-                        default_image="bitnami/wordpress:latest",
+                        default_image="bitnamilegacy/wordpress:6.8.2-debian-12-r5",
                         target_port=8080,
                         default_service_type="NodePort",
                         allowed_for_students=True,

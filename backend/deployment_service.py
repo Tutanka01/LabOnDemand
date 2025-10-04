@@ -904,7 +904,7 @@ class DeploymentService:
                         "containers": [
                             {
                                 "name": "mariadb",
-                                "image": "bitnami/mariadb:latest",
+                                "image": "bitnamilegacy/mariadb:12.0.2-debian-12-r0",
                                 "envFrom": [{"secretRef": {"name": secret_name}}],
                                 "ports": [{"containerPort": 3306}],
                                 "resources": {
@@ -962,7 +962,7 @@ class DeploymentService:
                         "containers": [
                             {
                                 "name": "wordpress",
-                                "image": "bitnami/wordpress:latest",
+                                "image": "bitnamilegacy/wordpress:6.8.2-debian-12-r5",
                                 "env": [
                                     {"name": "WORDPRESS_ENABLE_HTTPS", "value": "no"},
                                     {"name": "APACHE_HTTP_PORT_NUMBER", "value": "8080"},
