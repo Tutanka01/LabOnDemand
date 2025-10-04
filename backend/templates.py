@@ -74,6 +74,17 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "deployment_type": "jupyter",
                 "default_service_type": "NodePort",
                 "tags": ["data", "notebooks", "python", "apprentissage", "web", "nodeport"]
+            },
+            {
+                "id": "netbeans",
+                "name": "NetBeans Desktop (NoVNC)",
+                "description": "Environnement bureau distant avec NetBeans, accessible via le navigateur (NoVNC).",
+                "icon": "fa-solid fa-desktop",
+                "default_image": "tutanka01/webdocker:apachenetbeans27",
+                "default_port": 6901,
+                "deployment_type": "netbeans",
+                "default_service_type": "NodePort",
+                "tags": ["bureau", "novnc", "ide", "java"]
             }
         ]
     }
@@ -181,6 +192,16 @@ class DeploymentConfig:
         "min_memory_limit": "512Mi"
     }
     
+    NETBEANS_CONFIG = {
+        "image": "tutanka01/webdocker:apachenetbeans27",
+        "target_port": 6901,
+        "service_type": "NodePort",
+        "min_cpu_request": "500m",
+        "min_memory_request": "1Gi",
+        "min_cpu_limit": "1000m",
+        "min_memory_limit": "2Gi"
+    }
+
     @classmethod
     def get_config(cls, deployment_type: str) -> Dict[str, Any]:
         """Retourne la configuration pour un type de déploiement"""
@@ -188,6 +209,7 @@ class DeploymentConfig:
             "vscode": cls.VSCODE_CONFIG,
             "jupyter": cls.JUPYTER_CONFIG,
             "mysql": cls.MYSQL_PMA_CONFIG,
-            "lamp": cls.LAMP_CONFIG
+            "lamp": cls.LAMP_CONFIG,
+            "netbeans": cls.NETBEANS_CONFIG
         }
         return configs.get(deployment_type, {})

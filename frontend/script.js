@@ -33,6 +33,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tagFiltersEl = document.getElementById('tag-filters');
     const quotasContent = document.getElementById('quotas-content');
     const refreshQuotasBtn = document.getElementById('refresh-quotas');
+    const novncModal = document.getElementById('novnc-modal');
+    const novncModalTitle = document.getElementById('novnc-modal-title');
+    const novncFrame = document.getElementById('novnc-frame');
+    const novncStatusBanner = document.getElementById('novnc-status');
+    const novncCredentialsBox = document.getElementById('novnc-credentials');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -42,6 +47,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
+    const novncEndpoints = new Map();
+    let lastLaunchedDeployment = null;
 
     // --- UI: Toggle section Kubernetes ---
     if (k8sSectionToggle && k8sResources) {
@@ -155,6 +162,385 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (refreshQuotasBtn) {
         refreshQuotasBtn.addEventListener('click', refreshQuotas);
         setInterval(() => { refreshQuotas(); }, 45000);
+    }
+
+    function escapeHtml(str) {
+        if (typeof str !== 'string') return str;
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function renderServicePortsSummary(portsDetails, serviceType) {
+        if (!Array.isArray(portsDetails) || portsDetails.length === 0) return '';
+        const items = portsDetails.map(detail => {
+            const label = detail.name ? `<strong>${escapeHtml(String(detail.name))}</strong>` : '<strong>Port</strong>';
+            const portVal = escapeHtml(String(detail.port ?? ''));
+            const targetVal = escapeHtml(String(detail.target_port ?? ''));
+            const nodePort = detail.node_port ? `<span class="port-node">NodePort ${escapeHtml(String(detail.node_port))}</span>` : '';
+            const protocol = detail.protocol ? `<span class="port-protocol">${escapeHtml(String(detail.protocol))}</span>` : '';
+            return `<li>${label}: ${portVal} → ${targetVal} ${protocol} ${nodePort}</li>`;
+        }).join('');
+        return `
+            <div class="service-ports-summary">
+                <h4><i class="fas fa-plug"></i> Ports exposés (${serviceType || 'Service'})</h4>
+                <ul class="ports-list">${items}</ul>
+            </div>
+        `;
+    }
+
+    function renderConnectionHints(hints) {
+        if (!hints || typeof hints !== 'object') return '';
+        const entries = Object.entries(hints).filter(([, info]) => info && typeof info === 'object');
+        if (!entries.length) return '';
+        const titleMap = {
+            novnc: 'Accès navigateur (NoVNC)',
+            vnc: 'Client VNC natif',
+            audio: 'Canal audio',
+        };
+        const cards = entries.map(([key, info]) => {
+            const title = titleMap[key] || key.toUpperCase();
+            const description = info.description ? `<p class="hint-description">${escapeHtml(String(info.description))}</p>` : '';
+            const nodePort = info.node_port ? `<li><strong>NodePort:</strong> ${escapeHtml(String(info.node_port))}</li>` : '';
+            const targetPort = info.target_port ? `<li><strong>Port interne:</strong> ${escapeHtml(String(info.target_port))}</li>` : '';
+            const username = info.username ? `<li><strong>Utilisateur:</strong> ${escapeHtml(String(info.username))}</li>` : '';
+            const password = info.password ? `<li><strong>Mot de passe:</strong> ${escapeHtml(String(info.password))}</li>` : '';
+            let urlTemplate = '';
+            if (info.url_template) {
+                let resolved = info.url_template;
+                if (info.node_port) {
+                    resolved = resolved.replace('<NODE_PORT>', info.node_port);
+                }
+                urlTemplate = `<li><strong>URL:</strong> <code>${escapeHtml(resolved)}</code></li>`;
+            }
+            const extra = info.notes ? `<li>${escapeHtml(String(info.notes))}</li>` : '';
+            const list = [urlTemplate, nodePort, targetPort, username, password, extra].filter(Boolean).join('');
+            if (!list && !description) return '';
+            return `
+                <div class="connection-hint-card">
+                    <h5>${title}</h5>
+                    ${description}
+                    ${list ? `<ul>${list}</ul>` : ''}
+                </div>
+            `;
+        }).filter(Boolean).join('');
+        if (!cards) return '';
+        return `
+            <div class="connection-hints">
+                <h4><i class="fas fa-satellite-dish"></i> Infos de connexion</h4>
+                <div class="connection-hints-grid">${cards}</div>
+            </div>
+        `;
+    }
+
+    function extractNovncInfoFromDetails(details) {
+        if (!details) return {};
+        const services = details.services || [];
+        const accessUrls = details.access_urls || [];
+    let nodePort = null;
+    let url = null;
+    let hostname = null;
+    let protocol = null;
+    let secure = null;
+
+        services.forEach(service => {
+            (service.ports || []).forEach(port => {
+                const isNovnc = port.name === 'novnc' || port.port === 6901;
+                if (isNovnc && port.node_port) {
+                    nodePort = port.node_port;
+                    const candidate = accessUrls.find(entry => entry.node_port === port.node_port);
+                    if (candidate) {
+                        url = candidate.url;
+                        try {
+                            hostname = new URL(candidate.url).hostname;
+                        } catch (err) {
+                            hostname = candidate.cluster_ip || hostname;
+                        }
+                        if (candidate.protocol) {
+                            protocol = candidate.protocol.toLowerCase();
+                        } else if (candidate.url) {
+                            if (candidate.url.startsWith('https://')) {
+                                protocol = 'https';
+                            } else if (candidate.url.startsWith('http://')) {
+                                protocol = 'http';
+                            }
+                        }
+                        if (candidate.secure !== undefined && candidate.secure !== null) {
+                            secure = Boolean(candidate.secure);
+                        }
+                    } else if (!protocol) {
+                        protocol = 'https';
+                        secure = true;
+                    }
+                }
+            });
+        });
+
+        if (!nodePort && accessUrls.length === 1) {
+            const first = accessUrls[0];
+            nodePort = first.node_port ?? nodePort;
+            url = first.url || url;
+            try {
+                hostname = first.url ? new URL(first.url).hostname : (first.cluster_ip || hostname);
+            } catch (err) {
+                hostname = first.cluster_ip || hostname;
+            }
+            if (!protocol) {
+                if (first.protocol) {
+                    protocol = first.protocol.toLowerCase();
+                } else if (first.url) {
+                    if (first.url.startsWith('https://')) {
+                        protocol = 'https';
+                    } else if (first.url.startsWith('http://')) {
+                        protocol = 'http';
+                    }
+                }
+            }
+            if (secure === null && first.secure !== undefined) {
+                secure = Boolean(first.secure);
+            }
+        }
+
+        if (!protocol && nodePort && Number(nodePort) === 6901) {
+            protocol = 'https';
+            if (secure === null) {
+                secure = true;
+            }
+        }
+
+        return { nodePort, url, hostname, protocol, secure };
+    }
+
+    function registerNovncEndpoint(deploymentId, namespace, info = {}) {
+        if (!deploymentId) return;
+        const previous = novncEndpoints.get(deploymentId) || {};
+        const merged = { ...previous };
+        if (namespace) merged.namespace = namespace;
+
+        Object.entries(info).forEach(([key, value]) => {
+            if (value === undefined || value === null) return;
+            if (key === 'nodePort') {
+                const numeric = Number(value);
+                if (!Number.isNaN(numeric)) {
+                    merged.nodePort = numeric;
+                }
+                return;
+            }
+            if (key === 'protocol') {
+                if (typeof value === 'string' && value.trim()) {
+                    merged.protocol = value.trim().toLowerCase();
+                }
+                return;
+            }
+            if (key === 'secure') {
+                merged.secure = Boolean(value);
+                return;
+            }
+            if (key === 'credentials' && typeof value === 'object') {
+                merged.credentials = { ...(previous.credentials || {}), ...value };
+                return;
+            }
+            merged[key] = value;
+        });
+
+        merged.updatedAt = Date.now();
+        novncEndpoints.set(deploymentId, merged);
+        updateNovncButtonsAvailability(deploymentId);
+    }
+
+    function buildNovncUrl(info) {
+        if (!info || !info.nodePort) return null;
+        const host = info.hostname || window.location.hostname;
+        const port = info.nodePort;
+        const preferredScheme = (() => {
+            if (typeof info.protocol === 'string' && info.protocol.trim()) {
+                const normalized = info.protocol.trim().toLowerCase();
+                if (normalized.startsWith('https')) return 'https';
+                if (normalized.startsWith('http')) return 'http';
+            }
+            if (info.secure === true) return 'https';
+            if (info.urlTemplate) {
+                if (info.urlTemplate.startsWith('https://')) return 'https';
+                if (info.urlTemplate.startsWith('http://')) return 'http';
+            }
+            if (info.url) {
+                if (info.url.startsWith('https://')) return 'https';
+                if (info.url.startsWith('http://')) return 'http';
+            }
+            return null;
+        })();
+        if (info.urlTemplate) {
+            return info.urlTemplate
+                .replace(/<IP_DU_NOEUD>/g, host)
+                .replace(/<IP_EXTERNE>/g, host)
+                .replace(/<NODE_PORT>/g, port);
+        }
+        if (info.url && !info.url.includes('<')) {
+            return info.url;
+        }
+        const protocol = preferredScheme === 'http' ? 'http:' : 'https:';
+        return `${protocol}//${host}:${port}/`;
+    }
+
+    async function ensureNovncDetails(deploymentId) {
+        const current = novncEndpoints.get(deploymentId);
+        if (!current || !current.namespace) {
+            throw new Error('Namespace inconnu pour ce déploiement');
+        }
+        const response = await fetch(`${API_V1}/k8s/deployments/${current.namespace}/${deploymentId}/details`);
+        if (!response.ok) {
+            throw new Error('Impossible de récupérer les détails du déploiement');
+        }
+        const details = await response.json();
+        const extracted = extractNovncInfoFromDetails(details);
+        registerNovncEndpoint(deploymentId, current.namespace, extracted);
+        return novncEndpoints.get(deploymentId);
+    }
+
+    async function resolveNovncUrl(deploymentId) {
+        let info = novncEndpoints.get(deploymentId);
+        if (!info) {
+            throw new Error('Informations NoVNC indisponibles');
+        }
+        if (!info.nodePort || (info.url && info.url.includes('<'))) {
+            info = await ensureNovncDetails(deploymentId);
+        }
+        if (!info || !info.nodePort) {
+            throw new Error('NodePort NoVNC introuvable');
+        }
+        let finalUrl = info.url;
+        if (!finalUrl || finalUrl.includes('<')) {
+            finalUrl = buildNovncUrl(info);
+            if (finalUrl) {
+                registerNovncEndpoint(deploymentId, info.namespace, { url: finalUrl });
+                info = novncEndpoints.get(deploymentId);
+            }
+        }
+        if (!finalUrl) {
+            throw new Error('Impossible de construire l’URL NoVNC');
+        }
+        return { url: finalUrl, info };
+    }
+
+    function updateNovncButtonsAvailability(deploymentId) {
+        const info = novncEndpoints.get(deploymentId);
+        const buttons = document.querySelectorAll(`.embed-novnc-btn[data-novnc-target="${deploymentId}"]`);
+        const hasNodePort = !!(info && info.nodePort);
+        const hasUrl = !!(info && info.url && !info.url.includes('<'));
+
+        buttons.forEach(btn => {
+            if (!btn) return;
+            if (hasNodePort || hasUrl) {
+                btn.disabled = false;
+                btn.classList.remove('disabled');
+                btn.innerHTML = '<i class="fas fa-desktop"></i> Ouvrir dans la page';
+            } else {
+                btn.disabled = true;
+                btn.classList.add('disabled');
+                btn.innerHTML = '<i class="fas fa-desktop"></i> En attente NoVNC...';
+            }
+        });
+
+        if (lastLaunchedDeployment && lastLaunchedDeployment.id === deploymentId) {
+            const hint = document.getElementById('inline-novnc-hint');
+            if (hint) {
+                if (hasUrl) {
+                    hint.textContent = 'Cliquez pour ouvrir la session NetBeans dans la fenêtre intégrée.';
+                } else if (hasNodePort) {
+                    hint.textContent = 'Le service est presque prêt. Cliquez pour ouvrir la session dès que possible.';
+                } else {
+                    hint.textContent = 'Configuration du service NoVNC en cours...';
+                }
+            }
+        }
+    }
+
+    function prepareNovncModal(deploymentId) {
+        if (!novncModal) return;
+        if (novncModalTitle) {
+            novncModalTitle.innerHTML = `<i class="fas fa-desktop"></i> ${deploymentId} - NoVNC`;
+        }
+        if (novncStatusBanner) {
+            novncStatusBanner.classList.remove('error');
+            novncStatusBanner.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Préparation de la session NoVNC...';
+        }
+        if (novncCredentialsBox) {
+            novncCredentialsBox.classList.remove('show');
+            novncCredentialsBox.innerHTML = '';
+        }
+        if (novncFrame) {
+            try { novncFrame.src = 'about:blank'; } catch (err) {}
+        }
+        novncModal.classList.add('show');
+    }
+
+    async function openNovncModalFor(deploymentId) {
+        const { url, info } = await resolveNovncUrl(deploymentId);
+        if (novncStatusBanner) {
+            novncStatusBanner.classList.remove('error');
+            novncStatusBanner.innerHTML = `<i class="fas fa-check-circle"></i> Connexion à ${escapeHtml(url)}`;
+        }
+        if (novncCredentialsBox) {
+            if (info?.credentials?.username || info?.credentials?.password) {
+                novncCredentialsBox.classList.add('show');
+                novncCredentialsBox.innerHTML = `
+                    <strong>Identifiants par défaut</strong><br>
+                    Utilisateur : <code>${escapeHtml(info.credentials.username || '')}</code><br>
+                    Mot de passe : <code>${escapeHtml(info.credentials.password || '')}</code>
+                `;
+            } else {
+                novncCredentialsBox.classList.remove('show');
+                novncCredentialsBox.innerHTML = '';
+            }
+        }
+        if (novncFrame) {
+            novncFrame.src = url;
+        }
+    }
+
+    function bindNovncButtons(scope = document) {
+        const buttons = scope.querySelectorAll('.embed-novnc-btn');
+        buttons.forEach(btn => {
+            if (!btn || btn.dataset.novncBound === '1') return;
+            btn.dataset.novncBound = '1';
+            btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                if (btn.disabled || btn.classList.contains('disabled')) return;
+                const deploymentId = btn.getAttribute('data-novnc-target');
+                const namespace = btn.getAttribute('data-namespace');
+                if (!deploymentId) return;
+                if (namespace) {
+                    registerNovncEndpoint(deploymentId, namespace, {});
+                }
+                prepareNovncModal(deploymentId);
+                try {
+                    await openNovncModalFor(deploymentId);
+                } catch (error) {
+                    console.error('Erreur NoVNC:', error);
+                    if (novncStatusBanner) {
+                        novncStatusBanner.classList.add('error');
+                        novncStatusBanner.innerHTML = `<i class=\"fas fa-exclamation-triangle\"></i> ${escapeHtml(error.message || 'Impossible d’ouvrir NoVNC')}`;
+                    }
+                }
+            });
+        });
+    }
+
+    function resetNovncModal() {
+        if (novncFrame) {
+            try { novncFrame.src = 'about:blank'; } catch (err) {}
+        }
+        if (novncStatusBanner) {
+            novncStatusBanner.classList.remove('error');
+            novncStatusBanner.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Préparation de la session NoVNC...';
+        }
+        if (novncCredentialsBox) {
+            novncCredentialsBox.classList.remove('show');
+            novncCredentialsBox.innerHTML = '';
+        }
     }
 
     // --- Rendu des namespaces (admin/teacher) ---
@@ -923,6 +1309,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     document.getElementById('service-target-port').value = defaultPort;
                 }
                 document.getElementById('service-type-select').value = defaultServiceType;
+            } else if (deploymentType === 'netbeans') {
+                const cpuSelect = document.getElementById('cpu');
+                const ramSelect = document.getElementById('ram');
+                if (cpuSelect) cpuSelect.value = 'medium';
+                if (ramSelect) ramSelect.value = 'high';
             }
 
             // Rétablir le nom par défaut (après reset)
@@ -1216,6 +1607,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serviceType = 'NodePort';
                 servicePort = 8080;
                 serviceTargetPort = 8080;
+            } else if (deploymentType === 'netbeans') {
+                image = 'tutanka01/webdocker:apachenetbeans27';
+                createService = true;
+                serviceType = 'NodePort';
+                servicePort = 6901;
+                serviceTargetPort = 6901;
             } else if (deploymentType === 'wordpress') {
                 // WordPress: l'image sera ignorée côté serveur (bitnamilegacy/wordpress), mais on garde NodePort 8080
                 image = 'bitnamilegacy/wordpress:6.8.2-debian-12-r5';
@@ -1320,32 +1717,64 @@ document.addEventListener('DOMContentLoaded', async () => {
                     throw new Error(errorMessage);
                 }
                 
+                const serviceInfo = data.service_info || {};
+                const portsDetails = Array.isArray(serviceInfo.ports_detail) ? serviceInfo.ports_detail : [];
+                const connectionHints = data.connection_hints || null;
+
                 // Construire les infos du lab à ajouter au dashboard
                 labCounter++;
                 const labId = deploymentName;
                 const effectiveNamespace = data.namespace || 'labondemand-user';
-                
+
+                if (deploymentType === 'netbeans') {
+                    lastLaunchedDeployment = { id: labId, namespace: effectiveNamespace };
+                } else {
+                    lastLaunchedDeployment = null;
+                }
+
                 // Extraire l'URL d'accès des infos de retour (ou générer une URL factice en attendant de récupérer l'URL réelle)
                 let accessUrl = '';
-                let nodePort = '';
-                
-                // Parser la réponse pour extraire les informations d'accès
+                let nodePort = serviceInfo.node_port ?? '';
+                if (nodePort && typeof nodePort !== 'string') nodePort = String(nodePort);
+
+                if (portsDetails.length) {
+                    const firstWithNode = portsDetails.find(detail => detail && detail.node_port);
+                    if (!nodePort && firstWithNode && firstWithNode.node_port) {
+                        nodePort = String(firstWithNode.node_port);
+                    }
+                }
+
+                const prefersHttps = deploymentType === 'netbeans';
+
+                if (connectionHints?.novnc) {
+                    const hint = connectionHints.novnc;
+                    if (!nodePort && hint.node_port) {
+                        nodePort = String(hint.node_port);
+                    }
+                    if (hint.url_template) {
+                        accessUrl = hint.node_port
+                            ? hint.url_template.replace('<NODE_PORT>', hint.node_port)
+                            : hint.url_template;
+                    } else if (hint.node_port) {
+                        const hintProtocol = (hint.protocol || (hint.secure ? 'https' : null) || (prefersHttps ? 'https' : 'http')).toLowerCase();
+                        const scheme = hintProtocol === 'http' ? 'http' : 'https';
+                        accessUrl = `${scheme}://<IP_DU_NOEUD>:${hint.node_port}/`;
+                    }
+                }
+
+                // Parser la réponse pour extraire des informations supplémentaires
                 if (data.message) {
-                    // Essayer d'extraire un NodePort mentionné dans le message
                     const nodePortMatch = data.message.match(/NodePort: (\d+)/);
-                    if (nodePortMatch && nodePortMatch[1]) {
+                    if (!nodePort && nodePortMatch && nodePortMatch[1]) {
                         nodePort = nodePortMatch[1];
                     }
-                    
-                    // Cherche une URL complète déjà formatée
                     const urlMatch = data.message.match(/(https?:\/\/[^\s"'<>]+)/);
-                    if (urlMatch && urlMatch[1]) {
+                    if (!accessUrl && urlMatch && urlMatch[1]) {
                         accessUrl = urlMatch[1];
                     }
                 }
-                
+
                 if (!accessUrl && nodePort) {
-                    // Si on n'a pas d'URL complète mais on a un NodePort, tenter de récupérer les détails
                     try {
                         const detailsResponse = await fetch(`${API_V1}/k8s/deployments/${effectiveNamespace}/${deploymentName}/details`);
                         if (detailsResponse.ok) {
@@ -1357,20 +1786,43 @@ document.addEventListener('DOMContentLoaded', async () => {
                     } catch (error) {
                         console.error('Erreur lors de la récupération des détails:', error);
                     }
-                    
-                    // Fallback si on n'arrive pas à récupérer d'URL réelle
+
                     if (!accessUrl) {
-                        accessUrl = `http://<IP_DU_NOEUD>:${nodePort}/`;
+                        const fallbackScheme = prefersHttps ? 'https' : 'http';
+                        accessUrl = nodePort ? `${fallbackScheme}://<IP_DU_NOEUD>:${nodePort}/` : '';
                     }
                 } else if (!accessUrl) {
-                    // URL générique selon le type de service
+                    const scheme = prefersHttps ? 'https' : 'http';
                     if (serviceType === 'NodePort' || serviceType === 'LoadBalancer') {
-                        accessUrl = `http://<IP_EXTERNE>:${servicePort}/`;
+                        accessUrl = `${scheme}://<IP_EXTERNE>:${servicePort}/`;
                     } else {
-                        accessUrl = `http://${deploymentName}-service:${servicePort}/`;
+                        accessUrl = `${scheme}://${deploymentName}-service:${servicePort}/`;
                     }
                 }
-                  // Ajouter le lab au dashboard avec l'état "en préparation"
+
+                if (accessUrl && accessUrl.includes('<')) {
+                    accessUrl = accessUrl
+                        .replace(/<IP_DU_NOEUD>/g, 'IP_DU_NOEUD')
+                        .replace(/<IP_EXTERNE>/g, 'IP_EXTERNE')
+                        .replace(/<NODE_PORT>/g, nodePort || 'NODE_PORT');
+                }
+
+                if (deploymentType === 'netbeans') {
+                    const novncCredentials = connectionHints?.novnc ? {
+                        username: connectionHints.novnc.username,
+                        password: connectionHints.novnc.password,
+                    } : undefined;
+                    registerNovncEndpoint(labId, effectiveNamespace, {
+                        nodePort: nodePort ? Number(nodePort) : undefined,
+                        urlTemplate: connectionHints?.novnc?.url_template,
+                        url: accessUrl && !accessUrl.includes('<') ? accessUrl : undefined,
+                        protocol: connectionHints?.novnc?.protocol || 'https',
+                        secure: connectionHints?.novnc?.secure ?? true,
+                        credentials: novncCredentials,
+                    });
+                }
+
+                // Ajouter le lab au dashboard avec l'état "en préparation"
                 addLabCard({
                     id: labId,
                     name: serviceName,
@@ -1380,12 +1832,59 @@ document.addEventListener('DOMContentLoaded', async () => {
                     datasets: datasets,
                     link: accessUrl,
                     namespace: effectiveNamespace,
-                    ready: false // Le déploiement commence toujours en état non prêt
+                    ready: false,
+                    deploymentType,
+                    nodePort: nodePort ? Number(nodePort) : undefined,
+                    urlTemplate: connectionHints?.novnc?.url_template,
+                    protocol: connectionHints?.novnc?.protocol || (prefersHttps ? 'https' : undefined),
+                    secure: connectionHints?.novnc?.secure ?? prefersHttps,
+                    credentials: connectionHints?.novnc ? {
+                        username: connectionHints.novnc.username,
+                        password: connectionHints.novnc.password,
+                    } : undefined
                 });
 
                 // Mettre à jour la liste des déploiements
                 fetchAndRenderDeployments();
-                  // Afficher la réussite du déploiement initial (pas de l'application)
+
+                const portsSummaryHtml = renderServicePortsSummary(portsDetails, serviceInfo.type);
+                const connectionHintsHtml = renderConnectionHints(connectionHints);
+                const escapedMessage = escapeHtml(data.message || '');
+
+                const inlineNovncBlock = deploymentType === 'netbeans' ? `
+                    <div class="novnc-inline-card">
+                        <h4><i class="fas fa-desktop"></i> Bureau intégré NoVNC</h4>
+                        <p id="inline-novnc-hint">La session NoVNC sera disponible dès que le service sera prêt.</p>
+                        <button type="button" class="btn btn-primary embed-novnc-btn disabled" data-novnc-target="${labId}" data-namespace="${effectiveNamespace}" disabled>
+                            <i class="fas fa-desktop"></i> Ouvrir dans la page
+                        </button>
+                    </div>
+                ` : '';
+
+                let accessInfoHtml = '';
+                if (accessUrl) {
+                    const isPlaceholder = ['IP_DU_NOEUD', 'IP_EXTERNE', 'NODE_PORT'].some(token => accessUrl.includes(token));
+                    if (isPlaceholder) {
+                        accessInfoHtml = `
+                            <p style="margin-top: 15px;">Utilisez les informations ci-dessus pour déterminer l'adresse finale une fois le service prêt.</p>
+                            <div class="access-link disabled">
+                                <i class="fas fa-link"></i>
+                                <span>${escapeHtml(accessUrl)}</span>
+                                <span class="status-badge">En attente</span>
+                            </div>
+                        `;
+                    } else {
+                        accessInfoHtml = `
+                            <p style="margin-top: 15px;">Une fois prêt, vous pourrez accéder à votre service via :</p>
+                            <a class="access-link disabled" href="${accessUrl}" target="_blank" rel="noopener">
+                                <i class="fas fa-link"></i> ${escapeHtml(accessUrl)}
+                                <span class="status-badge">En attente</span>
+                            </a>
+                        `;
+                    }
+                }
+
+                // Afficher la réussite du déploiement initial (pas de l'application)
                 statusContent.innerHTML = `
                     <i class="fas fa-circle-notch fa-spin status-icon"></i>
                     <h2>${serviceName} est en cours de préparation</h2>
@@ -1397,17 +1896,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                     
                     <p>Vous serez notifié quand votre environnement sera prêt à être utilisé.</p>
-                    <div class="api-response">${data.message}</div>
-                    
-                    ${accessUrl ? `
-                        <p style="margin-top: 15px;">Une fois prêt, vous pourrez accéder à votre service via :</p>
-                        <a class="access-link disabled">
-                            <i class="fas fa-link"></i> ${accessUrl}
-                            <span class="status-badge">En attente</span>
-                        </a>
-                    ` : ''}
+                    <div class="api-response">${escapedMessage}</div>
+                    ${portsSummaryHtml}
+                    ${connectionHintsHtml}
+                    ${inlineNovncBlock}
+                    ${accessInfoHtml}
                 `;
-                statusActions.style.display = 'block'; // Afficher le bouton "Terminé"
+                statusActions.style.display = 'block';
+
+                if (deploymentType === 'netbeans') {
+                    bindNovncButtons(statusContent);
+                    updateNovncButtonsAvailability(labId);
+                }
                 
             } catch (error) {
                 console.error('Erreur:', error);
@@ -1486,11 +1986,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         card.classList.add(labDetails.ready ? 'lab-ready' : 'lab-pending');
         card.id = labDetails.id;
         card.dataset.namespace = labDetails.namespace;
+        card.dataset.deploymentType = labDetails.deploymentType || '';
 
         let datasetsHtml = '';
         if (labDetails.datasets && labDetails.datasets.length > 0) {
             datasetsHtml = `<div class="lab-datasets"><i class="fas fa-database"></i><span>Datasets: ${labDetails.datasets.join(', ')}</span></div>`;
         }
+
+        const isNetbeans = labDetails.deploymentType === 'netbeans';
+        const embedButtonHtml = isNetbeans ? `
+                <button type="button" class="btn btn-secondary embed-novnc-btn ${labDetails.ready ? '' : 'disabled'}" data-novnc-target="${labDetails.id}" data-namespace="${labDetails.namespace}" ${labDetails.ready ? '' : 'disabled'}>
+                    <i class="fas fa-desktop"></i> ${labDetails.ready ? 'Ouvrir dans la page' : 'En attente NoVNC...'}
+                </button>
+        ` : '';
 
         // Déterminer l'indicateur d'état à afficher
         const statusIndicator = labDetails.ready 
@@ -1521,6 +2029,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <a href="${labDetails.link}" target="_blank" class="btn btn-primary ${labDetails.ready ? '' : 'disabled'}" id="access-btn-${labDetails.id}">
                     <i class="fas fa-external-link-alt"></i> ${labDetails.ready ? 'Accéder' : 'En préparation...'}
                 </a>
+                ${embedButtonHtml}
                 <button class="btn btn-secondary btn-details" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
                     <i class="fas fa-info-circle"></i> Détails
                 </button>
@@ -1531,6 +2040,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
 
         activeLabsList.appendChild(card);
+
+        if (isNetbeans) {
+            registerNovncEndpoint(labDetails.id, labDetails.namespace, {
+                nodePort: labDetails.nodePort,
+                urlTemplate: labDetails.urlTemplate,
+                url: labDetails.link && !labDetails.link.includes('IP_DU_NOEUD') && !labDetails.link.includes('NODE_PORT') ? labDetails.link : undefined,
+                protocol: labDetails.protocol,
+                secure: labDetails.secure,
+                credentials: labDetails.credentials,
+            });
+        }
+
+        bindNovncButtons(card);
+        if (isNetbeans) {
+            updateNovncButtonsAvailability(labDetails.id);
+        }
 
         // Ajouter l'écouteur pour le bouton détails
         card.querySelector('.btn-details').addEventListener('click', (e) => {
@@ -1747,6 +2272,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 accessBtn.innerHTML = '<i class="fas fa-exclamation-circle"></i> Vérifier les détails';
             }
         }
+
+        if (card.dataset.deploymentType === 'netbeans') {
+            if (isReady && deploymentData) {
+                const novncInfo = extractNovncInfoFromDetails(deploymentData);
+                registerNovncEndpoint(deploymentId, card.dataset.namespace, {
+                    nodePort: novncInfo.nodePort,
+                    url: novncInfo.url,
+                    hostname: novncInfo.hostname,
+                    protocol: novncInfo.protocol,
+                    secure: novncInfo.secure,
+                });
+            } else {
+                updateNovncButtonsAvailability(deploymentId);
+            }
+        }
     }
 
     async function stopLab(labId, namespace) {
@@ -1788,6 +2328,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelectorAll('.close-modal, .close-modal-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.modal.show').forEach(modal => {
+                if (modal.id === 'novnc-modal') {
+                    resetNovncModal();
+                }
                 modal.classList.remove('show');
             });
         });
@@ -1796,6 +2339,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('cancel-delete').addEventListener('click', () => {
         document.getElementById('delete-modal').classList.remove('show');
     });
+
+    if (novncModal) {
+        novncModal.addEventListener('click', (event) => {
+            if (event.target === novncModal) {
+                resetNovncModal();
+                novncModal.classList.remove('show');
+            }
+        });
+    }
 
     // --- Fonction pour nettoyer tous les timers ---
     function clearAllDeploymentTimers() {
@@ -1898,6 +2450,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             } else if (deployment.type === "vscode") {
                                 serviceIcon = "fa-solid fa-code";
                                 serviceName = "VS Code";
+                            } else if (deployment.type === "netbeans") {
+                                serviceIcon = "fa-solid fa-desktop";
+                                serviceName = "NetBeans Desktop (NoVNC)";
                             } else if (deployment.type === "lamp") {
                                 serviceIcon = "fa-solid fa-server";
                                 serviceName = "Stack LAMP";
@@ -1923,6 +2478,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 // URL générique fallback
                                 accessUrl = `http://${deployment.name}-service`;
                             }
+
+                            let novncInfo = {};
+                            if (deployment.type === 'netbeans') {
+                                novncInfo = extractNovncInfoFromDetails(detailsData);
+                            }
                             
                             // Vérifier si le déploiement est réellement prêt
                             const isReady = detailsData.deployment.available_replicas > 0 && 
@@ -1940,7 +2500,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 ram: 'N/A',
                                 link: accessUrl,
                                 namespace: deployment.namespace,
-                                ready: isReady // Indiquer si le déploiement est prêt
+                                ready: isReady,
+                                deploymentType: deployment.type,
+                                nodePort: novncInfo.nodePort,
+                                urlTemplate: undefined,
+                                protocol: novncInfo.protocol,
+                                secure: novncInfo.secure,
+                                credentials: deployment.type === 'netbeans' ? { username: 'kasm_user', password: 'password' } : undefined
                             });
                         } else {
                             console.error(`Erreur lors de la récupération des détails pour ${deployment.name}:`, detailsResponse.status);

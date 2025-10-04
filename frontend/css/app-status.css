@@ -76,3 +76,134 @@
     opacity: 0.6;
     color: #78909c;
 }
+
+.service-ports-summary {
+    margin-top: 18px;
+    padding: 15px;
+    border: 1px dashed #cfd8dc;
+    border-radius: 8px;
+    background: #f9fcff;
+}
+
+.service-ports-summary h4 {
+    margin: 0 0 8px 0;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #37474f;
+}
+
+.ports-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.ports-list li {
+    font-size: 0.9rem;
+    color: #455a64;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.port-node {
+    background: #e3f2fd;
+    color: #1565c0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.port-protocol {
+    background: #ede7f6;
+    color: #5e35b1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.connection-hints {
+    margin-top: 18px;
+    padding: 15px;
+    border-radius: 8px;
+    background: #f1f8e9;
+    border: 1px solid #dcedc8;
+}
+
+.connection-hints h4 {
+    margin: 0 0 10px 0;
+    color: #33691e;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.connection-hints-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.connection-hint-card {
+    background: #ffffff;
+    border: 1px solid #c5e1a5;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 1px 2px rgba(76, 175, 80, 0.1);
+}
+
+.connection-hint-card h5 {
+    margin: 0 0 6px 0;
+    font-size: 0.95rem;
+    color: #2e7d32;
+}
+
+.connection-hint-card ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: #33691e;
+}
+
+.hint-description {
+    font-size: 0.85rem;
+    color: #558b2f;
+    margin: 0 0 6px 0;
+}
+
+.novnc-inline-card {
+    margin-top: 20px;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #d0e8ff;
+    background: #f3f9ff;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.novnc-inline-card h4 {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #0d47a1;
+}
+
+.novnc-inline-card p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #546e7a;
+}
+
+.novnc-inline-card .btn {
+    align-self: flex-start;
+}

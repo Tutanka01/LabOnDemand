@@ -178,6 +178,22 @@ def ensure_admin_exists():
                         active=True,
                     ))
                     db.commit()
+                tpl_netbeans = db.query(Template).filter(Template.key == "netbeans").first()
+                if not tpl_netbeans:
+                    d = defaults.get("netbeans", {})
+                    db.add(Template(
+                        key="netbeans",
+                        name=d.get("name", "NetBeans Desktop (NoVNC)"),
+                        description=d.get("description"),
+                        icon=d.get("icon"),
+                        deployment_type="netbeans",
+                        default_image=d.get("default_image", "tutanka01/webdocker:apachenetbeans27"),
+                        default_port=d.get("default_port", 6901),
+                        default_service_type=d.get("default_service_type", "NodePort"),
+                        tags=",".join(d.get("tags", []) or []),
+                        active=True,
+                    ))
+                    db.commit()
             # Seed des runtime configs si vide (dynamiques pour remplacer le hardcode)
             if db.query(RuntimeConfig).count() == 0:
                 # valeurs inspirées de templates.DeploymentConfig
@@ -221,6 +237,18 @@ def ensure_admin_exists():
                     allowed_for_students=True,
                     active=True,
                 ))
+                db.add(RuntimeConfig(
+                    key="netbeans",
+                    default_image="tutanka01/webdocker:apachenetbeans27",
+                    target_port=6901,
+                    default_service_type="NodePort",
+                    allowed_for_students=True,
+                    min_cpu_request="500m",
+                    min_memory_request="1Gi",
+                    min_cpu_limit="1000m",
+                    min_memory_limit="2Gi",
+                    active=True,
+                ))
                 db.commit()
             else:
                 # S'assurer que WordPress et MySQL existent et sont autorisés aux étudiants
@@ -257,6 +285,21 @@ def ensure_admin_exists():
                         target_port=8080,
                         default_service_type="NodePort",
                         allowed_for_students=True,
+                        active=True,
+                    ))
+                    db.commit()
+                netbeans_rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == "netbeans").first()
+                if not netbeans_rc:
+                    db.add(RuntimeConfig(
+                        key="netbeans",
+                        default_image="tutanka01/webdocker:apachenetbeans27",
+                        target_port=6901,
+                        default_service_type="NodePort",
+                        allowed_for_students=True,
+                        min_cpu_request="500m",
+                        min_memory_request="1Gi",
+                        min_cpu_limit="1000m",
+                        min_memory_limit="2Gi",
                         active=True,
                     ))
                     db.commit()
