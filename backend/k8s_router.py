@@ -1332,8 +1332,8 @@ async def get_deployment_templates_endpoint(
             if rc.allowed_for_students:
                 allowed_set.add(rc.key)
     else:
-        # Fallback historique (étendu): autoriser aussi WordPress et MySQL aux étudiants
-        allowed_set = {"jupyter", "vscode", "wordpress", "mysql"}
+        # Fallback historique (étendu): autoriser aussi WordPress, MySQL et NetBeans aux étudiants
+        allowed_set = {"jupyter", "vscode", "wordpress", "mysql", "netbeans"}
 
     def map_template(t: Template):
         return {

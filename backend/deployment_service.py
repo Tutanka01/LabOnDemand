@@ -3,7 +3,7 @@ Service de déploiement Kubernetes
 Principe KISS : une classe focalisée sur la création de déploiements
 """
 import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy.orm import Session
@@ -49,7 +49,7 @@ class DeploymentService:
                 raise
             except Exception:
                 # Fallback si DB inaccessible: limiter à un set sûr côté étudiant
-                if deployment_type not in {"jupyter", "vscode", "wordpress", "mysql"}:
+                if deployment_type not in {"jupyter", "vscode", "wordpress", "mysql", "netbeans"}:
                     raise HTTPException(status_code=403, detail="Type non autorisé pour les étudiants")
     
     def apply_deployment_config(
@@ -136,23 +136,46 @@ class DeploymentService:
             raise HTTPException(status_code=503, detail=f"Mesure d'usage indisponible (K8s: {e})")
 
         for dep in getattr(dep_list, "items", []) or []:
+            status_obj = getattr(dep, "status", None)
+            if getattr(dep.metadata, "deletion_timestamp", None):
+                remaining = max(
+                    getattr(status_obj, "ready_replicas", 0) or 0,
+                    getattr(status_obj, "available_replicas", 0) or 0,
+                    getattr(status_obj, "updated_replicas", 0) or 0,
+                    getattr(status_obj, "replicas", 0) or 0,
+                )
+                if remaining <= 0:
+                    continue
+
             labels = getattr(dep.metadata, "labels", {}) or {}
             if labels.get("user-id") != str(user.id):
                 continue
-            replicas = getattr(dep.spec, "replicas", 1) or 1
+
+            replicas_spec = getattr(getattr(dep, "spec", None), "replicas", 0)
+            if replicas_spec is None:
+                replicas_spec = 0
+            replicas_status = max(
+                getattr(status_obj, "ready_replicas", 0) or 0,
+                getattr(status_obj, "available_replicas", 0) or 0,
+                getattr(status_obj, "updated_replicas", 0) or 0,
+                getattr(status_obj, "replicas", 0) or 0,
+            )
+            replicas = max(replicas_spec, replicas_status)
+            if replicas <= 0:
+                continue
             pods_used += replicas
 
             # Clé logique d'application: stack-name si présent, sinon label app puis nom
             gkey = labels.get("stack-name") or labels.get("app") or dep.metadata.name
             app_keys.add(gkey)
 
-            containers = (getattr(getattr(dep.spec, "template", None), "spec", None) or {}).get("containers") if isinstance(getattr(getattr(dep.spec, "template", None), "spec", None), dict) else None
-            # Certaines versions du client retournent des objets; gérons les deux cas
-            tmpl_spec = getattr(getattr(dep.spec, "template", None), "spec", None)
-            if hasattr(tmpl_spec, "containers"):
-                containers = tmpl_spec.containers
-            if not containers:
-                containers = []
+            tmpl_spec = getattr(getattr(getattr(dep, "spec", None), "template", None), "spec", None)
+            containers = []
+            if isinstance(tmpl_spec, dict):
+                containers = tmpl_spec.get("containers") or []
+            elif tmpl_spec and hasattr(tmpl_spec, "containers"):
+                containers = getattr(tmpl_spec, "containers") or []
+
             for c in containers:
                 resources = getattr(c, "resources", None)
                 req = getattr(resources, "requests", None) if resources else None
@@ -368,64 +391,64 @@ class DeploymentService:
         memory_request: str,
         memory_limit: str,
         service_target_port: int,
-        labels: Dict[str, str]
+        labels: Dict[str, str],
+        main_port_name: Optional[str] = None,
+        extra_container_ports: Optional[List[Dict[str, Any]]] = None,
+        env_vars: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Crée le manifeste du déploiement"""
+        ports: List[Dict[str, Any]] = []
+        if service_target_port is not None:
+            port_entry: Dict[str, Any] = {"containerPort": service_target_port}
+            if main_port_name:
+                port_entry["name"] = main_port_name
+            ports.append(port_entry)
+        if extra_container_ports:
+            ports.extend(extra_container_ports)
+
+        container_spec: Dict[str, Any] = {
+            "name": name,
+            "image": image,
+            "resources": {
+                "requests": {
+                    "cpu": cpu_request,
+                    "memory": memory_request,
+                },
+                "limits": {
+                    "cpu": cpu_limit,
+                    "memory": memory_limit,
+                },
+            },
+        }
+        if ports:
+            container_spec["ports"] = ports
+        if env_vars:
+            container_spec["env"] = env_vars
+
         return {
             "apiVersion": "apps/v1",
             "kind": "Deployment",
             "metadata": {
                 "name": name,
-                "labels": labels
+                "labels": labels,
             },
             "spec": {
                 "replicas": replicas,
                 "selector": {
-                    "matchLabels": {"app": name}
+                    "matchLabels": {"app": name},
                 },
                 "template": {
                     "metadata": {
                         "labels": {
                             "app": name,
-                            **labels
+                            **labels,
                         }
                     },
                     "spec": {
-                        "containers": [{
-                            "name": name,
-                            "image": image,
-                            "ports": [{"containerPort": service_target_port}],
-                            "resources": {
-                                "requests": {
-                                    "cpu": cpu_request,
-                                    "memory": memory_request
-                                },
-                                "limits": {
-                                    "cpu": cpu_limit,
-                                    "memory": memory_limit
-                                }
-                            },
-                            "livenessProbe": {
-                                "httpGet": {
-                                    "path": "/",
-                                    "port": service_target_port
-                                },
-                                "initialDelaySeconds": 30,
-                                "periodSeconds": 10,
-                                "timeoutSeconds": 5
-                            },
-                            "readinessProbe": {
-                                "httpGet": {
-                                    "path": "/",
-                                    "port": service_target_port
-                                },
-                                "initialDelaySeconds": 5,
-                                "periodSeconds": 5
-                            }
-                        }]
-                    }
-                }
-            }
+                        "containers": [container_spec],
+                    },
+                },
+            },
         }
     
     def create_service_manifest(
@@ -434,14 +457,25 @@ class DeploymentService:
         service_port: int,
         service_target_port: int,
         service_type: str,
-        labels: Dict[str, str]
+        labels: Dict[str, str],
+        port_name: Optional[str] = None,
+        additional_ports: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Crée le manifeste du service"""
-        port_spec = {
-            "port": service_port,
-            "targetPort": service_target_port,
-            "protocol": "TCP"
-        }
+        ports: List[Dict[str, Any]] = []
+
+        if service_port is not None and service_target_port is not None:
+            port_spec: Dict[str, Any] = {
+                "port": service_port,
+                "targetPort": service_target_port,
+                "protocol": "TCP",
+            }
+            if port_name:
+                port_spec["name"] = port_name
+            ports.append(port_spec)
+
+        if additional_ports:
+            ports.extend(additional_ports)
         
         # Pour NodePort, ne pas spécifier nodePort pour laisser Kubernetes l'assigner automatiquement
         
@@ -458,7 +492,7 @@ class DeploymentService:
             "spec": {
                 "selector": {"app": name},
                 "type": service_type,
-                "ports": [port_spec]
+                "ports": ports
             }
         }
     
@@ -633,7 +667,7 @@ class DeploymentService:
 
         # Auto-détermination des ports pour les runtimes configurés (DB) ou connus (fallback):
         # - Si has_runtime_config est vrai OU runtime est vscode/jupyter, alors service_port = target_port
-        if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter"}:
+        if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter", "netbeans"}:
             service_port = config["service_target_port"]
 
         # Plafonner selon le rôle (sécurité)
@@ -682,6 +716,27 @@ class DeploymentService:
             additional_labels,
         )
 
+        main_port_name: Optional[str] = None
+        extra_container_ports: Optional[List[Dict[str, Any]]] = None
+        additional_service_ports: Optional[List[Dict[str, Any]]] = None
+        container_env: Optional[List[Dict[str, Any]]] = None
+        if deployment_type == "netbeans":
+            main_port_name = "novnc"
+            extra_container_ports = [
+                {"containerPort": 5901, "name": "vnc"},
+                {"containerPort": 4901, "name": "audio"},
+            ]
+            additional_service_ports = [
+                {"name": "vnc", "port": 5901, "targetPort": 5901, "protocol": "TCP"},
+                {"name": "audio", "port": 4901, "targetPort": 4901, "protocol": "TCP"},
+            ]
+            container_env = [
+                {"name": "SECURE_CONNECTION", "value": "false"},
+                {"name": "KASM_ENABLE_SSL", "value": "false"},
+                {"name": "KASM_NO_VNC_SSL", "value": "1"},
+                {"name": "KASM_REQUIRE_SSL", "value": "false"},
+            ]
+
         try:
             # Créer le déploiement
             deployment_manifest = self.create_deployment_manifest(
@@ -694,6 +749,9 @@ class DeploymentService:
                 clamped["memory_limit"],
                 config["service_target_port"],
                 labels,
+                main_port_name=main_port_name,
+                extra_container_ports=extra_container_ports,
+                env_vars=container_env,
             )
 
             # Persistance best-effort pour VSCode/Jupyter
@@ -737,6 +795,8 @@ class DeploymentService:
 
             # Créer le service si nécessaire
             node_port = None
+            ports_details: List[Dict[str, Any]] = []
+            connection_hints: Optional[Dict[str, Any]] = None
             if config["create_service"]:
                 service_manifest = self.create_service_manifest(
                     name,
@@ -744,17 +804,42 @@ class DeploymentService:
                     config["service_target_port"],
                     config["service_type"],
                     labels,
+                    port_name=main_port_name,
+                    additional_ports=additional_service_ports,
                 )
 
                 created_service = self.core_v1.create_namespaced_service(
                     effective_namespace, service_manifest
                 )
 
+                svc_ports = list(getattr(getattr(created_service, "spec", None), "ports", []) or [])
+                for svc_port in svc_ports:
+                    ports_details.append({
+                        "name": getattr(svc_port, "name", None),
+                        "protocol": getattr(svc_port, "protocol", None),
+                        "port": getattr(svc_port, "port", None),
+                        "target_port": getattr(svc_port, "target_port", None),
+                        "node_port": getattr(svc_port, "node_port", None),
+                    })
+
                 if config["service_type"] in ["NodePort", "LoadBalancer"]:
-                    node_port = created_service.spec.ports[0].node_port
+                    # Premier NodePort disponible pour compat rétro
+                    for detail in ports_details:
+                        if detail.get("node_port"):
+                            node_port = detail["node_port"]
+                            break
+
+                    def _format_port(detail: Dict[str, Any]) -> str:
+                        name = detail.get("name")
+                        base = f"{detail.get('port')}->{detail.get('target_port')}"
+                        if detail.get("node_port"):
+                            base += f" (NodePort {detail['node_port']})"
+                        return f"{name}:{base}" if name else base
+
+                    ports_desc = ", ".join(_format_port(d) for d in ports_details)
                     result_message += (
                         f". Service {name}-service créé (type: {config['service_type']}, "
-                        f"port: {service_port}, NodePort: {node_port})"
+                        f"ports: {ports_desc})"
                     )
                 else:
                     result_message += (
@@ -773,6 +858,38 @@ class DeploymentService:
                         f"http://<IP_DU_NOEUD>:{node_port}/ (mot de passe: labondemand)"
                     )
 
+                if deployment_type == "netbeans":
+                    def _find_node_port(target_name: str, fallback_port: int) -> Optional[int]:
+                        for detail in ports_details:
+                            if detail.get("name") == target_name:
+                                return detail.get("node_port")
+                            if detail.get("target_port") == fallback_port:
+                                return detail.get("node_port")
+                        return None
+
+                    connection_hints = {
+                        "novnc": {
+                            "description": "Bureau distant via navigateur (NoVNC)",
+                            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
+                            "target_port": config["service_target_port"],
+                            "node_port": _find_node_port("novnc", config["service_target_port"]),
+                            "username": "kasm_user",
+                            "password": "password",
+                        },
+                        "vnc": {
+                            "description": "Client VNC classique (optionnel)",
+                            "target_port": 5901,
+                            "node_port": _find_node_port("vnc", 5901),
+                            "username": "kasm_user",
+                            "password": "password",
+                        },
+                        "audio": {
+                            "description": "Flux audio (Websocket Kasm)",
+                            "target_port": 4901,
+                            "node_port": _find_node_port("audio", 4901),
+                        },
+                    }
+
             return {
                 "message": result_message,
                 "deployment_type": deployment_type,
@@ -788,7 +905,9 @@ class DeploymentService:
                     "type": config["service_type"] if config["create_service"] else None,
                     "port": service_port if config["create_service"] else None,
                     "node_port": node_port,
+                    "ports_detail": ports_details if config["create_service"] else [],
                 },
+                "connection_hints": connection_hints,
             }
 
         except client.exceptions.ApiException as e:
@@ -815,7 +934,6 @@ class DeploymentService:
         """
         import secrets
         import base64
-
         # Noms dérivés
         wp_name = name
         db_name = f"{name}-mariadb"

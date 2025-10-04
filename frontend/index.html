@@ -263,6 +263,25 @@
                 </div>
             </div>
         </div>
+
+        <div class="modal" id="novnc-modal">
+            <div class="modal-content modal-novnc">
+                <div class="modal-header">
+                    <h3 id="novnc-modal-title"><i class="fas fa-desktop"></i> Session NoVNC</h3>
+                    <span class="close-modal">&times;</span>
+                </div>
+                <div class="modal-body novnc-modal-body">
+                    <div id="novnc-status" class="novnc-status-banner">
+                        <i class="fas fa-circle-notch fa-spin"></i> Préparation de la session NoVNC...
+                    </div>
+                    <div id="novnc-credentials" class="novnc-credentials"></div>
+                    <iframe id="novnc-frame" class="novnc-frame" title="Client NoVNC intégré" allowfullscreen allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary close-modal-btn"><i class="fas fa-times-circle"></i> Fermer</button>
+                </div>
+            </div>
+        </div>
     </main>
 
     <footer>

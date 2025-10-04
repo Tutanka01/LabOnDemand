@@ -43,6 +43,16 @@ docker-compose up -d
 
 Docs: voir documentation/lamp.md et documentation/terminal.md
 
+### 6. Bureau NetBeans via NoVNC
+1. Depuis le catalogue, sélectionnez « NetBeans Desktop (NoVNC) »
+2. Validez le nom proposé (les ressources CPU/RAM minimales sont préconfigurées)
+3. Une fois le déploiement lancé, accédez au panneau de statut :
+	- Cherchez le bloc « Bureau intégré NoVNC » : le bouton « Ouvrir dans la page » s’active dès que le service est prêt.
+	- Le bloc « Ports exposés » récapitule les NodePorts (NoVNC 6901, VNC 5901, Audio 4901)
+	- La section « Infos de connexion » rappelle les identifiants par défaut : `kasm_user` / `password`
+4. Cliquez sur « Ouvrir dans la page » pour lancer NetBeans directement dans une fenêtre intégrée au tableau de bord.
+5. Besoin d’un accès alternatif ? Le lien NoVNC externe et les NodePorts restent disponibles pour ouvrir la session dans un nouvel onglet ou via un client VNC classique (port 5901) avec les mêmes identifiants.
+
 ## 🔧 Scripts utiles
 
 ### Test de connexion
