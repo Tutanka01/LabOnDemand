@@ -8,4 +8,4 @@ apt-get install -y --no-install-recommends \
     dbus-x11 \
     xinit \
     xorg \
-    xvfb # MODIFIÉ : Ajout du serveur d'affichage virtuel
+    xvfb
