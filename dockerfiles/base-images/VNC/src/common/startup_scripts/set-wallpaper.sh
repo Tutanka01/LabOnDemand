@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Attend que le processus du bureau soit bien lancé
-sleep 3
+sleep 5
 
 WALLPAPER_PATH="/usr/share/backgrounds/bg_default.png"
 
