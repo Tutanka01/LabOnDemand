@@ -1,0 +1,10 @@
+[Desktop Entry]
+Encoding=UTF-8
+Version=1.0
+Type=Application
+Name=Set Custom Wallpaper
+Comment=Applique le fond d'écran personnalisé au démarrage
+Exec=/dockerstartup/set-wallpaper.sh
+StartupNotify=false
+Terminal=false
+Hidden=false

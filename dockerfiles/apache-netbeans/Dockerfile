@@ -1,4 +1,4 @@
-FROM kasmweb/ubuntu-noble-desktop:1.18.0
+FROM tutanka01/labondemand:base-ubuntu24
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -42,7 +42,7 @@ RUN set -euxo pipefail; \
         apt-get update; \
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             wget ca-certificates xdg-utils \
-            libxext6 libxrender1 libxtst6 libxi6 libgtk-3-0 libnss3 libasound2t64 fonts-dejavu; \
+            libxext6 libxrender1 libxtst6 libxi6 libgtk-3-0 libnss3 libgtk-3-0t64 fonts-dejavu; \
         update-ca-certificates
 
 # Installer NetBeans (le JDK fourni par le .deb sera utilisé par défaut)
@@ -60,6 +60,11 @@ RUN set -eux; \
     proxy_host_port="${PROXY_URL#*://}"; \
     proxy_host="${proxy_host_port%%:*}"; \
     proxy_port="${proxy_host_port##*:}"; \
+    mkdir -p "$(dirname "$conf_file")"; \
+    if [ ! -f "$conf_file" ]; then \
+        echo '# NetBeans configuration file' > "$conf_file"; \
+        echo 'netbeans_default_options="-J-client -J-Xss2m -J-Xms32m -J-Dapple.laf.useScreenMenuBar=true -J-Dapple.awt.graphics.UseQuartz=true -J-Dsun.java2d.noddraw=true -J-Dsun.zip.disableMemoryMapping=true"' >> "$conf_file"; \
+    fi; \
     grep -q "http.proxyHost" "$conf_file" || \
     printf '\n# Proxy configuration ajoutée via Docker build\nnetbeans_default_options="$netbeans_default_options \\\\n  -J-Djava.net.useSystemProxies=true \\\\n  -J-Dhttp.proxyHost=%s \\\\n  -J-Dhttp.proxyPort=%s \\\\n  -J-Dhttps.proxyHost=%s \\\\n  -J-Dhttps.proxyPort=%s \\\\n  -J-Dhttp.nonProxyHosts=localhost\\\\|127.0.0.1\\\\|::1"\n' \
         "$proxy_host" "$proxy_port" "$proxy_host" "$proxy_port" >>"$conf_file"
@@ -101,10 +106,10 @@ RUN mkdir -p "$HOME/Desktop" \
 RUN touch "$HOME/Desktop/hello.txt"
 
 # Permissions
-RUN chown 1000:0 $HOME && $STARTUPDIR/set_user_permission.sh $HOME
+#RUN chown 1000:0 $HOME && $STARTUPDIR/set_user_permission.sh $HOME
 
 # Passer à l’utilisateur final
-ENV HOME=/home/kasm-user
+ENV HOME=/home/uppa-user
 WORKDIR $HOME
 RUN mkdir -p $HOME && chown -R 1000:0 $HOME
 
