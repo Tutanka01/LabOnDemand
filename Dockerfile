@@ -1,5 +1,11 @@
 FROM python:3.13-slim
 
+# Set proxy environment variables for build steps
+ENV http_proxy=http://cache.univ-pau.fr:3128
+ENV https_proxy=http://cache.univ-pau.fr:3128
+ENV HTTP_PROXY=http://cache.univ-pau.fr:3128
+ENV HTTPS_PROXY=http://cache.univ-pau.fr:3128
+
 WORKDIR /app
 
 # Installation de kubectl
