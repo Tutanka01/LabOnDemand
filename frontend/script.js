@@ -305,9 +305,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (!protocol && nodePort && Number(nodePort) === 6901) {
-            protocol = 'https';
+            protocol = 'http';
             if (secure === null) {
-                secure = true;
+                secure = false;
             }
         }
 
@@ -1608,7 +1608,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 servicePort = 8080;
                 serviceTargetPort = 8080;
             } else if (deploymentType === 'netbeans') {
-                image = 'tutanka01/webdocker:apachenetbeans27';
+                image = 'tutanka01/labondemand:netbeansjava';
                 createService = true;
                 serviceType = 'NodePort';
                 servicePort = 6901;
@@ -1744,7 +1744,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 }
 
-                const prefersHttps = deploymentType === 'netbeans';
+                const prefersHttps = (() => {
+                    if (connectionHints?.novnc) {
+                        const hintProtocol = (connectionHints.novnc.protocol || '').toLowerCase();
+                        if (hintProtocol === 'https') return true;
+                        if (hintProtocol === 'http') return false;
+                        if (connectionHints.novnc.secure === true) return true;
+                    }
+                    return false;
+                })();
 
                 if (connectionHints?.novnc) {
                     const hint = connectionHints.novnc;
@@ -1816,8 +1824,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         nodePort: nodePort ? Number(nodePort) : undefined,
                         urlTemplate: connectionHints?.novnc?.url_template,
                         url: accessUrl && !accessUrl.includes('<') ? accessUrl : undefined,
-                        protocol: connectionHints?.novnc?.protocol || 'https',
-                        secure: connectionHints?.novnc?.secure ?? true,
+                        protocol: connectionHints?.novnc?.protocol || 'http',
+                        secure: connectionHints?.novnc?.secure ?? false,
                         credentials: novncCredentials,
                     });
                 }
@@ -1836,7 +1844,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     deploymentType,
                     nodePort: nodePort ? Number(nodePort) : undefined,
                     urlTemplate: connectionHints?.novnc?.url_template,
-                    protocol: connectionHints?.novnc?.protocol || (prefersHttps ? 'https' : undefined),
+                    protocol: connectionHints?.novnc?.protocol || (prefersHttps ? 'https' : 'http'),
                     secure: connectionHints?.novnc?.secure ?? prefersHttps,
                     credentials: connectionHints?.novnc ? {
                         username: connectionHints.novnc.username,

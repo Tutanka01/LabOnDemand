@@ -187,7 +187,7 @@ def ensure_admin_exists():
                         description=d.get("description"),
                         icon=d.get("icon"),
                         deployment_type="netbeans",
-                        default_image=d.get("default_image", "tutanka01/webdocker:apachenetbeans27"),
+                        default_image=d.get("default_image", "tutanka01/labondemand:netbeansjava"),
                         default_port=d.get("default_port", 6901),
                         default_service_type=d.get("default_service_type", "NodePort"),
                         tags=",".join(d.get("tags", []) or []),
@@ -239,7 +239,7 @@ def ensure_admin_exists():
                 ))
                 db.add(RuntimeConfig(
                     key="netbeans",
-                    default_image="tutanka01/webdocker:apachenetbeans27",
+                    default_image="tutanka01/labondemand:netbeansjava",
                     target_port=6901,
                     default_service_type="NodePort",
                     allowed_for_students=True,
@@ -292,7 +292,7 @@ def ensure_admin_exists():
                 if not netbeans_rc:
                     db.add(RuntimeConfig(
                         key="netbeans",
-                        default_image="tutanka01/webdocker:apachenetbeans27",
+                        default_image="tutanka01/labondemand:netbeansjava",
                         target_port=6901,
                         default_service_type="NodePort",
                         allowed_for_students=True,

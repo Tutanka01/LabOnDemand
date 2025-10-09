@@ -849,7 +849,7 @@ async def get_deployment_details(
                             pass
                         port_name = (port.name or "").lower()
                         is_novnc = port_name == "novnc" or port.port == 6901
-                        scheme = "https" if is_novnc else "http"
+                        scheme = "http"
                         access_urls.append({
                             "url": f"{scheme}://{cluster_ip}:{port.node_port}",
                             "service": svc.metadata.name,
@@ -857,7 +857,7 @@ async def get_deployment_details(
                             "cluster_ip": cluster_ip,
                             "label": label or None,
                             "protocol": scheme,
-                            "secure": is_novnc,
+                            "secure": False,
                         })
                 
                 service_info["ports"].append(port_info)

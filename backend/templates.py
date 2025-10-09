@@ -80,7 +80,7 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "name": "NetBeans Desktop (NoVNC)",
                 "description": "Environnement bureau distant avec NetBeans, accessible via le navigateur (NoVNC).",
                 "icon": "fa-solid fa-desktop",
-                "default_image": "tutanka01/webdocker:apachenetbeans27",
+                "default_image": "tutanka01/labondemand:netbeansjava",
                 "default_port": 6901,
                 "deployment_type": "netbeans",
                 "default_service_type": "NodePort",
@@ -193,7 +193,7 @@ class DeploymentConfig:
     }
     
     NETBEANS_CONFIG = {
-        "image": "tutanka01/webdocker:apachenetbeans27",
+        "image": "tutanka01/labondemand:netbeansjava",
         "target_port": 6901,
         "service_type": "NodePort",
         "min_cpu_request": "500m",
