@@ -3,6 +3,7 @@ Service de déploiement Kubernetes
 Principe KISS : une classe focalisée sur la création de déploiements
 """
 import datetime
+import logging
 from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
 from kubernetes import client
@@ -24,6 +25,9 @@ from .k8s_utils import (
 )
 from .templates import DeploymentConfig
 
+logger = logging.getLogger("labondemand.deployment")
+audit_logger = logging.getLogger("labondemand.audit")
+
 class DeploymentService:
     """
     Service responsable de la création et gestion des déploiements
@@ -41,6 +45,16 @@ class DeploymentService:
                 with SessionLocal() as db:
                     rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
                     if not rc or not rc.allowed_for_students:
+                        logger.warning(
+                            "deployment_permission_denied",
+                            extra={
+                                "extra_fields": {
+                                    "user_id": getattr(user, "id", None),
+                                    "deployment_type": deployment_type,
+                                    "role": getattr(getattr(user, "role", None), "value", None),
+                                }
+                            },
+                        )
                         raise HTTPException(
                             status_code=403,
                             detail="Type non autorisé pour les étudiants"
@@ -50,6 +64,16 @@ class DeploymentService:
             except Exception:
                 # Fallback si DB inaccessible: limiter à un set sûr côté étudiant
                 if deployment_type not in {"jupyter", "vscode", "wordpress", "mysql", "netbeans"}:
+                    logger.warning(
+                        "deployment_permission_denied_fallback",
+                        extra={
+                            "extra_fields": {
+                                "user_id": getattr(user, "id", None),
+                                "deployment_type": deployment_type,
+                                "role": getattr(getattr(user, "role", None), "value", None),
+                            }
+                        },
+                    )
                     raise HTTPException(status_code=403, detail="Type non autorisé pour les étudiants")
     
     def apply_deployment_config(
@@ -519,12 +543,36 @@ class DeploymentService:
         """
         # Validation et formatage
         name = validate_k8s_name(name)
+        logger.info(
+            "deployment_request_received",
+            extra={
+                "extra_fields": {
+                    "deployment_name": name,
+                    "deployment_type": deployment_type,
+                    "user_id": getattr(current_user, "id", None),
+                    "username": getattr(current_user, "username", None),
+                    "role": getattr(getattr(current_user, "role", None), "value", None),
+                    "replicas": replicas,
+                    "create_service": create_service,
+                }
+            },
+        )
         # Politique d'isolation: namespace par utilisateur, aucun choix client
         effective_namespace = build_user_namespace(current_user)
 
         # S'assurer que le namespace existe (idempotent)
         ns_ok = await ensure_namespace_exists(effective_namespace)
         if not ns_ok:
+            logger.error(
+                "namespace_unavailable",
+                extra={
+                    "extra_fields": {
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_name": name,
+                    }
+                },
+            )
             # Échec explicite si on ne peut pas assurer le namespace
             raise HTTPException(
                 status_code=500,
@@ -579,7 +627,7 @@ class DeploymentService:
                 planned_pods=2,
                 planned_deployments=2,
             )
-            return await self._create_wordpress_stack(
+            result = await self._create_wordpress_stack(
                 name=name,
                 effective_namespace=effective_namespace,
                 service_type=service_type,
@@ -587,6 +635,21 @@ class DeploymentService:
                 current_user=current_user,
                 additional_labels=additional_labels or {},
             )
+            audit_logger.info(
+                "deployment_created",
+                extra={
+                    "extra_fields": {
+                        "deployment_name": name,
+                        "deployment_type": "wordpress",
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "username": getattr(current_user, "username", None),
+                        "resource_summary": list((result.get("created_objects") or {}).keys()),
+                        "service_type": result.get("service_info", {}).get("type"),
+                    }
+                },
+            )
+            return result
 
         # Cas spécial: stack MySQL + phpMyAdmin (DB interne + UI exposée)
         if deployment_type == "mysql":
@@ -610,7 +673,7 @@ class DeploymentService:
                 planned_deployments=2,
             )
 
-            return await self._create_mysql_pma_stack(
+            result = await self._create_mysql_pma_stack(
                 name=name,
                 effective_namespace=effective_namespace,
                 service_type=service_type,
@@ -618,6 +681,21 @@ class DeploymentService:
                 current_user=current_user,
                 additional_labels=additional_labels or {},
             )
+            audit_logger.info(
+                "deployment_created",
+                extra={
+                    "extra_fields": {
+                        "deployment_name": name,
+                        "deployment_type": "mysql",
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "username": getattr(current_user, "username", None),
+                        "resource_summary": list((result.get("created_objects") or {}).keys()),
+                        "service_type": result.get("service_info", {}).get("type"),
+                    }
+                },
+            )
+            return result
 
         # Cas spécial: stack LAMP (Apache+PHP, MySQL, phpMyAdmin)
         if deployment_type == "lamp":
@@ -643,7 +721,7 @@ class DeploymentService:
                 planned_deployments=3,
             )
 
-            return await self._create_lamp_stack(
+            result = await self._create_lamp_stack(
                 name=name,
                 effective_namespace=effective_namespace,
                 service_type=service_type,
@@ -651,6 +729,21 @@ class DeploymentService:
                 current_user=current_user,
                 additional_labels=additional_labels or {},
             )
+            audit_logger.info(
+                "deployment_created",
+                extra={
+                    "extra_fields": {
+                        "deployment_name": name,
+                        "deployment_type": "lamp",
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "username": getattr(current_user, "username", None),
+                        "resource_summary": list((result.get("created_objects") or {}).keys()),
+                        "service_type": result.get("service_info", {}).get("type"),
+                    }
+                },
+            )
+            return result
 
         # Appliquer la configuration du déploiement
         config = self.apply_deployment_config(
@@ -894,7 +987,7 @@ class DeploymentService:
                         },
                     }
 
-            return {
+            result = {
                 "message": result_message,
                 "deployment_type": deployment_type,
                 "namespace": effective_namespace,
@@ -914,11 +1007,53 @@ class DeploymentService:
                 "connection_hints": connection_hints,
             }
 
+            audit_logger.info(
+                "deployment_created",
+                extra={
+                    "extra_fields": {
+                        "deployment_name": name,
+                        "deployment_type": deployment_type,
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "username": getattr(current_user, "username", None),
+                        "service_type": result["service_info"]["type"],
+                        "node_port": node_port,
+                        "replicas": clamped["replicas"],
+                    }
+                },
+            )
+
+            return result
+
         except client.exceptions.ApiException as e:
+            logger.exception(
+                "deployment_k8s_error",
+                extra={
+                    "extra_fields": {
+                        "deployment_name": name,
+                        "deployment_type": deployment_type,
+                        "namespace": effective_namespace,
+                        "status": getattr(e, "status", None),
+                        "reason": getattr(e, "reason", None),
+                    }
+                },
+            )
             raise HTTPException(
                 status_code=e.status,
                 detail=f"Erreur lors de la création: {e.reason} - {e.body}",
             )
+        except Exception as e:
+            logger.exception(
+                "deployment_unexpected_error",
+                extra={
+                    "extra_fields": {
+                        "deployment_name": name,
+                        "deployment_type": deployment_type,
+                        "namespace": effective_namespace,
+                    }
+                },
+            )
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la création: {str(e)}")
 
     async def _create_wordpress_stack(
         self,

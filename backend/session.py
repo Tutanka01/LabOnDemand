@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta
+import logging
 import os
 
 # Récupération des paramètres de configuration
@@ -8,6 +9,8 @@ SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
 SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
 SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Lax")  # Lax ou Strict
+
+logger = logging.getLogger("labondemand.session")
 
 # Exécution périodique du nettoyage des sessions expirées
 def setup_session_handler(app: FastAPI):
@@ -28,23 +31,45 @@ def setup_session_handler(app: FastAPI):
                 await asyncio.sleep(3600)
                 try:
                     cleaned_count = session_store.cleanup()
-                    print(f"Session cleanup: {cleaned_count} expired sessions removed")
+                    if cleaned_count:
+                        logger.info(
+                            "session_cleanup",
+                            extra={"extra_fields": {"removed": cleaned_count}},
+                        )
                 except Exception as e:
-                    print(f"Error during session cleanup: {e}")
+                    logger.exception(
+                        "session_cleanup_error",
+                        extra={"extra_fields": {"error": str(e)}},
+                    )
         
         # Démarrer la tâche de nettoyage en arrière-plan
         asyncio.create_task(cleanup_expired_sessions())
     @app.middleware("http")
     async def session_middleware(request: Request, call_next):
-        # Log pour le débogage
-        print(f"[Session Middleware] Traitement de la requête: {request.method} {request.url.path}")
+        logger.debug(
+            "session_middleware_request",
+            extra={
+                "extra_fields": {
+                    "method": request.method,
+                    "path": request.url.path,
+                }
+            },
+        )
         
         response = await call_next(request)
         
         # Si la réponse est un JSONResponse et qu'elle contient un session_id dans les headers
         if isinstance(response, JSONResponse) and "session_id" in response.headers:
             session_id = response.headers.pop("session_id")
-            print(f"[Session Middleware] Session ID trouvé dans les headers: {session_id[:10]}...")
+            logger.info(
+                "session_header_found",
+                extra={
+                    "extra_fields": {
+                        "session_id": session_id[:10] + "...",
+                        "path": request.url.path,
+                    }
+                },
+            )
             
             # Créer un cookie pour la session
             response.set_cookie(
@@ -57,8 +82,14 @@ def setup_session_handler(app: FastAPI):
                 path="/",
                 domain=COOKIE_DOMAIN or None
             )
-            print(f"[Session Middleware] Cookie session_id créé (expiration: {SESSION_EXPIRY_HOURS}h)")
-        else:
-            print(f"[Session Middleware] Pas de session_id dans les headers ou réponse non JSON")
+            logger.debug(
+                "session_cookie_set",
+                extra={
+                    "extra_fields": {
+                        "path": request.url.path,
+                        "expiry_hours": SESSION_EXPIRY_HOURS,
+                    }
+                },
+            )
         
         return response

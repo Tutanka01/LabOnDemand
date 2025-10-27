@@ -2,7 +2,10 @@
 Application principale LabOnDemand
 Principe KISS : configuration simple et routage centralisé
 """
+import logging
 import os
+import time
+import uuid
 import uvicorn
 from datetime import datetime
 from fastapi import FastAPI, Request, Depends
@@ -11,6 +14,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .config import settings
+from .logging_config import (
+    setup_logging,
+    set_request_id,
+    reset_request_id,
+    shorten_token,
+)
 from .database import Base, engine, get_db, SessionLocal
 from .session import setup_session_handler
 from .error_handlers import global_exception_handler
@@ -18,6 +27,10 @@ from . import models  # Importer les modèles pour enregistrer les tables avant 
 from .models import User, UserRole, Template, RuntimeConfig
 from .security import get_password_hash
 from .templates import get_deployment_templates
+
+setup_logging()
+logger = logging.getLogger("labondemand.main")
+access_logger = logging.getLogger("labondemand.access")
 
 # Initialiser Kubernetes
 settings.init_kubernetes()
@@ -29,6 +42,82 @@ app = FastAPI(
     version=settings.API_VERSION,
     debug=settings.DEBUG_MODE,
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log every incoming HTTP request with structured metadata."""
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    token = set_request_id(request_id)
+    start_time = time.perf_counter()
+    client = request.client or None
+    client_host = getattr(client, "host", None)
+    client_port = getattr(client, "port", None)
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 3)
+        user = getattr(request.state, "user", None)
+        session_data = getattr(request.state, "session", None)
+        session_id_preview = shorten_token(getattr(request.state, "session_id", None))
+        status_code = getattr(exc, "status_code", 500)
+
+        access_logger.error(
+            "request_failed",
+            extra={
+                "extra_fields": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": request.url.query,
+                    "status_code": status_code,
+                    "duration_ms": duration_ms,
+                    "client_ip": client_host,
+                    "client_port": client_port,
+                    "user_id": getattr(user, "id", None),
+                    "user_role": getattr(getattr(user, "role", None), "value", None),
+                    "session_role": getattr(session_data, "role", None),
+                    "session_id": session_id_preview,
+                    "user_agent": request.headers.get("user-agent"),
+                    "error": str(exc),
+                    "success": False,
+                }
+            },
+        )
+        reset_request_id(token)
+        raise
+
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 3)
+    user = getattr(request.state, "user", None)
+    session_data = getattr(request.state, "session", None)
+    session_id_preview = shorten_token(getattr(request.state, "session_id", None))
+
+    access_logger.info(
+        "request_completed",
+        extra={
+            "extra_fields": {
+                "method": request.method,
+                "path": request.url.path,
+                "query": request.url.query,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "client_ip": client_host,
+                "client_port": client_port,
+                "user_id": getattr(user, "id", None),
+                "user_role": getattr(getattr(user, "role", None), "value", None),
+                "session_role": getattr(session_data, "role", None),
+                "session_id": session_id_preview,
+                "user_agent": request.headers.get("user-agent"),
+                "content_length": response.headers.get("content-length"),
+                "success": True,
+            }
+        },
+    )
+
+    response.headers["X-Request-ID"] = request_id
+    reset_request_id(token)
+    return response
 
 # Ajouter le gestionnaire d'erreurs global
 app.add_exception_handler(Exception, global_exception_handler)
@@ -96,7 +185,21 @@ def ensure_admin_exists():
                 admin_password = settings.ADMIN_DEFAULT_PASSWORD
                 if not admin_password:
                     admin_password = secrets.token_urlsafe(24)
-                    print("[startup] ADMIN_DEFAULT_PASSWORD non défini. Un mot de passe admin aléatoire a été généré (affiché ci-dessous).")
+                    logger.warning(
+                        "ADMIN_DEFAULT_PASSWORD not set; generated temporary admin password",
+                        extra={
+                            "extra_fields": {
+                                "action": "bootstrap_admin",
+                                "password_generated": True,
+                                "temporary_password": admin_password,
+                            }
+                        },
+                    )
+                else:
+                    logger.info(
+                        "Using configured ADMIN_DEFAULT_PASSWORD for admin bootstrap",
+                        extra={"extra_fields": {"action": "bootstrap_admin", "password_generated": False}},
+                    )
 
                 admin = User(
                     username="admin",
@@ -108,7 +211,17 @@ def ensure_admin_exists():
                 )
                 db.add(admin)
                 db.commit()
-                print(f"[startup] Compte admin créé. Nom d'utilisateur=admin, Mot de passe={admin_password}")
+                logger.info(
+                    "Default admin created",
+                    extra={
+                        "extra_fields": {
+                            "action": "bootstrap_admin",
+                            "admin_created": True,
+                            "password_generated": not bool(settings.ADMIN_DEFAULT_PASSWORD),
+                            "temporary_password": admin_password if not settings.ADMIN_DEFAULT_PASSWORD else None,
+                        }
+                    },
+                )
 
             # Seed des templates de base si vide
             if db.query(Template).count() == 0:
@@ -303,9 +416,12 @@ def ensure_admin_exists():
                         active=True,
                     ))
                     db.commit()
-    except Exception as e:
+    except Exception as exc:
         # On ne casse pas le démarrage pour éviter l'indisponibilité totale
-        print(f"[startup] Impossible d'assurer la présence de l'admin: {e}")
+        logger.exception(
+            "Unable to ensure default admin",
+            extra={"extra_fields": {"action": "bootstrap_admin", "error": str(exc)}}
+        )
 
 # ============= INCLUSION DES ROUTEURS =============
 
