@@ -22,6 +22,7 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   Rôles & Autorisations : étudiants, enseignants, admins. Les étudiants peuvent supprimer uniquement leurs propres applications (contrôle d’étiquettes managed-by=labondemand, user-id).
 *   Quotas par Rôle (enforcement côté serveur) : limites sur nombre d’apps, CPU et mémoire avec mode fail-closed si la mesure est indisponible. Carte de quotas sur le dashboard.
 *   Observabilité par Application : métriques CPU (m) et mémoire (Mi) par application, en Live (metrics-server) ou estimation (requests). Liste triable par consommation.
+*   Journalisation structurée : logs JSON multi-flux (`app`, `access`, `audit`) persistés dans `logs/` avec rotation et corrélation par `request_id`.
 *   Statistiques Admin : vue dédiée pour l’état cluster/noeuds (si metrics-server présent), avec agrégations utiles.
 *   WordPress pour Étudiants : stack complète WordPress + MariaDB gérée; suppression traite la stack (web + db) proprement.
 *   Sécurité des Sessions : cookies HttpOnly, Secure, SameSite, domaine/expiration configurables; contrôles de rôle côté API.
@@ -36,6 +37,7 @@ Voir aussi:
 - Documentation LAMP: documentation/lamp.md
 - Terminal web: documentation/terminal.md
 - WordPress: documentation/wordpress.md
+- Logging: documentation/logging.md
 
 ## Quotas pour les étudiants (valeurs et justification)
 
