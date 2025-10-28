@@ -3,6 +3,7 @@ Configuration centralisée pour l'application LabOnDemand
 Applique le principe KISS pour une configuration simple et claire
 """
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from kubernetes import client, config
 
@@ -18,6 +19,11 @@ class Settings:
     API_VERSION = "0.9.0"
     API_PORT = int(os.getenv("API_PORT", 8000))
     DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() in ["true", "1", "yes"]
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_DIR = Path(os.getenv("LOG_DIR", Path(__file__).resolve().parents[1] / "logs"))
+    LOG_MAX_BYTES = int(os.getenv("LOG_MAX_BYTES", str(5 * 1024 * 1024)))
+    LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "10"))
+    LOG_ENABLE_CONSOLE = os.getenv("LOG_ENABLE_CONSOLE", "True").lower() in ["true", "1", "yes"]
     
     # CORS Configuration (configurable via env: CORS_ORIGINS="http://foo,https://bar")
     _CORS_ENV = os.getenv("CORS_ORIGINS", "").strip()

@@ -100,6 +100,14 @@ Si problème de connexion :
 2. Exécuter le test de connexion
 3. Réinitialiser la DB si nécessaire
 4. Consulter les logs : `docker logs labondemand-api`
+5. Examiner les fichiers JSON dans `logs/` (`app.log`, `access.log`, `audit.log`)
+
+### Journaux structurés
+
+- Les logs applicatifs sont persistés dans `logs/` via Docker Compose (`./logs:/app/logs`).
+- Trois flux JSON : `app.log` (technique), `access.log` (requêtes HTTP), `audit.log` (événements sensibles).
+- Variables utiles : `LOG_LEVEL`, `LOG_DIR`, `LOG_MAX_BYTES`, `LOG_BACKUP_COUNT`, `LOG_ENABLE_CONSOLE`.
+- Détails et exemples : voir `documentation/logging.md`.
 
 ## 📝 Notes
 

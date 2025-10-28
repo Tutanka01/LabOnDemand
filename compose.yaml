@@ -10,6 +10,7 @@ services:
       - ./backend:/app/backend
       - ./.env:/app/.env  # Monter le fichier .env comme un volume pour qu'il soit accessible
       - ./kubeconfig.yaml:/root/.kube/config:ro # Monter kubeconfig.yaml en lecture seule
+      - ./logs:/app/logs # Persister les journaux applicatifs
     env_file:
       - ./.env  # Utiliser le fichier .env pour injecter les variables d'environnement
     environment:
@@ -18,13 +19,17 @@ services:
       - CLUSTER_EXTERNAL_IP=${CLUSTER_EXTERNAL_IP:-}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - SECURE_COOKIES=${SECURE_COOKIES:-False}
+      - WATCHFILES_FORCE_POLLING=true
     restart: unless-stopped
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
     depends_on:
       - db
       - redis
-    command: sh -c "sleep 15 && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+    command:
+      - sh
+      - -c
+      - sleep 15 && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend --reload-exclude logs
 
   frontend:
     image: nginx:alpine

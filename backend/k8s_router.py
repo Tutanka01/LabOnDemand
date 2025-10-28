@@ -2,6 +2,7 @@
 Routeur pour les opérations Kubernetes
 Principe KISS : endpoints focalisés et simples
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi import WebSocket, WebSocketDisconnect
 from kubernetes import client
@@ -25,6 +26,9 @@ from kubernetes.stream import stream as k8s_stream
 import time
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
+
+logger = logging.getLogger("labondemand.k8s")
+audit_logger = logging.getLogger("labondemand.audit")
 
 # ============= ENDPOINTS DE LISTING =============
 
@@ -416,7 +420,15 @@ async def get_cluster_stats(
         }
     except Exception as e:
         # Mode dégradé
-        print(f"[cluster-stats] Erreur: {e}")
+        logger.exception(
+            "cluster_stats_error",
+            extra={
+                "extra_fields": {
+                    "user_id": getattr(current_user, "id", None),
+                    "error": str(e),
+                }
+            },
+        )
         return {
             "k8s_available": False,
             "cluster": {"nodes": 0, "deployments": 0, "deployments_ready": 0, "lab_apps": 0, "pods": 0, "namespaces": 0},
@@ -599,7 +611,15 @@ async def get_my_apps_usage(current_user: User = Depends(get_current_user)):
         return {"items": items, "k8s_available": True, "metrics": metrics_ok}
 
     except Exception as e:
-        print(f"[my-apps-usage] Erreur: {e}")
+        logger.exception(
+            "my_apps_usage_error",
+            extra={
+                "extra_fields": {
+                    "user_id": getattr(current_user, "id", None),
+                    "error": str(e),
+                }
+            },
+        )
         return {"items": [], "k8s_available": False, "metrics": False}
 
 # ============= ENDPOINT QUOTAS UTILISATEUR =============
@@ -804,11 +824,29 @@ async def get_deployment_details(
                 # Dernière option : localhost (pour développement local)
                 return "localhost"
             except Exception as e:
-                print(f"Erreur lors de la récupération de l'IP du cluster: {e}")
+                logger.exception(
+                    "cluster_ip_resolution_error",
+                    extra={
+                        "extra_fields": {
+                            "namespace": namespace,
+                            "deployment": name,
+                            "error": str(e),
+                        }
+                    },
+                )
                 return "localhost"
 
         cluster_ip = get_cluster_external_ip()
-        print(f"[DEBUG] IP du cluster détectée: {cluster_ip}")  # Pour debug
+        logger.debug(
+            "cluster_ip_detected",
+            extra={
+                "extra_fields": {
+                    "namespace": namespace,
+                    "deployment": name,
+                    "cluster_ip": cluster_ip,
+                }
+            },
+        )
 
         # Construire les URLs d'accès si des services NodePort existent
         access_urls = []
@@ -887,7 +925,33 @@ async def get_deployment_details(
             "access_urls": access_urls
         }
         
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            logger.exception(
+                "api_delete_deployment_error",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": name,
+                        "user_id": getattr(current_user, "id", None),
+                        "status_code": exc.status_code,
+                        "error": str(exc.detail),
+                    }
+                },
+            )
+        raise
     except Exception as e:
+        logger.exception(
+            "api_delete_deployment_error",
+            extra={
+                "extra_fields": {
+                    "namespace": namespace,
+                    "name": name,
+                    "user_id": getattr(current_user, "id", None),
+                    "error": str(e),
+                }
+            },
+        )
         _raise_k8s_http(e)
 
 # ============= ENDPOINT CREDENTIALS (SECRETS) =============
@@ -1088,11 +1152,23 @@ async def create_deployment(
     current_user: User = Depends(get_current_user)
 ):
     """Créer un déploiement avec service optionnel"""
+    logger.debug(
+        "api_create_deployment_request",
+        extra={
+            "extra_fields": {
+                "name": name,
+                "image": image,
+                "replicas": replicas,
+                "deployment_type": deployment_type,
+                "user_id": getattr(current_user, "id", None),
+            }
+        },
+    )
     return await deployment_service.create_deployment(
         name=name,
         image=image,
         replicas=replicas,
-    namespace=None,
+        namespace=None,
         create_service=create_service,
         service_port=service_port,
         service_target_port=service_target_port,
@@ -1142,6 +1218,19 @@ async def delete_deployment(
     """
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
+    logger.info(
+        "api_delete_deployment_request",
+        extra={
+            "extra_fields": {
+                "namespace": namespace,
+                "name": name,
+                "user_id": getattr(current_user, "id", None),
+                "username": getattr(current_user, "username", None),
+                "delete_service": delete_service,
+                "delete_persistent": delete_persistent,
+            }
+        },
+    )
     
     try:
         apps_v1 = client.AppsV1Api()
@@ -1229,6 +1318,20 @@ async def delete_deployment(
                 except client.exceptions.ApiException:
                     pass
 
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": stack_name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": "wordpress",
+                        "components_deleted": deleted,
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
             return {"message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"}
         elif app_type == "mysql" or stack_mode and (labels.get("app-type") == "mysql" or labels.get("component") in {"database", "phpmyadmin"}):
             # Supprimer la stack MySQL + phpMyAdmin
@@ -1265,6 +1368,20 @@ async def delete_deployment(
                 except client.exceptions.ApiException:
                     pass
 
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": stack_name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": "mysql",
+                        "components_deleted": deleted,
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
             return {"message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"}
         elif app_type == "lamp" or stack_mode and labels.get("app-type") == "lamp":
             # Supprimer la stack LAMP (web + db + pma)
@@ -1302,6 +1419,20 @@ async def delete_deployment(
                 except client.exceptions.ApiException:
                     pass
 
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": stack_name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": "lamp",
+                        "components_deleted": deleted,
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
             return {"message": f"Stack LAMP '{stack_name}' supprimée: {', '.join(deleted)}"}
         else:
             # Comportement standard pour les apps unitaires
@@ -1311,6 +1442,19 @@ async def delete_deployment(
                     core_v1.delete_namespaced_service(f"{name}-service", namespace)
                 except client.exceptions.ApiException:
                     pass
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": labels.get("app-type", "custom"),
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
             return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
     except Exception as e:
         _raise_k8s_http(e)

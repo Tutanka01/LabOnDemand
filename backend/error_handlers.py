@@ -6,19 +6,25 @@ from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
-import traceback
 import logging
 
-# Configuration du logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("labondemand.error")
 
 async def global_exception_handler(request: Request, exc: Exception):
     """
     Gestionnaire global d'exceptions qui retourne toujours du JSON valide
     """
-    logger.error(f"Erreur non gérée: {str(exc)}")
-    logger.error(f"Traceback: {traceback.format_exc()}")
+    request_id = getattr(request.state, "request_id", None)
+    logger.exception(
+        "unhandled_exception",
+        extra={
+            "extra_fields": {
+                "path": request.url.path,
+                "method": request.method,
+                "request_id": request_id,
+            }
+        },
+    )
     
     # Erreurs de base de données
     if isinstance(exc, SQLAlchemyError):

@@ -1,8 +1,11 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
+
+from .logging_config import shorten_token
 
 from .database import get_db
 from .models import User, UserRole
@@ -15,16 +18,43 @@ from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COO
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+logger = logging.getLogger("labondemand.auth")
+audit_logger = logging.getLogger("labondemand.audit")
+
 @router.post("/login", response_model=LoginResponse)
-def login(user_credentials: UserLogin, response: Response, db: Session = Depends(get_db)):
+def login(
+    user_credentials: UserLogin,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """
     Connecte un utilisateur et crée une session
     """
-    print(f"[Login] Tentative de connexion pour l'utilisateur: {user_credentials.username}")
+    client = request.client or None
+    logger.info(
+        "login_attempt",
+        extra={
+            "extra_fields": {
+                "username": user_credentials.username,
+                "client_ip": getattr(client, "host", None),
+                "client_port": getattr(client, "port", None),
+            }
+        },
+    )
     
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
     if not user:
-        print(f"[Login] Échec d'authentification pour {user_credentials.username}")
+        audit_logger.warning(
+            "login_failed",
+            extra={
+                "extra_fields": {
+                    "username": user_credentials.username,
+                    "client_ip": getattr(client, "host", None),
+                    "reason": "invalid_credentials",
+                }
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nom d'utilisateur ou mot de passe incorrect",
@@ -32,9 +62,10 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
         )
     
     # Créer une session pour l'utilisateur
-    print(f"[Login] Authentification réussie pour {user_credentials.username}, création d'une session...")
     session_id = create_session(user.id, user.username, user.role)
-    print(f"[Login] Session créée avec ID: {session_id[:10]}...")
+    session_preview = shorten_token(session_id)
+    request.state.session_id = session_id
+    request.state.user = user
     
     # Créer la réponse
     resp = LoginResponse(
@@ -44,7 +75,6 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
     
     # Ajouter l'ID de session aux headers pour que le middleware puisse créer le cookie
     response.headers["session_id"] = session_id
-    print(f"[Login] ID de session ajouté aux headers de réponse")
     
     # Ajouter le cookie directement (en plus du middleware)
     response.set_cookie(
@@ -57,7 +87,19 @@ def login(user_credentials: UserLogin, response: Response, db: Session = Depends
         path="/",
         domain=COOKIE_DOMAIN or None
     )
-    print(f"[Login] Cookie session_id créé directement dans la réponse")
+
+    audit_logger.info(
+        "login_success",
+        extra={
+            "extra_fields": {
+                "user_id": user.id,
+                "username": user.username,
+                "role": user.role.value,
+                "session_id": session_preview,
+                "client_ip": getattr(client, "host", None),
+            }
+        },
+    )
     
     return resp
 
@@ -69,13 +111,24 @@ def logout(response: Response, request: Request, user: User = Depends(get_curren
     """
     # Récupérer l'ID de session depuis le cookie
     session_id = request.cookies.get("session_id")
+    session_preview = shorten_token(session_id)
     if session_id:
-        # Supprimer la session côté serveur
         delete_session(session_id)
-    
-    # Supprimer le cookie côté client
+
     response.delete_cookie(key="session_id", path="/")
-    
+
+    audit_logger.info(
+        "logout",
+        extra={
+            "extra_fields": {
+                "user_id": user.id,
+                "username": user.username,
+                "role": user.role.value,
+                "session_id": session_preview,
+            }
+        },
+    )
+
     return {"message": "Déconnexion réussie"}
 
 @router.get("/me", response_model=UserResponse)
@@ -120,6 +173,18 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+
+    audit_logger.info(
+        "user_registered",
+        extra={
+            "extra_fields": {
+                "user_id": db_user.id,
+                "username": db_user.username,
+                "role": db_user.role.value,
+                "is_active": db_user.is_active,
+            }
+        },
+    )
     
     return db_user
 
@@ -184,6 +249,19 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     
     db.commit()
     db.refresh(db_user)
+
+    audit_logger.info(
+        "user_updated",
+        extra={
+            "extra_fields": {
+                "user_id": db_user.id,
+                "username": db_user.username,
+                "role": db_user.role.value,
+                "is_active": db_user.is_active,
+                "updated_by": "admin",
+            }
+        },
+    )
     
     return db_user
 
@@ -201,6 +279,17 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     
     db.delete(db_user)
     db.commit()
+
+    audit_logger.info(
+        "user_deleted",
+        extra={
+            "extra_fields": {
+                "user_id": user_id,
+                "username": db_user.username,
+                "role": db_user.role.value,
+            }
+        },
+    )
     
     return None
 
@@ -248,6 +337,25 @@ def update_user_me(user_update: UserUpdate, current_user: User = Depends(get_cur
     
     db.commit()
     db.refresh(current_user)
+
+    audit_logger.info(
+        "user_self_update",
+        extra={
+            "extra_fields": {
+                "user_id": current_user.id,
+                "username": current_user.username,
+                "fields": [
+                    field
+                    for field in [
+                        "email" if user_update.email is not None else None,
+                        "full_name" if user_update.full_name is not None else None,
+                        "password" if user_update.password is not None else None,
+                    ]
+                    if field
+                ],
+            }
+        },
+    )
     
     return current_user
 
@@ -303,6 +411,17 @@ def change_password(
     current_user.hashed_password = get_password_hash(new_password)
     db.commit()
     db.refresh(current_user)
+
+    audit_logger.info(
+        "password_changed",
+        extra={
+            "extra_fields": {
+                "user_id": current_user.id,
+                "username": current_user.username,
+                "self_service": True,
+            }
+        },
+    )
     
     return current_user
 

@@ -1,3 +1,4 @@
+import logging
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import APIKeyCookie
@@ -15,18 +16,22 @@ try:
     from .models import User, UserRole
     from .schemas import SessionData
     from .session_store import session_store
+    from .logging_config import shorten_token
 except ImportError:
     # Pour l'utilisation comme script direct
     from database import get_db
     from models import User, UserRole
     from schemas import SessionData
     from session_store import session_store
+    from logging_config import shorten_token
 
 # Configuration du contexte de hachage de mot de passe
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Clé API pour la sécurité basée sur les cookies
 cookie_security = APIKeyCookie(name="session_id", auto_error=False)
+
+logger = logging.getLogger("labondemand.security")
 
 # Vérification des mots de passe
 def verify_password(plain_password, hashed_password):
@@ -40,6 +45,7 @@ def get_password_hash(password):
 def create_session(user_id: int, username: str, role: UserRole) -> str:
     # Générer un ID de session unique
     session_id = secrets.token_urlsafe(32)
+    session_preview = shorten_token(session_id)
     
     # Créer les données de session
     session_data = SessionData(
@@ -50,64 +56,120 @@ def create_session(user_id: int, username: str, role: UserRole) -> str:
     
     # Stocker la session avec notre gestionnaire de sessions
     session_store.set(session_id, session_data.model_dump())
+    logger.info(
+        "session_created",
+        extra={
+            "extra_fields": {
+                "user_id": user_id,
+                "username": username,
+                "role": role.value,
+                "session_id": session_preview,
+            }
+        },
+    )
     
     return session_id
 
-def get_session_data(session_id: str = Depends(cookie_security)) -> SessionData:
-    print(f"[Session] Vérification de la session avec ID: {session_id[:10] if session_id else 'None'}...")
-    
+def get_session_data(
+    request: Request,
+    session_id: str = Depends(cookie_security),
+) -> SessionData:
+    session_preview = shorten_token(session_id)
+
     if not session_id:
-        print("[Session] Aucun ID de session fourni dans les cookies")
+        logger.warning(
+            "session_cookie_missing",
+            extra={"extra_fields": {"path": request.url.path, "client_ip": getattr(request.client, "host", None)}},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session non fournie",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # Récupérer les données de session
+
     session_data = session_store.get(session_id)
-    
+
     if not session_data:
-        print(f"[Session] Session introuvable ou expirée: {session_id[:10]}...")
-        # Afficher toutes les sessions actives pour le débogage
-        print("[Session] Sessions actives:")
-        for sid, data in session_store.sessions.items():
-            print(f"  - {sid[:10]}... (expire le {data['expiry']})")
-        
+        logger.warning(
+            "session_invalid",
+            extra={
+                "extra_fields": {
+                    "session_id": session_preview,
+                    "path": request.url.path,
+                    "client_ip": getattr(request.client, "host", None),
+                }
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session invalide ou expirée",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    print(f"[Session] Session valide trouvée pour l'utilisateur: {session_data.get('username', 'inconnu')}")
-    return SessionData(**session_data)
+
+    request.state.session_id = session_id
+    session_obj = SessionData(**session_data)
+    request.state.session = session_obj
+
+    logger.debug(
+        "session_valid",
+        extra={
+            "extra_fields": {
+                "session_id": session_preview,
+                "user_id": session_obj.user_id,
+                "username": session_obj.username,
+                "role": session_obj.role,
+            }
+        },
+    )
+
+    return session_obj
 
 def delete_session(session_id: str) -> bool:
-    return session_store.delete(session_id)
+    if not session_id:
+        return False
+    session_preview = shorten_token(session_id)
+    removed = session_store.delete(session_id)
+    logger.info(
+        "session_deleted",
+        extra={"extra_fields": {"session_id": session_preview, "removed": removed}},
+    )
+    return removed
 
 # Authentification utilisateur
 def authenticate_user(db: Session, username: str, password: str):
-    # Ajouter des logs de debug pour comprendre le processus d'authentification
-    print(f"Tentative d'authentification pour l'utilisateur: {username}")
-    
+    logger.debug(
+        "authenticate_user_attempt",
+        extra={"extra_fields": {"username": username}},
+    )
+
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        print(f"Échec d'authentification: Utilisateur '{username}' non trouvé")
+        logger.warning(
+            "authenticate_user_failed",
+            extra={"extra_fields": {"username": username, "reason": "user_not_found"}},
+        )
         return False
     
     # Vérifier le mot de passe
-    print(f"Utilisateur trouvé. Vérification du mot de passe...")
     password_valid = verify_password(password, user.hashed_password)
     if not password_valid:
-        print(f"Échec d'authentification: Mot de passe incorrect pour '{username}'")
+        logger.warning(
+            "authenticate_user_failed",
+            extra={"extra_fields": {"username": username, "reason": "invalid_password"}},
+        )
         return False
     
     if not user.is_active:
-        print(f"Échec d'authentification: Compte '{username}' inactif")
+        logger.warning(
+            "authenticate_user_failed",
+            extra={"extra_fields": {"username": username, "reason": "inactive"}},
+        )
         return False
-    
-    print(f"Authentification réussie pour l'utilisateur: {username}")
+
+    logger.debug(
+        "authenticate_user_success",
+        extra={"extra_fields": {"user_id": user.id, "username": username}},
+    )
     return user
 
 # Vérifier les permissions utilisateur
@@ -129,6 +191,7 @@ def is_teacher_or_admin(session_data: SessionData = Depends(get_session_data)):
 
 # Récupération de l'utilisateur actuel
 def get_current_user(
+    request: Request,
     session_data: SessionData = Depends(get_session_data),
     db: Session = Depends(get_db)
 ):
@@ -145,4 +208,5 @@ def get_current_user(
             detail="Utilisateur inactif",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    request.state.user = user
     return user
