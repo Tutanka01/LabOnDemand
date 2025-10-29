@@ -28,6 +28,12 @@ from .models import User, UserRole, Template, RuntimeConfig
 from .security import get_password_hash
 from .templates import get_deployment_templates
 
+# When running in debug inside a Docker volume on Windows, watchfiles can fail
+# with "Invalid argument" unless it falls back to polling. Force this behaviour
+# before we initialise logging and start uvicorn.
+if settings.DEBUG_MODE and os.getenv("WATCHFILES_FORCE_POLLING", "").lower() not in {"true", "1", "yes"}:
+    os.environ["WATCHFILES_FORCE_POLLING"] = "true"
+
 setup_logging()
 logger = logging.getLogger("labondemand.main")
 access_logger = logging.getLogger("labondemand.access")
