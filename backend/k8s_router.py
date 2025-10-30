@@ -179,6 +179,25 @@ async def delete_user_pvc(
 
 
 
+@router.get("/pvcs/all", response_model=schemas.PVCListResponse)
+async def list_all_labondemand_pvcs(
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_teacher_or_admin),
+):
+    """Lister tous les PVC LabOnDemand (enseignant/admin)."""
+    core_v1 = client.CoreV1Api()
+    label_selector = "managed-by=labondemand"
+    try:
+        listing = core_v1.list_persistent_volume_claim_for_all_namespaces(label_selector=label_selector)
+    except client.exceptions.ApiException as e:
+        _raise_k8s_http(e)
+    except Exception as e:
+        _raise_k8s_http(e)
+
+    pvcs = [_map_pvc(pvc) for pvc in getattr(listing, "items", []) or []]
+    return schemas.PVCListResponse(items=pvcs)
+
+
 # ============= AUTH POUR WEBSOCKETS (TERMINAL) =============
 
 async def _ws_authenticate_and_authorize_terminal(websocket: WebSocket, namespace: str, pod_name: str) -> dict:

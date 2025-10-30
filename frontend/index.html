@@ -39,36 +39,76 @@
     <main class="container">
         <!-- Section Dashboard Principal -->
         <section id="dashboard-view" class="view active-view">
-            <h1><i class="fas fa-tachometer-alt"></i> Votre Tableau de Bord</h1>
-            <p class="subtitle">Gérez vos applications actives et lancez de nouvelles applications.</p>
-
-            <div class="actions">
-                <button id="show-launch-view-btn" class="btn btn-primary">
-                    <i class="fas fa-plus-circle"></i> Lancer une Nouvelle Application
-                </button>
-            </div>
-
-            <div class="card quotas-card" id="my-quotas-card">
-                <div class="quotas-header">
-                    <h2><i class="fas fa-gauge-high"></i> Vos ressources</h2>
-                    <button id="refresh-quotas" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
-                </div>
-                <div id="quotas-content" class="quotas-content">Chargement...</div>
-            </div>
-
-            <div class="card pvc-card" id="pvc-card">
-                <div class="pvc-card-header">
-                    <h2><i class="fas fa-hdd"></i> Vos volumes persistants</h2>
-                    <div class="pvc-card-actions">
-                        <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+            <div class="dashboard-hero">
+                <div class="hero-left">
+                    <h1>Laboratoires prêts en un clic</h1>
+                    <p class="hero-subtitle">Pilotez vos environnements Kubernetes, retrouvez vos fichiers et gardez une vue claire sur vos ressources.</p>
+                    <div class="hero-actions">
+                        <button id="show-launch-view-btn" class="btn btn-primary btn-hero">
+                            <i class="fas fa-plus-circle"></i> Lancer une application
+                        </button>
+                        <button id="refresh-dashboard" class="btn btn-ghost btn-hero">
+                            <i class="fas fa-sync-alt"></i> Rafraîchir le tableau
+                        </button>
                     </div>
                 </div>
-                <div id="pvc-list" class="pvc-list">Chargement...</div>
-                <p class="pvc-hint"><i class="fas fa-info-circle"></i> Réutilisez un volume existant lors du lancement de VS Code ou Jupyter pour conserver vos fichiers.</p>
+                <div class="hero-stats">
+                    <div class="hero-stat">
+                        <span class="stat-label">Apps actives</span>
+                        <span class="stat-value" id="stat-active-apps">0</span>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="stat-label">Apps prêtes</span>
+                        <span class="stat-value" id="stat-ready-apps">0</span>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="stat-label">Volumes gérés</span>
+                        <span class="stat-value" id="stat-persistent-volumes">0</span>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="stat-label">Apps restantes</span>
+                        <span class="stat-value" id="stat-quota-apps">—</span>
+                    </div>
+                </div>
             </div>
 
-            <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
-            <div id="active-labs-list" class="card-grid">
+            <div class="dashboard-grid">
+                <div class="card glass-card quotas-card" id="my-quotas-card">
+                    <div class="quotas-header">
+                        <h2><i class="fas fa-gauge-high"></i> Vos ressources</h2>
+                        <button id="refresh-quotas" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                    </div>
+                    <div id="quotas-content" class="quotas-content">Chargement...</div>
+                </div>
+
+                <div class="card glass-card pvc-card" id="pvc-card">
+                    <div class="pvc-card-header">
+                        <h2><i class="fas fa-hdd"></i> Vos volumes persistants</h2>
+                        <div class="pvc-card-actions">
+                            <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                        </div>
+                    </div>
+                    <div id="pvc-list" class="pvc-list">Chargement...</div>
+                    <p class="pvc-hint"><i class="fas fa-info-circle"></i> Sélectionnez un volume lors du lancement VS Code ou Jupyter pour retrouver vos fichiers instantanément.</p>
+                </div>
+
+                <div class="card glass-card tips-card">
+                    <h2><i class="fas fa-lightbulb"></i> Astuces express</h2>
+                    <ul class="tips-list">
+                        <li><i class="fas fa-rotate"></i> Actualisez après un arrêt ou une création pour mettre à jour les stats.</li>
+                        <li><i class="fas fa-database"></i> Renommez vos déploiements pour identifier facilement les volumes associés.</li>
+                        <li><i class="fas fa-shield-alt"></i> Les volumes LabOnDemand sont isolés par utilisateur et vérifiés côté API.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="section-heading">
+                <div>
+                    <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
+                    <p class="section-subtitle">Surveillez l’état de vos laboratoires en direct et accédez-y en un clic.</p>
+                </div>
+            </div>
+            <div id="active-labs-list" class="card-grid lab-grid">
                 <!-- Les labs actifs seront ajoutés ici par JS -->
                 <div class="no-labs-message">
                     <i class="fas fa-info-circle"></i> Vous n'avez aucune application active pour le moment.
@@ -82,6 +122,16 @@
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div id="k8s-resources" class="collapsible-content k8s-section">
+                    <div class="k8s-resource-panel" id="admin-pvc-panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-database"></i> Volumes persistants (LabOnDemand)</h3>
+                            <div class="action-buttons">
+                                <button id="refresh-admin-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                            </div>
+                        </div>
+                        <div id="admin-pvcs-list">Chargement...</div>
+                    </div>
+
                     <div class="k8s-resource-panel">
                         <h3><i class="fas fa-project-diagram"></i> Namespaces</h3>
                         <div id="namespaces-list">Chargement...</div>

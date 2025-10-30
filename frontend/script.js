@@ -42,6 +42,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const refreshPvcsBtn = document.getElementById('refresh-pvcs');
     const pvcSelectGroup = document.getElementById('persistent-volume-group');
     const existingPvcSelect = document.getElementById('existing-pvc-select');
+    const refreshDashboardBtn = document.getElementById('refresh-dashboard');
+    const statActiveAppsEl = document.getElementById('stat-active-apps');
+    const statReadyAppsEl = document.getElementById('stat-ready-apps');
+    const statPvcsEl = document.getElementById('stat-persistent-volumes');
+    const statQuotaAppsEl = document.getElementById('stat-quota-apps');
+    const adminPvcsPanel = document.getElementById('admin-pvc-panel');
+    const adminPvcsList = document.getElementById('admin-pvcs-list');
+    const refreshAdminPvcsBtn = document.getElementById('refresh-admin-pvcs');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -55,6 +63,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     let lastLaunchedDeployment = null;
     let cachedPvcs = [];
     let pvcsLastFetched = 0;
+    let cachedAdminPvcs = [];
+    let adminPvcsLastFetched = 0;
+    let lastQuotaData = null;
 
     // --- UI: Toggle section Kubernetes ---
     if (k8sSectionToggle && k8sResources) {
@@ -93,6 +104,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 k8sSection.style.display = 'block';
             } else {
                 k8sSection.style.display = 'none';
+            }
+        }
+
+        if (adminPvcsPanel) {
+            if (authManager.isAdmin() || authManager.isTeacher()) {
+                adminPvcsPanel.style.display = '';
+            } else {
+                adminPvcsPanel.style.display = 'none';
             }
         }
     }
@@ -138,9 +157,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function barClass(p) { return p < 70 ? 'pb-green' : (p < 90 ? 'pb-amber' : 'pb-red'); }
     function renderQuotasCard(data) {
         if (!quotasContent) return;
+        lastQuotaData = data;
         const { limits, usage } = data || {};
         if (!limits || !usage) {
             quotasContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> Quotas indisponibles</div>`;
+            updateDashboardStats();
             return;
         }
         const rows = [
@@ -158,12 +179,19 @@ document.addEventListener('DOMContentLoaded', async () => {
               <div class="quota-legend">Reste: ${Math.max(r.max - r.used, 0)} ${r.unit}</div>
             </div>`;
         }).join('');
+        updateDashboardStats();
     }
     async function refreshQuotas() {
         if (!quotasContent) return;
         quotasContent.innerHTML = 'Chargement...';
-        try { renderQuotasCard(await fetchMyQuotas()); }
-        catch (e) { quotasContent.innerHTML = `<div class="error-message"><i class=\"fas fa-exclamation-triangle\"></i> ${e.message || 'Erreur quotas'}</div>`; }
+        try {
+            renderQuotasCard(await fetchMyQuotas());
+        }
+        catch (e) {
+            quotasContent.innerHTML = `<div class="error-message"><i class=\"fas fa-exclamation-triangle\"></i> ${e.message || 'Erreur quotas'}</div>`;
+            lastQuotaData = null;
+            updateDashboardStats();
+        }
     }
     if (refreshQuotasBtn) {
         refreshQuotasBtn.addEventListener('click', refreshQuotas);
@@ -174,9 +202,42 @@ document.addEventListener('DOMContentLoaded', async () => {
         refreshPvcsBtn.addEventListener('click', async () => {
             try {
                 await refreshPvcs({ render: true, force: true });
-                populatePvcSelect(deploymentTypeInput.value);
+                const currentType = deploymentTypeInput ? deploymentTypeInput.value : '';
+                populatePvcSelect(currentType);
             } catch (e) {
                 console.warn('Refresh PVCs failed', e);
+            }
+        });
+    }
+
+    if (refreshAdminPvcsBtn) {
+        refreshAdminPvcsBtn.addEventListener('click', async () => {
+            refreshAdminPvcsBtn.disabled = true;
+            refreshAdminPvcsBtn.setAttribute('aria-busy', 'true');
+            try {
+                await refreshAdminPvcs({ force: true });
+            } catch (error) {
+                console.warn('Refresh admin PVCs failed', error);
+            } finally {
+                refreshAdminPvcsBtn.disabled = false;
+                refreshAdminPvcsBtn.removeAttribute('aria-busy');
+            }
+        });
+    }
+
+    if (refreshDashboardBtn) {
+        refreshDashboardBtn.addEventListener('click', async () => {
+            refreshDashboardBtn.disabled = true;
+            refreshDashboardBtn.setAttribute('aria-busy', 'true');
+            try {
+                await handleDashboardRefresh();
+                const currentType = deploymentTypeInput ? deploymentTypeInput.value : '';
+                populatePvcSelect(currentType);
+            } catch (error) {
+                console.warn('Dashboard refresh failed', error);
+            } finally {
+                refreshDashboardBtn.disabled = false;
+                refreshDashboardBtn.removeAttribute('aria-busy');
             }
         });
     }
@@ -210,6 +271,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function updateDashboardStats() {
+        if (statActiveAppsEl) {
+            const total = document.querySelectorAll('.lab-card').length;
+            statActiveAppsEl.textContent = String(total);
+        }
+        if (statReadyAppsEl) {
+            const ready = document.querySelectorAll('.lab-card.lab-ready').length;
+            statReadyAppsEl.textContent = String(ready);
+        }
+        if (statPvcsEl) {
+            statPvcsEl.textContent = String(cachedPvcs.length);
+        }
+        if (statQuotaAppsEl) {
+            const remaining = lastQuotaData && lastQuotaData.remaining ? lastQuotaData.remaining.apps : null;
+            statQuotaAppsEl.textContent = typeof remaining === 'number' ? String(Math.max(remaining, 0)) : '—';
+        }
+    }
+
+    updateDashboardStats();
+
     async function fetchUserPvcs() {
         const resp = await fetch(`${API_V1}/k8s/pvcs`, { credentials: 'include' });
         if (!resp.ok) {
@@ -230,42 +311,190 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        pvcListContainer.innerHTML = '';
-        items.forEach(pvc => {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'pvc-item';
-
-            const left = document.createElement('div');
-            left.className = 'pvc-meta';
+        const rows = items.map(pvc => {
             const phase = pvc.phase || 'Inconnu';
             const phaseClass = mapPhaseToClass(phase);
-            const statusHtml = `<span class="status-pill ${phaseClass}">${escapeHtml(phase)}</span>`;
             const storage = pvc.storage || 'Taille inconnue';
-            const access = (pvc.access_modes && pvc.access_modes.length) ? pvc.access_modes.join(', ') : 'n/a';
-            const lastApp = pvc.last_bound_app || pvc.app_type || 'n/a';
-
-            left.innerHTML = `
-                <h4><i class="fas fa-hdd"></i> ${escapeHtml(pvc.name)}</h4>
-                <div>${statusHtml}</div>
-                <div><i class="fas fa-database"></i> ${escapeHtml(storage)} - Modes: ${escapeHtml(access)}</div>
-                <div><i class="fas fa-code-branch"></i> Dernière application: ${escapeHtml(lastApp)}</div>
-                <div><i class="fas fa-clock"></i> ${escapeHtml(formatIsoDateShort(pvc.created_at))}</div>
+            const access = (pvc.access_modes && pvc.access_modes.length) ? pvc.access_modes.join(', ') : 'Mode non précisé';
+            const lastApp = pvc.last_bound_app || pvc.app_type || '—';
+            const createdAt = formatIsoDateShort(pvc.created_at);
+            const phaseBadgeClass = phaseClass ? ` status-${phaseClass}` : '';
+            return `
+                <tr data-pvc-name="${escapeHtml(pvc.name)}">
+                    <td>
+                        <div class="cell-main">${escapeHtml(pvc.name)}</div>
+                        <div class="cell-meta">
+                            <span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>
+                            <span class="badge-soft muted"><i class="fas fa-share-alt"></i> ${escapeHtml(access)}</span>
+                        </div>
+                    </td>
+                    <td>${escapeHtml(storage)}</td>
+                    <td>${escapeHtml(lastApp)}</td>
+                    <td>${escapeHtml(createdAt)}</td>
+                    <td class="cell-actions">
+                        <button type="button" class="btn btn-danger btn-icon pvc-delete-btn" data-name="${escapeHtml(pvc.name)}" title="Supprimer ce volume">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
             `;
+        }).join('');
 
-            const actions = document.createElement('div');
-            actions.className = 'pvc-actions';
+        pvcListContainer.innerHTML = `
+            <div class="pvc-table-wrapper">
+                <table class="pvc-table">
+                    <thead>
+                        <tr>
+                            <th>Volume</th>
+                            <th>Capacité</th>
+                            <th>Dernière application</th>
+                            <th>Créé le</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
 
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'btn btn-danger btn-sm';
-            deleteBtn.innerHTML = '<i class="fas fa-trash"></i> Supprimer';
-            deleteBtn.addEventListener('click', () => handlePvcDelete(pvc));
-
-            actions.appendChild(deleteBtn);
-
-            wrapper.appendChild(left);
-            wrapper.appendChild(actions);
-            pvcListContainer.appendChild(wrapper);
+        pvcListContainer.querySelectorAll('.pvc-delete-btn').forEach(btn => {
+            const name = btn.getAttribute('data-name');
+            const pvc = items.find(item => item.name === name);
+            if (pvc) {
+                btn.addEventListener('click', () => handlePvcDelete(pvc));
+            }
         });
+    }
+
+    async function fetchAllManagedPvcs() {
+        const resp = await fetch(`${API_V1}/k8s/pvcs/all`, { credentials: 'include' });
+        if (!resp.ok) {
+            if (resp.status === 403) {
+                throw new Error('ACCESS_DENIED');
+            }
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Impossible de récupérer les volumes globaux');
+        }
+        return resp.json();
+    }
+
+    function renderAdminPvcList(items) {
+        if (!adminPvcsList) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            adminPvcsList.innerHTML = `<div class="empty-state"><i class="fas fa-hdd"></i> Aucun volume LabOnDemand trouvé.</div>`;
+            return;
+        }
+
+        const rows = items.map(pvc => {
+            const phase = pvc.phase || 'Inconnu';
+            const phaseClass = mapPhaseToClass(phase);
+            const storage = pvc.storage || 'n/a';
+            const lastApp = pvc.last_bound_app || pvc.app_type || 'n/a';
+            const owner = pvc.labels && pvc.labels['user-id'] ? `Utilisateur #${escapeHtml(String(pvc.labels['user-id']))}` : 'n/a';
+            const created = formatIsoDateShort(pvc.created_at);
+            const phaseBadgeClass = phaseClass ? ` status-${phaseClass}` : '';
+            const namespaceBadge = `<span class="badge-soft">${escapeHtml(pvc.namespace)}</span>`;
+            const phaseBadge = `<span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>`;
+            return `
+                <tr>
+                    <td>
+                        <div class="cell-main">${escapeHtml(pvc.name)}</div>
+                        <span class="cell-sub">${namespaceBadge}</span>
+                    </td>
+                    <td>${escapeHtml(storage)}</td>
+                    <td>${phaseBadge}</td>
+                    <td>${escapeHtml(lastApp)}</td>
+                    <td>${owner}</td>
+                    <td>${escapeHtml(created)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        adminPvcsList.innerHTML = `
+            <div class="table-wrapper">
+                <table class="k8s-table compact-table">
+                    <thead>
+                        <tr>
+                            <th>Volume</th>
+                            <th>Capacité</th>
+                            <th>Phase</th>
+                            <th>Dernière application</th>
+                            <th>Propriétaire</th>
+                            <th>Créé le</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    async function refreshAdminPvcs(options = {}) {
+        if (!adminPvcsList) return [];
+        const { force = false } = options;
+        if (!force && cachedAdminPvcs.length && Date.now() - adminPvcsLastFetched < 60000) {
+            renderAdminPvcList(cachedAdminPvcs);
+            return cachedAdminPvcs;
+        }
+
+        adminPvcsList.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+        try {
+            const data = await fetchAllManagedPvcs();
+            cachedAdminPvcs = data.items || [];
+            adminPvcsLastFetched = Date.now();
+            renderAdminPvcList(cachedAdminPvcs);
+            return cachedAdminPvcs;
+        } catch (error) {
+            if (error.message === 'ACCESS_DENIED') {
+                adminPvcsList.innerHTML = '<div class="empty-state"><i class="fas fa-lock"></i> Accès réservé aux rôles enseignant ou admin.</div>';
+                return [];
+            }
+            adminPvcsList.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
+            throw error;
+        }
+    }
+
+    async function handleDashboardRefresh() {
+        let status = { api: false, k8s: false };
+        try {
+            status = await checkApiStatus();
+        } catch (error) {
+            console.warn('Impossible de vérifier le statut API lors du rafraîchissement', error);
+        }
+
+        const refreshOps = [];
+        if (status.api) {
+            refreshOps.push(refreshPvcs({ render: true, force: true }));
+            refreshOps.push(fetchAndRenderDeployments());
+
+            if (quotasContent) {
+                refreshOps.push(refreshQuotas());
+            }
+
+            const isElevated = authManager.isAdmin() || authManager.isTeacher();
+            if (isElevated) {
+                if (status.k8s) {
+                    refreshOps.push(fetchAndRenderPods());
+                    refreshOps.push(fetchAndRenderNamespaces());
+                }
+                if (adminPvcsList) {
+                    refreshOps.push(refreshAdminPvcs({ force: true }));
+                }
+            }
+        }
+
+        if (refreshOps.length === 0) {
+            updateDashboardStats();
+            return;
+        }
+
+        const results = await Promise.allSettled(refreshOps);
+        results.forEach(result => {
+            if (result.status === 'rejected') {
+                console.warn('Rafraîchissement partiel échoué:', result.reason);
+            }
+        });
+        updateDashboardStats();
     }
 
     async function refreshPvcs(options = {}) {
@@ -284,11 +513,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             cachedPvcs = data.items || [];
             pvcsLastFetched = Date.now();
             if (render) renderPvcList(cachedPvcs);
+            updateDashboardStats();
             return cachedPvcs;
         } catch (error) {
             if (pvcListContainer && render) {
                 pvcListContainer.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
             }
+            updateDashboardStats();
             throw error;
         }
     }
@@ -2587,6 +2818,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     fetchAndRenderNamespaces();
                     fetchAndRenderPods();
                     fetchAndRenderDeployments();
+                    if (adminPvcsPanel) {
+                        refreshAdminPvcs({ force: true }).catch(err => {
+                            console.warn('Chargement des PVC admin impossible au démarrage', err);
+                        });
+                    }
                 } else {
                     // Afficher un message clair dans les panneaux K8s
                     ['namespaces-list', 'pods-list', 'deployments-list'].forEach(id => {
@@ -2595,6 +2831,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             el.innerHTML = '<div class="error-message">Kubernetes indisponible. Réessayez plus tard.</div>';
                         }
                     });
+                    if (adminPvcsList) {
+                        adminPvcsList.innerHTML = '<div class="error-message"><i class="fas fa-exclamation-triangle"></i> Kubernetes indisponible pour lister les volumes.</div>';
+                    }
                 }
             } else {
                 // Étudiants: n'appellent pas les endpoints /namespaces et /pods
