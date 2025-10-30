@@ -31,6 +31,7 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   Templates Dynamiques : templates en base (icône/desc/tags) + runtime-configs pour piloter l’affichage aux étudiants.
 *   Terminal Web intégré (sans SSH) : terminal in-browser vers un pod, avec Xterm.js (fit/attach/webgl), resize dynamique, keepalive, faible latence. Accès DB pods restreint pour les étudiants.
 *   Stack LAMP clé en main : Apache+PHP, MySQL, phpMyAdmin avec plusieurs URLs dans les détails de déploiement; index.php par défaut stylé UPPA; web non-root et capacités minimales.
+*   Volumes persistants gérés par l’utilisateur : création automatique lors du premier lancement VS Code/Jupyter, réutilisation et suppression directe depuis le dashboard, labels de propriété stricts pour sécuriser les réutilisations.
 *   Persistance « best-effort » : montages PVC pour VS Code, Jupyter et le web LAMP (fallback en emptyDir si StorageClass indisponible). MariaDB/WordPress DB en PVC 1Gi par défaut.
 
 Voir aussi:
@@ -324,6 +325,16 @@ Restrictions de sécurité:
 - Les conteneurs web (ex. LAMP) tournent en non-root, capabilities minimales, seccomp=RuntimeDefault.
 
 Voir la doc: documentation/terminal.md
+
+### Volumes persistants réutilisables
+
+Les environnements VS Code et Jupyter créent automatiquement un volume persistant (PVC) lors du premier lancement. Ce volume peut maintenant être géré directement depuis le tableau de bord:
+
+- **Lister et inspecter** : la carte « Vos volumes persistants » affiche le statut, la taille et la dernière application associée à chaque PVC. Les données sont mises en cache et rafraîchies via un bouton dédié.
+- **Réutiliser lors d’un lancement** : dans le formulaire de configuration, une sélection « Volume persistant » apparaît pour VS Code/Jupyter. Choisissez un PVC existant pour retrouver instantanément vos fichiers; laissez le champ vide pour créer un nouveau volume.
+- **Supprimer proprement** : la carte permet de supprimer un volume inutilisé. Si le PVC est encore « Bound », une confirmation supplémentaire vous propose d’utiliser le mode `force=true`.
+
+Les PVC sont étiquetés avec `managed-by=labondemand` et `user-id=<id>`; ces labels sont vérifiés côté API afin d’empêcher qu’un étudiant réutilise le stockage d’autrui. Un StorageClass par défaut reste nécessaire pour bénéficier de la persistance.
 ### Sessions (Redis)
 
 Par défaut en développement, un service Redis local est démarré via `compose.yaml` et l'API l'utilise pour stocker les sessions.

@@ -211,6 +211,22 @@ main {
     background-color: #d3d9de;
 }
 
+.btn-sm {
+    padding: 6px 14px;
+    font-size: 0.85rem;
+}
+
+.btn-ghost {
+    background: transparent;
+    border: 1px solid var(--grey-border);
+    color: var(--labondemand-blue);
+}
+
+.btn-ghost:hover {
+    border-color: var(--labondemand-blue);
+    background-color: rgba(0, 58, 112, 0.06);
+}
+
 .btn-danger {
      background-color: var(--error-color);
      color: var(--text-light);
@@ -255,6 +271,99 @@ main {
 #active-labs-list.card-grid {
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 20px;
+}
+
+.pvc-card {
+    margin-top: 20px;
+}
+
+.pvc-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.pvc-card-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.pvc-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.pvc-item {
+    border: 1px solid var(--grey-border);
+    border-radius: var(--border-radius);
+    padding: 12px 16px;
+    background-color: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.pvc-item h4 {
+    margin: 0 0 6px 0;
+    color: var(--labondemand-blue);
+    font-size: 1.05rem;
+}
+
+.pvc-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.9rem;
+    color: #444;
+}
+
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.75rem;
+    background-color: var(--grey-bg);
+    color: var(--text-dark);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.status-pill.ready {
+    background-color: rgba(40, 167, 69, 0.16);
+    color: var(--success-color);
+}
+
+.status-pill.bound {
+    background-color: rgba(23, 162, 184, 0.16);
+    color: #17a2b8;
+}
+
+.status-pill.released {
+    background-color: rgba(255, 193, 7, 0.2);
+    color: var(--warning-color);
+}
+
+.pvc-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.pvc-hint {
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: #555;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 /* Toolbar catalogue */

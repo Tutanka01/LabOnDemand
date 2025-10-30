@@ -38,6 +38,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const novncFrame = document.getElementById('novnc-frame');
     const novncStatusBanner = document.getElementById('novnc-status');
     const novncCredentialsBox = document.getElementById('novnc-credentials');
+    const pvcListContainer = document.getElementById('pvc-list');
+    const refreshPvcsBtn = document.getElementById('refresh-pvcs');
+    const pvcSelectGroup = document.getElementById('persistent-volume-group');
+    const existingPvcSelect = document.getElementById('existing-pvc-select');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -49,6 +53,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let labCounter = 0;
     const novncEndpoints = new Map();
     let lastLaunchedDeployment = null;
+    let cachedPvcs = [];
+    let pvcsLastFetched = 0;
 
     // --- UI: Toggle section Kubernetes ---
     if (k8sSectionToggle && k8sResources) {
@@ -164,6 +170,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         setInterval(() => { refreshQuotas(); }, 45000);
     }
 
+    if (refreshPvcsBtn) {
+        refreshPvcsBtn.addEventListener('click', async () => {
+            try {
+                await refreshPvcs({ render: true, force: true });
+                populatePvcSelect(deploymentTypeInput.value);
+            } catch (e) {
+                console.warn('Refresh PVCs failed', e);
+            }
+        });
+    }
+
     function escapeHtml(str) {
         if (typeof str !== 'string') return str;
         return str
@@ -174,6 +191,154 @@ document.addEventListener('DOMContentLoaded', async () => {
             .replace(/'/g, '&#39;');
     }
 
+    function mapPhaseToClass(phase) {
+        const value = (phase || '').toLowerCase();
+        if (value === 'bound') return 'bound';
+        if (value === 'available') return 'ready';
+        if (value === 'released') return 'released';
+        return '';
+    }
+
+    function formatIsoDateShort(iso) {
+        if (!iso) return 'Date inconnue';
+        try {
+            const date = new Date(iso);
+            if (Number.isNaN(date.getTime())) return iso;
+            return date.toLocaleString();
+        } catch {
+            return iso;
+        }
+    }
+
+    async function fetchUserPvcs() {
+        const resp = await fetch(`${API_V1}/k8s/pvcs`, { credentials: 'include' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            const detail = err.detail || 'Impossible de récupérer les volumes persistants';
+            throw new Error(detail);
+        }
+        return resp.json();
+    }
+
+    function renderPvcList(items) {
+        if (!pvcListContainer) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            pvcListContainer.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-database"></i> Aucun volume persistant. Lancez VS Code ou Jupyter pour en créer un.
+                </div>`;
+            return;
+        }
+
+        pvcListContainer.innerHTML = '';
+        items.forEach(pvc => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'pvc-item';
+
+            const left = document.createElement('div');
+            left.className = 'pvc-meta';
+            const phase = pvc.phase || 'Inconnu';
+            const phaseClass = mapPhaseToClass(phase);
+            const statusHtml = `<span class="status-pill ${phaseClass}">${escapeHtml(phase)}</span>`;
+            const storage = pvc.storage || 'Taille inconnue';
+            const access = (pvc.access_modes && pvc.access_modes.length) ? pvc.access_modes.join(', ') : 'n/a';
+            const lastApp = pvc.last_bound_app || pvc.app_type || 'n/a';
+
+            left.innerHTML = `
+                <h4><i class="fas fa-hdd"></i> ${escapeHtml(pvc.name)}</h4>
+                <div>${statusHtml}</div>
+                <div><i class="fas fa-database"></i> ${escapeHtml(storage)} - Modes: ${escapeHtml(access)}</div>
+                <div><i class="fas fa-code-branch"></i> Dernière application: ${escapeHtml(lastApp)}</div>
+                <div><i class="fas fa-clock"></i> ${escapeHtml(formatIsoDateShort(pvc.created_at))}</div>
+            `;
+
+            const actions = document.createElement('div');
+            actions.className = 'pvc-actions';
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-danger btn-sm';
+            deleteBtn.innerHTML = '<i class="fas fa-trash"></i> Supprimer';
+            deleteBtn.addEventListener('click', () => handlePvcDelete(pvc));
+
+            actions.appendChild(deleteBtn);
+
+            wrapper.appendChild(left);
+            wrapper.appendChild(actions);
+            pvcListContainer.appendChild(wrapper);
+        });
+    }
+
+    async function refreshPvcs(options = {}) {
+        const { render = true, force = false } = options;
+        if (!force && cachedPvcs.length && Date.now() - pvcsLastFetched < 60000) {
+            if (render) renderPvcList(cachedPvcs);
+            return cachedPvcs;
+        }
+
+        if (pvcListContainer && render) {
+            pvcListContainer.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+        }
+
+        try {
+            const data = await fetchUserPvcs();
+            cachedPvcs = data.items || [];
+            pvcsLastFetched = Date.now();
+            if (render) renderPvcList(cachedPvcs);
+            return cachedPvcs;
+        } catch (error) {
+            if (pvcListContainer && render) {
+                pvcListContainer.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
+            }
+            throw error;
+        }
+    }
+
+    function populatePvcSelect(deploymentType) {
+        if (!pvcSelectGroup || !existingPvcSelect) return;
+        const supported = ['vscode', 'jupyter'];
+        if (!supported.includes(deploymentType)) {
+            pvcSelectGroup.style.display = 'none';
+            existingPvcSelect.value = '';
+            return;
+        }
+
+        pvcSelectGroup.style.display = 'block';
+        existingPvcSelect.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Créer un nouveau volume';
+        existingPvcSelect.appendChild(defaultOption);
+
+        cachedPvcs.forEach(pvc => {
+            const option = document.createElement('option');
+            option.value = pvc.name;
+            const storage = pvc.storage || 'taille inconnue';
+            const suffix = pvc.bound ? ' (attaché)' : '';
+            option.textContent = `${pvc.name} - ${storage}${suffix}`;
+            existingPvcSelect.appendChild(option);
+        });
+    }
+
+    async function handlePvcDelete(pvc) {
+        const encodedName = encodeURIComponent(pvc.name);
+        const boundMessage = pvc.bound ? '\nLe volume est encore attaché. Supprimer quand même ?' : '';
+        if (!confirm(`Supprimer le volume "${pvc.name}" ?${boundMessage}`)) return;
+        const forceParam = pvc.bound ? '?force=true' : '';
+        try {
+            const resp = await fetch(`${API_V1}/k8s/pvcs/${encodedName}${forceParam}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Suppression impossible');
+            }
+            await refreshPvcs({ render: true, force: true });
+            populatePvcSelect(deploymentTypeInput.value);
+        } catch (error) {
+            alert(`Erreur lors de la suppression du volume: ${error.message}`);
+        }
+    }
     function renderServicePortsSummary(portsDetails, serviceType) {
         if (!Array.isArray(portsDetails) || portsDetails.length === 0) return '';
         const items = portsDetails.map(detail => {
@@ -1277,7 +1442,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // --- Service Selection (dynamique) ---
     function bindServiceCard(card) {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', async () => {
             const serviceName = card.getAttribute('data-service');
             const serviceIcon = card.getAttribute('data-icon');
             const deploymentType = card.getAttribute('data-deployment-type');
@@ -1296,6 +1461,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Reset form (optional)
             configForm.reset();
+            if (existingPvcSelect) {
+                existingPvcSelect.value = '';
+            }
 
             // Affichage des options selon le type de service
             jupyterOptions.style.display = (deploymentType === 'jupyter') ? 'block' : 'none';
@@ -1318,6 +1486,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Rétablir le nom par défaut (après reset)
             document.getElementById('deployment-name').value = deploymentName.value;
+
+            try {
+                if (['vscode', 'jupyter'].includes(deploymentType)) {
+                    await refreshPvcs({ render: true });
+                }
+            } catch (error) {
+                console.warn('Impossible de rafraîchir les PVC avant configuration:', error);
+            }
+            populatePvcSelect(deploymentType);
 
             showView('config-view');
 
@@ -1676,6 +1853,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     memory_request: memoryRequest,
                     memory_limit: memoryLimit
                 });
+
+                if ((deploymentType === 'vscode' || deploymentType === 'jupyter') && existingPvcSelect && existingPvcSelect.value) {
+                    params.append('existing_pvc_name', existingPvcSelect.value);
+                }
                 
                 // Appel API pour créer le déploiement
                 const response = await fetch(`${API_V1}/k8s/deployments?${params.toString()}`, {
@@ -1851,6 +2032,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         password: connectionHints.novnc.password,
                     } : undefined
                 });
+
+                try {
+                    await refreshPvcs({ render: true, force: true });
+                } catch (error) {
+                    console.warn('Impossible de rafraîchir les PVC après création:', error);
+                }
 
                 // Mettre à jour la liste des déploiements
                 fetchAndRenderDeployments();
@@ -2319,6 +2506,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     
                     // Mettre à jour la liste des déploiements
                     fetchAndRenderDeployments();
+                    try {
+                        await refreshPvcs({ render: true, force: true });
+                        populatePvcSelect(deploymentTypeInput.value);
+                    } catch (error) {
+                        console.warn('Impossible de rafraîchir les PVC après arrêt:', error);
+                    }
                     
                     // Afficher le message "aucun lab" si nécessaire
                     if (activeLabsList.children.length === 0 || (activeLabsList.children.length === 1 && activeLabsList.children[0].classList.contains('no-labs-message'))) {
@@ -2374,6 +2567,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         
     initUserInfo();
     if (quotasContent) { refreshQuotas(); }
+    try {
+        await refreshPvcs({ render: true, force: true });
+    } catch (error) {
+        console.warn('Impossible de charger les PVC au démarrage:', error);
+    }
     // Charger le catalogue dynamiquement
     await loadTemplates();
         // Vérifier la connexion à l'API

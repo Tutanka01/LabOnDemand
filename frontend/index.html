@@ -56,6 +56,17 @@
                 <div id="quotas-content" class="quotas-content">Chargement...</div>
             </div>
 
+            <div class="card pvc-card" id="pvc-card">
+                <div class="pvc-card-header">
+                    <h2><i class="fas fa-hdd"></i> Vos volumes persistants</h2>
+                    <div class="pvc-card-actions">
+                        <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                    </div>
+                </div>
+                <div id="pvc-list" class="pvc-list">Chargement...</div>
+                <p class="pvc-hint"><i class="fas fa-info-circle"></i> Réutilisez un volume existant lors du lancement de VS Code ou Jupyter pour conserver vos fichiers.</p>
+            </div>
+
             <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
             <div id="active-labs-list" class="card-grid">
                 <!-- Les labs actifs seront ajoutés ici par JS -->
@@ -209,6 +220,14 @@
                         <label><input type="checkbox" name="dataset" value="Projet_Stats"> Données Projet Stats</label>
                         <label><input type="checkbox" name="dataset" value="Demo_Images"> Images Démo</label>
                     </div>
+                </div>
+
+                <div class="form-group" id="persistent-volume-group" style="display: none;">
+                    <label for="existing-pvc-select"><i class="fas fa-hdd"></i> Volume persistant</label>
+                    <select id="existing-pvc-select">
+                        <option value="">Créer un nouveau volume</option>
+                    </select>
+                    <small>Réutilisez un volume existant pour retrouver vos fichiers.</small>
                 </div>
 
                 <div class="form-actions">

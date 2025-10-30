@@ -3,7 +3,7 @@ Schémas Pydantic pour LabOnDemand
 Principe KISS : Uniquement les schémas utilisés
 """
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
 
@@ -138,3 +138,25 @@ class RuntimeConfigResponse(RuntimeConfigBase):
 
     class Config:
         from_attributes = True
+
+
+# ====== Persistent Volumes ======
+class PVCInfo(BaseModel):
+    name: str
+    namespace: str
+    phase: Optional[str] = None
+    storage: Optional[str] = None
+    access_modes: List[str] = []
+    storage_class: Optional[str] = None
+    volume_name: Optional[str] = None
+    managed_by: Optional[str] = None
+    app_type: Optional[str] = None
+    last_bound_app: Optional[str] = None
+    created_at: Optional[str] = None
+    bound: bool = False
+    labels: Dict[str, str] = {}
+    annotations: Dict[str, str] = {}
+
+
+class PVCListResponse(BaseModel):
+    items: List[PVCInfo]

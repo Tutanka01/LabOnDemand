@@ -53,6 +53,12 @@ Docs: voir documentation/lamp.md et documentation/terminal.md
 4. Cliquez sur « Ouvrir dans la page » pour lancer NetBeans directement dans une fenêtre intégrée au tableau de bord.
 5. Besoin d’un accès alternatif ? Le lien NoVNC externe et les NodePorts restent disponibles pour ouvrir la session dans un nouvel onglet ou via un client VNC classique (port 5901) avec les mêmes identifiants.
 
+### 7. Réutiliser un volume persistant VS Code/Jupyter
+1. Depuis le dashboard, cliquez sur « Rafraîchir » dans la carte « Vos volumes persistants » pour charger la liste.
+2. Lors d’un nouveau lancement VS Code ou Jupyter, choisissez le PVC souhaité dans la liste déroulante « Volume persistant » (ou laissez vide pour créer un nouveau volume).
+3. Après l’arrêt d’un environnement, revenez sur la carte pour supprimer les volumes dont vous n’avez plus besoin; un volume encore `Bound` demandera une confirmation forcée.
+4. Les volumes réutilisables sont préfixés avec des labels LabOnDemand (`managed-by=labondemand`, `user-id=<id>`); si la StorageClass par défaut est absente, la sélection reste disponible mais le déploiement basculera en `emptyDir`.
+
 ## 🔧 Scripts utiles
 
 ### Test de connexion
