@@ -81,17 +81,6 @@
                     <div id="quotas-content" class="quotas-content">Chargement...</div>
                 </div>
 
-                <div class="card glass-card pvc-card" id="pvc-card">
-                    <div class="pvc-card-header">
-                        <h2><i class="fas fa-hdd"></i> Vos volumes persistants</h2>
-                        <div class="pvc-card-actions">
-                            <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
-                        </div>
-                    </div>
-                    <div id="pvc-list" class="pvc-list">Chargement...</div>
-                    <p class="pvc-hint"><i class="fas fa-info-circle"></i> Sélectionnez un volume lors du lancement VS Code ou Jupyter pour retrouver vos fichiers instantanément.</p>
-                </div>
-
                 <div class="card glass-card tips-card">
                     <h2><i class="fas fa-lightbulb"></i> Astuces express</h2>
                     <ul class="tips-list">
@@ -99,6 +88,24 @@
                         <li><i class="fas fa-database"></i> Renommez vos déploiements pour identifier facilement les volumes associés.</li>
                         <li><i class="fas fa-shield-alt"></i> Les volumes LabOnDemand sont isolés par utilisateur et vérifiés côté API.</li>
                     </ul>
+                </div>
+
+                <div class="card glass-card pvc-quick-card" id="pvc-quick-card">
+                    <h2><i class="fas fa-hdd"></i> Volumes persistants</h2>
+                    <div class="pvc-quick-stats">
+                        <div class="pvc-stat-item">
+                            <span class="pvc-stat-value" id="pvc-stat-total">—</span>
+                            <span class="pvc-stat-label">Total</span>
+                        </div>
+                        <div class="pvc-stat-item">
+                            <span class="pvc-stat-value bound" id="pvc-stat-bound">—</span>
+                            <span class="pvc-stat-label">Attachés</span>
+                        </div>
+                    </div>
+                    <button id="show-pvc-panel-btn" class="btn btn-secondary btn-block">
+                        <i class="fas fa-list"></i> Voir tous les volumes
+                    </button>
+                    <p class="pvc-hint"><i class="fas fa-info-circle"></i> Sélectionnez un volume lors du lancement VS Code ou Jupyter.</p>
                 </div>
             </div>
 
@@ -112,6 +119,20 @@
                 <!-- Les labs actifs seront ajoutés ici par JS -->
                 <div class="no-labs-message">
                     <i class="fas fa-info-circle"></i> Vous n'avez aucune application active pour le moment.
+                </div>
+            </div>
+
+            <!-- Section PVC détaillée déplaçable en bas -->
+            <div class="collapsible-section pvc-section">
+                <div class="collapsible-header" id="pvc-section-toggle">
+                    <h2><i class="fas fa-hdd"></i> Mes volumes persistants</h2>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div id="pvc-resources" class="collapsible-content">
+                    <div class="pvc-panel-actions">
+                        <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                    </div>
+                    <div id="pvc-list" class="pvc-list">Chargement...</div>
                 </div>
             </div>
             

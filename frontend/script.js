@@ -50,6 +50,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const adminPvcsPanel = document.getElementById('admin-pvc-panel');
     const adminPvcsList = document.getElementById('admin-pvcs-list');
     const refreshAdminPvcsBtn = document.getElementById('refresh-admin-pvcs');
+    const pvcSectionToggle = document.getElementById('pvc-section-toggle');
+    const pvcResources = document.getElementById('pvc-resources');
+    const showPvcPanelBtn = document.getElementById('show-pvc-panel-btn');
+    const pvcStatTotal = document.getElementById('pvc-stat-total');
+    const pvcStatBound = document.getElementById('pvc-stat-bound');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -72,6 +77,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         k8sSectionToggle.addEventListener('click', () => {
             k8sSectionToggle.classList.toggle('active');
             k8sResources.classList.toggle('active');
+        });
+    }
+
+    // --- UI: Toggle section PVC détaillée ---
+    if (pvcSectionToggle && pvcResources) {
+        pvcSectionToggle.addEventListener('click', () => {
+            pvcSectionToggle.classList.toggle('active');
+            pvcResources.classList.toggle('active');
+        });
+    }
+
+    // --- UI: Show PVC panel button ---
+    if (showPvcPanelBtn && pvcSectionToggle) {
+        showPvcPanelBtn.addEventListener('click', () => {
+            pvcSectionToggle.classList.add('active');
+            pvcResources.classList.add('active');
+            pvcSectionToggle.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     }
 
@@ -287,6 +309,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             const remaining = lastQuotaData && lastQuotaData.remaining ? lastQuotaData.remaining.apps : null;
             statQuotaAppsEl.textContent = typeof remaining === 'number' ? String(Math.max(remaining, 0)) : '—';
         }
+
+        // Update PVC quick stats
+        if (pvcStatTotal) {
+            pvcStatTotal.textContent = String(cachedPvcs.length);
+        }
+        if (pvcStatBound) {
+            const boundCount = cachedPvcs.filter(pvc => pvc.bound || (pvc.phase && pvc.phase.toLowerCase() === 'bound')).length;
+            pvcStatBound.textContent = String(boundCount);
+        }
     }
 
     updateDashboardStats();
@@ -322,7 +353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
                 <tr data-pvc-name="${escapeHtml(pvc.name)}">
                     <td>
-                        <div class="cell-main">${escapeHtml(pvc.name)}</div>
+                        <div class="cell-main" title="${escapeHtml(pvc.name)}">${escapeHtml(pvc.name)}</div>
                         <div class="cell-meta">
                             <span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>
                             <span class="badge-soft muted"><i class="fas fa-share-alt"></i> ${escapeHtml(access)}</span>
@@ -398,7 +429,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return `
                 <tr>
                     <td>
-                        <div class="cell-main">${escapeHtml(pvc.name)}</div>
+                        <div class="cell-main" title="${escapeHtml(pvc.name)}">${escapeHtml(pvc.name)}</div>
                         <span class="cell-sub">${namespaceBadge}</span>
                     </td>
                     <td>${escapeHtml(storage)}</td>
