@@ -111,6 +111,35 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Fermer les modales en cliquant à l'extérieur
+    if (userModal) {
+        userModal.addEventListener('click', (e) => {
+            if (e.target === userModal) {
+                userModal.classList.remove('show');
+            }
+        });
+    }
+
+    if (deleteModal) {
+        deleteModal.addEventListener('click', (e) => {
+            if (e.target === deleteModal) {
+                deleteModal.classList.remove('show');
+            }
+        });
+    }
+
+    // Fermer les modales avec la touche Échap
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (userModal && userModal.classList.contains('show')) {
+                userModal.classList.remove('show');
+            }
+            if (deleteModal && deleteModal.classList.contains('show')) {
+                deleteModal.classList.remove('show');
+            }
+        }
+    });
+
     // Fonctions
 
     // Vérifier si l'utilisateur a les droits d'administration

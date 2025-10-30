@@ -39,38 +39,123 @@
     <main class="container">
         <!-- Section Dashboard Principal -->
         <section id="dashboard-view" class="view active-view">
-            <h1><i class="fas fa-tachometer-alt"></i> Votre Tableau de Bord</h1>
-            <p class="subtitle">Gérez vos applications actives et lancez de nouvelles applications.</p>
-
-            <div class="actions">
-                <button id="show-launch-view-btn" class="btn btn-primary">
-                    <i class="fas fa-plus-circle"></i> Lancer une Nouvelle Application
-                </button>
-            </div>
-
-            <div class="card quotas-card" id="my-quotas-card">
-                <div class="quotas-header">
-                    <h2><i class="fas fa-gauge-high"></i> Vos ressources</h2>
-                    <button id="refresh-quotas" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+            <div class="dashboard-hero">
+                <div class="hero-left">
+                    <h1>Laboratoires prêts en un clic</h1>
+                    <p class="hero-subtitle">Pilotez vos environnements Kubernetes, retrouvez vos fichiers et gardez une vue claire sur vos ressources.</p>
+                    <div class="hero-actions">
+                        <button id="show-launch-view-btn" class="btn btn-primary btn-hero">
+                            <i class="fas fa-plus-circle"></i> Lancer une application
+                        </button>
+                        <button id="refresh-dashboard" class="btn btn-ghost btn-hero">
+                            <i class="fas fa-sync-alt"></i> Rafraîchir le tableau
+                        </button>
+                    </div>
                 </div>
-                <div id="quotas-content" class="quotas-content">Chargement...</div>
+                <div class="hero-stats">
+                    <div class="hero-stat">
+                        <span class="stat-label">Apps actives</span>
+                        <span class="stat-value" id="stat-active-apps">0</span>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="stat-label">Apps prêtes</span>
+                        <span class="stat-value" id="stat-ready-apps">0</span>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="stat-label">Volumes gérés</span>
+                        <span class="stat-value" id="stat-persistent-volumes">0</span>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="stat-label">Apps restantes</span>
+                        <span class="stat-value" id="stat-quota-apps">—</span>
+                    </div>
+                </div>
             </div>
 
-            <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
-            <div id="active-labs-list" class="card-grid">
+            <div class="dashboard-cards-compact">
+                <div class="compact-card quotas-compact" id="my-quotas-card">
+                    <div class="compact-card-header">
+                        <h3><i class="fas fa-gauge-high"></i> Vos ressources</h3>
+                        <button id="refresh-quotas" class="btn-icon-refresh" title="Rafraîchir"><i class="fas fa-sync-alt"></i></button>
+                    </div>
+                    <div id="quotas-content" class="quotas-content-compact">Chargement...</div>
+                </div>
+
+                <div class="compact-card pvc-compact">
+                    <div class="compact-card-header">
+                        <h3><i class="fas fa-hdd"></i> Volumes</h3>
+                    </div>
+                    <div class="compact-stats-grid">
+                        <div class="stat-compact">
+                            <span class="stat-compact-value" id="pvc-stat-total">—</span>
+                            <span class="stat-compact-label">Total</span>
+                        </div>
+                        <div class="stat-compact bound">
+                            <span class="stat-compact-value" id="pvc-stat-bound">—</span>
+                            <span class="stat-compact-label">Attachés</span>
+                        </div>
+                    </div>
+                    <button id="show-pvc-panel-btn" class="btn-compact">
+                        <i class="fas fa-list"></i> Détails
+                    </button>
+                </div>
+
+                <div class="compact-card tips-compact">
+                    <div class="compact-card-header">
+                        <h3><i class="fas fa-lightbulb"></i> Conseils</h3>
+                    </div>
+                    <ul class="tips-compact-list">
+                        <li><i class="fas fa-rotate"></i> <span>Rafraîchissez pour voir les mises à jour</span></li>
+                        <li><i class="fas fa-database"></i> <span>Nommez vos apps pour retrouver vos volumes</span></li>
+                        <li><i class="fas fa-shield-alt"></i> <span>Vos volumes sont isolés et sécurisés</span></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="section-heading">
+                <div>
+                    <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
+                    <p class="section-subtitle">Surveillez l’état de vos laboratoires en direct et accédez-y en un clic.</p>
+                </div>
+            </div>
+            <div id="active-labs-list" class="card-grid lab-grid">
                 <!-- Les labs actifs seront ajoutés ici par JS -->
                 <div class="no-labs-message">
                     <i class="fas fa-info-circle"></i> Vous n'avez aucune application active pour le moment.
                 </div>
             </div>
+
+            <!-- Section PVC détaillée (visible par défaut pour les étudiants) -->
+            <div class="collapsible-section pvc-section">
+                <div class="collapsible-header active" id="pvc-section-toggle">
+                    <h2><i class="fas fa-hdd"></i> Mes volumes persistants</h2>
+                    <i class="fas fa-chevron-down toggle-icon"></i>
+                </div>
+                <div id="pvc-resources" class="collapsible-content active">
+                    <div class="pvc-panel-actions">
+                        <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                    </div>
+                    <div id="pvc-list" class="pvc-list">Chargement...</div>
+                </div>
+            </div>
             
-            <!-- Section pour les listes Kubernetes (masquée par défaut) -->
-            <div class="collapsible-section">
+            <!-- Section pour les listes Kubernetes (masquée par défaut, réservée aux admins) -->
+            <div class="collapsible-section k8s-admin-only" style="display: none;">
                 <div class="collapsible-header" id="k8s-section-toggle">
                     <h2><i class="fas fa-server"></i> Informations Kubernetes</h2>
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div id="k8s-resources" class="collapsible-content k8s-section">
+                    <div class="k8s-resource-panel" id="admin-pvc-panel">
+                        <div class="panel-header">
+                            <h3><i class="fas fa-database"></i> Volumes persistants (LabOnDemand)</h3>
+                            <div class="action-buttons">
+                                <button id="refresh-admin-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+                            </div>
+                        </div>
+                        <div id="admin-pvcs-list">Chargement...</div>
+                    </div>
+
                     <div class="k8s-resource-panel">
                         <h3><i class="fas fa-project-diagram"></i> Namespaces</h3>
                         <div id="namespaces-list">Chargement...</div>
@@ -209,6 +294,14 @@
                         <label><input type="checkbox" name="dataset" value="Projet_Stats"> Données Projet Stats</label>
                         <label><input type="checkbox" name="dataset" value="Demo_Images"> Images Démo</label>
                     </div>
+                </div>
+
+                <div class="form-group" id="persistent-volume-group" style="display: none;">
+                    <label for="existing-pvc-select"><i class="fas fa-hdd"></i> Volume persistant</label>
+                    <select id="existing-pvc-select">
+                        <option value="">Créer un nouveau volume</option>
+                    </select>
+                    <small>Réutilisez un volume existant pour retrouver vos fichiers.</small>
                 </div>
 
                 <div class="form-actions">

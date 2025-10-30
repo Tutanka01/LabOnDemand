@@ -370,6 +370,28 @@ class DeploymentService:
                 detail="Quota Kubernetes dépassé: " + "; ".join(violations),
             )
 
+    def _validate_existing_pvc(
+        self,
+        namespace: str,
+        pvc_name: str,
+        current_user: User,
+    ) -> client.V1PersistentVolumeClaim:
+        """S'assure qu'un PVC existe et appartient bien à l'utilisateur courant."""
+        pvc_name = validate_k8s_name(pvc_name)
+        try:
+            pvc = self.core_v1.read_namespaced_persistent_volume_claim(pvc_name, namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                raise HTTPException(status_code=404, detail=f"Volume persistant '{pvc_name}' introuvable")
+            raise
+
+        labels = pvc.metadata.labels or {}
+        if current_user.role == UserRole.student:
+            if labels.get("managed-by") != "labondemand" or labels.get("user-id") != str(current_user.id):
+                raise HTTPException(status_code=403, detail="Accès refusé à ce volume")
+
+        return pvc
+
     def get_user_quota_summary(self, current_user: User) -> Dict[str, Any]:
         role_val = getattr(current_user.role, "value", str(current_user.role))
         limits = get_role_limits(str(role_val))
@@ -536,7 +558,9 @@ class DeploymentService:
         memory_request: str,
         memory_limit: str,
         additional_labels: Optional[Dict[str, str]],
-        current_user: User
+        current_user: User,
+        storage_mode: str = "auto",
+        existing_pvc_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Méthode principale pour créer un déploiement
@@ -852,21 +876,67 @@ class DeploymentService:
             # Persistance best-effort pour VSCode/Jupyter
             if deployment_type in {"vscode", "jupyter"}:
                 pvc_name = f"{name}-pvc"
-                pvc_manifest = {
-                    "apiVersion": "v1",
-                    "kind": "PersistentVolumeClaim",
-                    "metadata": {"name": pvc_name, "labels": labels},
-                    "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "2Gi"}}},
-                }
                 use_pvc = True
-                try:
-                    self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
-                except client.exceptions.ApiException as e:
-                    msg = (getattr(e, "body", "") or "").lower()
-                    if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
-                        use_pvc = False
-                    else:
-                        raise
+                pvc_obj: Optional[client.V1PersistentVolumeClaim] = None
+                # Permettre la réutilisation d'un PVC existant lorsqu'un nom identique est fourni
+                if existing_pvc_name:
+                    pvc_obj = self._validate_existing_pvc(effective_namespace, existing_pvc_name, current_user)
+                    pvc_name = pvc_obj.metadata.name
+                else:
+                    pvc_labels = dict(labels)
+                    pvc_labels["labondemand/last-bound-app"] = name
+                    pvc_manifest = {
+                        "apiVersion": "v1",
+                        "kind": "PersistentVolumeClaim",
+                        "metadata": {"name": pvc_name, "labels": pvc_labels},
+                        "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "2Gi"}}},
+                    }
+                    try:
+                        self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+                    except client.exceptions.ApiException as e:
+                        msg = (getattr(e, "body", "") or "").lower()
+                        if e.status == 409:
+                            # Collision de nom: réutiliser le PVC existant après validation
+                            pvc_obj = self._validate_existing_pvc(effective_namespace, pvc_name, current_user)
+                            pvc_name = pvc_obj.metadata.name
+                        elif e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
+                            use_pvc = False
+                        else:
+                            raise
+
+                if use_pvc:
+                    if pvc_obj is None:
+                        try:
+                            pvc_obj = self.core_v1.read_namespaced_persistent_volume_claim(pvc_name, effective_namespace)
+                        except Exception:
+                            pvc_obj = None
+
+                    if pvc_obj is not None:
+                        merged_labels = dict(pvc_obj.metadata.labels or {})
+                        merged_labels.update({
+                            "managed-by": "labondemand",
+                            "user-id": str(current_user.id),
+                            "user-role": current_user.role.value,
+                            "app-type": deployment_type,
+                            "labondemand/last-bound-app": name,
+                        })
+                        try:
+                            self.core_v1.patch_namespaced_persistent_volume_claim(
+                                pvc_name,
+                                effective_namespace,
+                                {"metadata": {"labels": merged_labels}},
+                            )
+                        except Exception:
+                            logger.warning(
+                                "deployment_pvc_label_update_failed",
+                                extra={
+                                    "extra_fields": {
+                                        "pvc_name": pvc_name,
+                                        "namespace": effective_namespace,
+                                        "deployment": name,
+                                    }
+                                },
+                            )
 
                 # Monter sur chemin de travail usuel
                 mount_path = "/home/jovyan/work" if deployment_type == "jupyter" else "/home/coder/project"

@@ -38,6 +38,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     const novncFrame = document.getElementById('novnc-frame');
     const novncStatusBanner = document.getElementById('novnc-status');
     const novncCredentialsBox = document.getElementById('novnc-credentials');
+    const pvcListContainer = document.getElementById('pvc-list');
+    const refreshPvcsBtn = document.getElementById('refresh-pvcs');
+    const pvcSelectGroup = document.getElementById('persistent-volume-group');
+    const existingPvcSelect = document.getElementById('existing-pvc-select');
+    const refreshDashboardBtn = document.getElementById('refresh-dashboard');
+    const statActiveAppsEl = document.getElementById('stat-active-apps');
+    const statReadyAppsEl = document.getElementById('stat-ready-apps');
+    const statPvcsEl = document.getElementById('stat-persistent-volumes');
+    const statQuotaAppsEl = document.getElementById('stat-quota-apps');
+    const adminPvcsPanel = document.getElementById('admin-pvc-panel');
+    const adminPvcsList = document.getElementById('admin-pvcs-list');
+    const refreshAdminPvcsBtn = document.getElementById('refresh-admin-pvcs');
+    const pvcSectionToggle = document.getElementById('pvc-section-toggle');
+    const pvcResources = document.getElementById('pvc-resources');
+    const showPvcPanelBtn = document.getElementById('show-pvc-panel-btn');
+    const pvcStatTotal = document.getElementById('pvc-stat-total');
+    const pvcStatBound = document.getElementById('pvc-stat-bound');
 
     // URL de base de l'API (à adapter selon votre configuration)
     const API_BASE_URL = ''; // Vide pour les requêtes relatives
@@ -49,12 +66,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     let labCounter = 0;
     const novncEndpoints = new Map();
     let lastLaunchedDeployment = null;
+    let cachedPvcs = [];
+    let pvcsLastFetched = 0;
+    let cachedAdminPvcs = [];
+    let adminPvcsLastFetched = 0;
+    let lastQuotaData = null;
 
     // --- UI: Toggle section Kubernetes ---
     if (k8sSectionToggle && k8sResources) {
         k8sSectionToggle.addEventListener('click', () => {
             k8sSectionToggle.classList.toggle('active');
             k8sResources.classList.toggle('active');
+        });
+    }
+
+    // --- UI: Toggle section PVC détaillée ---
+    if (pvcSectionToggle && pvcResources) {
+        pvcSectionToggle.addEventListener('click', () => {
+            pvcSectionToggle.classList.toggle('active');
+            pvcResources.classList.toggle('active');
+        });
+    }
+
+    // --- UI: Show PVC panel button ---
+    if (showPvcPanelBtn && pvcSectionToggle) {
+        showPvcPanelBtn.addEventListener('click', () => {
+            pvcSectionToggle.classList.add('active');
+            pvcResources.classList.add('active');
+            pvcSectionToggle.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     }
 
@@ -81,12 +120,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Adapter l'UI selon le rôle: masquer la section K8s pour les étudiants
-        const k8sSection = document.querySelector('.collapsible-section');
+        const k8sSection = document.querySelector('.k8s-admin-only');
         if (k8sSection) {
             if (authManager.isAdmin() || authManager.isTeacher()) {
                 k8sSection.style.display = 'block';
             } else {
                 k8sSection.style.display = 'none';
+                if (k8sSectionToggle && k8sResources) {
+                    k8sSectionToggle.classList.remove('active');
+                    k8sResources.classList.remove('active');
+                }
+            }
+        }
+
+        // Assurer que la section PVC reste visible pour tous les rôles
+        const pvcSection = document.querySelector('.pvc-section');
+        if (pvcSection) {
+            pvcSection.style.display = 'block';
+        }
+
+        if (pvcSectionToggle && pvcResources) {
+            pvcSectionToggle.classList.add('active');
+            pvcResources.classList.add('active');
+        }
+
+        if (adminPvcsPanel) {
+            if (authManager.isAdmin() || authManager.isTeacher()) {
+                adminPvcsPanel.style.display = '';
+            } else {
+                adminPvcsPanel.style.display = 'none';
             }
         }
     }
@@ -132,9 +194,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function barClass(p) { return p < 70 ? 'pb-green' : (p < 90 ? 'pb-amber' : 'pb-red'); }
     function renderQuotasCard(data) {
         if (!quotasContent) return;
+        lastQuotaData = data;
         const { limits, usage } = data || {};
         if (!limits || !usage) {
             quotasContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> Quotas indisponibles</div>`;
+            updateDashboardStats();
             return;
         }
         const rows = [
@@ -152,16 +216,67 @@ document.addEventListener('DOMContentLoaded', async () => {
               <div class="quota-legend">Reste: ${Math.max(r.max - r.used, 0)} ${r.unit}</div>
             </div>`;
         }).join('');
+        updateDashboardStats();
     }
     async function refreshQuotas() {
         if (!quotasContent) return;
         quotasContent.innerHTML = 'Chargement...';
-        try { renderQuotasCard(await fetchMyQuotas()); }
-        catch (e) { quotasContent.innerHTML = `<div class="error-message"><i class=\"fas fa-exclamation-triangle\"></i> ${e.message || 'Erreur quotas'}</div>`; }
+        try {
+            renderQuotasCard(await fetchMyQuotas());
+        }
+        catch (e) {
+            quotasContent.innerHTML = `<div class="error-message"><i class=\"fas fa-exclamation-triangle\"></i> ${e.message || 'Erreur quotas'}</div>`;
+            lastQuotaData = null;
+            updateDashboardStats();
+        }
     }
     if (refreshQuotasBtn) {
         refreshQuotasBtn.addEventListener('click', refreshQuotas);
         setInterval(() => { refreshQuotas(); }, 45000);
+    }
+
+    if (refreshPvcsBtn) {
+        refreshPvcsBtn.addEventListener('click', async () => {
+            try {
+                await refreshPvcs({ render: true, force: true });
+                const currentType = deploymentTypeInput ? deploymentTypeInput.value : '';
+                populatePvcSelect(currentType);
+            } catch (e) {
+                console.warn('Refresh PVCs failed', e);
+            }
+        });
+    }
+
+    if (refreshAdminPvcsBtn) {
+        refreshAdminPvcsBtn.addEventListener('click', async () => {
+            refreshAdminPvcsBtn.disabled = true;
+            refreshAdminPvcsBtn.setAttribute('aria-busy', 'true');
+            try {
+                await refreshAdminPvcs({ force: true });
+            } catch (error) {
+                console.warn('Refresh admin PVCs failed', error);
+            } finally {
+                refreshAdminPvcsBtn.disabled = false;
+                refreshAdminPvcsBtn.removeAttribute('aria-busy');
+            }
+        });
+    }
+
+    if (refreshDashboardBtn) {
+        refreshDashboardBtn.addEventListener('click', async () => {
+            refreshDashboardBtn.disabled = true;
+            refreshDashboardBtn.setAttribute('aria-busy', 'true');
+            try {
+                await handleDashboardRefresh();
+                const currentType = deploymentTypeInput ? deploymentTypeInput.value : '';
+                populatePvcSelect(currentType);
+            } catch (error) {
+                console.warn('Dashboard refresh failed', error);
+            } finally {
+                refreshDashboardBtn.disabled = false;
+                refreshDashboardBtn.removeAttribute('aria-busy');
+            }
+        });
     }
 
     function escapeHtml(str) {
@@ -174,6 +289,333 @@ document.addEventListener('DOMContentLoaded', async () => {
             .replace(/'/g, '&#39;');
     }
 
+    function mapPhaseToClass(phase) {
+        const value = (phase || '').toLowerCase();
+        if (value === 'bound') return 'bound';
+        if (value === 'available') return 'ready';
+        if (value === 'released') return 'released';
+        return '';
+    }
+
+    function formatIsoDateShort(iso) {
+        if (!iso) return 'Date inconnue';
+        try {
+            const date = new Date(iso);
+            if (Number.isNaN(date.getTime())) return iso;
+            return date.toLocaleString();
+        } catch {
+            return iso;
+        }
+    }
+
+    function updateDashboardStats() {
+        if (statActiveAppsEl) {
+            const total = document.querySelectorAll('.lab-card').length;
+            statActiveAppsEl.textContent = String(total);
+        }
+        if (statReadyAppsEl) {
+            const ready = document.querySelectorAll('.lab-card.lab-ready').length;
+            statReadyAppsEl.textContent = String(ready);
+        }
+        if (statPvcsEl) {
+            statPvcsEl.textContent = String(cachedPvcs.length);
+        }
+        if (statQuotaAppsEl) {
+            const remaining = lastQuotaData && lastQuotaData.remaining ? lastQuotaData.remaining.apps : null;
+            statQuotaAppsEl.textContent = typeof remaining === 'number' ? String(Math.max(remaining, 0)) : '—';
+        }
+
+        // Update PVC quick stats
+        if (pvcStatTotal) {
+            pvcStatTotal.textContent = String(cachedPvcs.length);
+        }
+        if (pvcStatBound) {
+            const boundCount = cachedPvcs.filter(pvc => pvc.bound || (pvc.phase && pvc.phase.toLowerCase() === 'bound')).length;
+            pvcStatBound.textContent = String(boundCount);
+        }
+    }
+
+    updateDashboardStats();
+
+    async function fetchUserPvcs() {
+        const resp = await fetch(`${API_V1}/k8s/pvcs`, { credentials: 'include' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            const detail = err.detail || 'Impossible de récupérer les volumes persistants';
+            throw new Error(detail);
+        }
+        return resp.json();
+    }
+
+    function renderPvcList(items) {
+        if (!pvcListContainer) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            pvcListContainer.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-database"></i> Aucun volume persistant. Lancez VS Code ou Jupyter pour en créer un.
+                </div>`;
+            return;
+        }
+
+        const rows = items.map(pvc => {
+            const phase = pvc.phase || 'Inconnu';
+            const phaseClass = mapPhaseToClass(phase);
+            const storage = pvc.storage || 'Taille inconnue';
+            const access = (pvc.access_modes && pvc.access_modes.length) ? pvc.access_modes.join(', ') : 'Mode non précisé';
+            const lastApp = pvc.last_bound_app || pvc.app_type || '—';
+            const createdAt = formatIsoDateShort(pvc.created_at);
+            const phaseBadgeClass = phaseClass ? ` status-${phaseClass}` : '';
+            return `
+                <tr data-pvc-name="${escapeHtml(pvc.name)}">
+                    <td>
+                        <div class="cell-main" title="${escapeHtml(pvc.name)}">${escapeHtml(pvc.name)}</div>
+                        <div class="cell-meta">
+                            <span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>
+                            <span class="badge-soft muted"><i class="fas fa-share-alt"></i> ${escapeHtml(access)}</span>
+                        </div>
+                    </td>
+                    <td>${escapeHtml(storage)}</td>
+                    <td>${escapeHtml(lastApp)}</td>
+                    <td>${escapeHtml(createdAt)}</td>
+                    <td class="cell-actions">
+                        <button type="button" class="btn btn-danger btn-icon pvc-delete-btn" data-name="${escapeHtml(pvc.name)}" title="Supprimer ce volume">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        pvcListContainer.innerHTML = `
+            <div class="pvc-table-wrapper">
+                <table class="pvc-table">
+                    <thead>
+                        <tr>
+                            <th>Volume</th>
+                            <th>Capacité</th>
+                            <th>Dernière application</th>
+                            <th>Créé le</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+
+        pvcListContainer.querySelectorAll('.pvc-delete-btn').forEach(btn => {
+            const name = btn.getAttribute('data-name');
+            const pvc = items.find(item => item.name === name);
+            if (pvc) {
+                btn.addEventListener('click', () => handlePvcDelete(pvc));
+            }
+        });
+    }
+
+    async function fetchAllManagedPvcs() {
+        const resp = await fetch(`${API_V1}/k8s/pvcs/all`, { credentials: 'include' });
+        if (!resp.ok) {
+            if (resp.status === 403) {
+                throw new Error('ACCESS_DENIED');
+            }
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Impossible de récupérer les volumes globaux');
+        }
+        return resp.json();
+    }
+
+    function renderAdminPvcList(items) {
+        if (!adminPvcsList) return;
+        if (!Array.isArray(items) || items.length === 0) {
+            adminPvcsList.innerHTML = `<div class="empty-state"><i class="fas fa-hdd"></i> Aucun volume LabOnDemand trouvé.</div>`;
+            return;
+        }
+
+        const rows = items.map(pvc => {
+            const phase = pvc.phase || 'Inconnu';
+            const phaseClass = mapPhaseToClass(phase);
+            const storage = pvc.storage || 'n/a';
+            const lastApp = pvc.last_bound_app || pvc.app_type || 'n/a';
+            const owner = pvc.labels && pvc.labels['user-id'] ? `Utilisateur #${escapeHtml(String(pvc.labels['user-id']))}` : 'n/a';
+            const created = formatIsoDateShort(pvc.created_at);
+            const phaseBadgeClass = phaseClass ? ` status-${phaseClass}` : '';
+            const namespaceBadge = `<span class="badge-soft">${escapeHtml(pvc.namespace)}</span>`;
+            const phaseBadge = `<span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>`;
+            return `
+                <tr>
+                    <td>
+                        <div class="cell-main" title="${escapeHtml(pvc.name)}">${escapeHtml(pvc.name)}</div>
+                        <span class="cell-sub">${namespaceBadge}</span>
+                    </td>
+                    <td>${escapeHtml(storage)}</td>
+                    <td>${phaseBadge}</td>
+                    <td>${escapeHtml(lastApp)}</td>
+                    <td>${owner}</td>
+                    <td>${escapeHtml(created)}</td>
+                </tr>
+            `;
+        }).join('');
+
+        adminPvcsList.innerHTML = `
+            <div class="table-wrapper">
+                <table class="k8s-table compact-table">
+                    <thead>
+                        <tr>
+                            <th>Volume</th>
+                            <th>Capacité</th>
+                            <th>Phase</th>
+                            <th>Dernière application</th>
+                            <th>Propriétaire</th>
+                            <th>Créé le</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    async function refreshAdminPvcs(options = {}) {
+        if (!adminPvcsList) return [];
+        const { force = false } = options;
+        if (!force && cachedAdminPvcs.length && Date.now() - adminPvcsLastFetched < 60000) {
+            renderAdminPvcList(cachedAdminPvcs);
+            return cachedAdminPvcs;
+        }
+
+        adminPvcsList.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+        try {
+            const data = await fetchAllManagedPvcs();
+            cachedAdminPvcs = data.items || [];
+            adminPvcsLastFetched = Date.now();
+            renderAdminPvcList(cachedAdminPvcs);
+            return cachedAdminPvcs;
+        } catch (error) {
+            if (error.message === 'ACCESS_DENIED') {
+                adminPvcsList.innerHTML = '<div class="empty-state"><i class="fas fa-lock"></i> Accès réservé aux rôles enseignant ou admin.</div>';
+                return [];
+            }
+            adminPvcsList.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
+            throw error;
+        }
+    }
+
+    async function handleDashboardRefresh() {
+        let status = { api: false, k8s: false };
+        try {
+            status = await checkApiStatus();
+        } catch (error) {
+            console.warn('Impossible de vérifier le statut API lors du rafraîchissement', error);
+        }
+
+        const refreshOps = [];
+        if (status.api) {
+            refreshOps.push(refreshPvcs({ render: true, force: true }));
+            refreshOps.push(fetchAndRenderDeployments());
+
+            if (quotasContent) {
+                refreshOps.push(refreshQuotas());
+            }
+
+            const isElevated = authManager.isAdmin() || authManager.isTeacher();
+            if (isElevated) {
+                if (status.k8s) {
+                    refreshOps.push(fetchAndRenderPods());
+                    refreshOps.push(fetchAndRenderNamespaces());
+                }
+                if (adminPvcsList) {
+                    refreshOps.push(refreshAdminPvcs({ force: true }));
+                }
+            }
+        }
+
+        if (refreshOps.length === 0) {
+            updateDashboardStats();
+            return;
+        }
+
+        const results = await Promise.allSettled(refreshOps);
+        results.forEach(result => {
+            if (result.status === 'rejected') {
+                console.warn('Rafraîchissement partiel échoué:', result.reason);
+            }
+        });
+        updateDashboardStats();
+    }
+
+    async function refreshPvcs(options = {}) {
+        const { render = true, force = false } = options;
+        if (!force && cachedPvcs.length && Date.now() - pvcsLastFetched < 60000) {
+            if (render) renderPvcList(cachedPvcs);
+            return cachedPvcs;
+        }
+
+        if (pvcListContainer && render) {
+            pvcListContainer.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
+        }
+
+        try {
+            const data = await fetchUserPvcs();
+            cachedPvcs = data.items || [];
+            pvcsLastFetched = Date.now();
+            if (render) renderPvcList(cachedPvcs);
+            updateDashboardStats();
+            return cachedPvcs;
+        } catch (error) {
+            if (pvcListContainer && render) {
+                pvcListContainer.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
+            }
+            updateDashboardStats();
+            throw error;
+        }
+    }
+
+    function populatePvcSelect(deploymentType) {
+        if (!pvcSelectGroup || !existingPvcSelect) return;
+        const supported = ['vscode', 'jupyter'];
+        if (!supported.includes(deploymentType)) {
+            pvcSelectGroup.style.display = 'none';
+            existingPvcSelect.value = '';
+            return;
+        }
+
+        pvcSelectGroup.style.display = 'block';
+        existingPvcSelect.innerHTML = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Créer un nouveau volume';
+        existingPvcSelect.appendChild(defaultOption);
+
+        cachedPvcs.forEach(pvc => {
+            const option = document.createElement('option');
+            option.value = pvc.name;
+            const storage = pvc.storage || 'taille inconnue';
+            const suffix = pvc.bound ? ' (attaché)' : '';
+            option.textContent = `${pvc.name} - ${storage}${suffix}`;
+            existingPvcSelect.appendChild(option);
+        });
+    }
+
+    async function handlePvcDelete(pvc) {
+        const encodedName = encodeURIComponent(pvc.name);
+        const boundMessage = pvc.bound ? '\nLe volume est encore attaché. Supprimer quand même ?' : '';
+        if (!confirm(`Supprimer le volume "${pvc.name}" ?${boundMessage}`)) return;
+        const forceParam = pvc.bound ? '?force=true' : '';
+        try {
+            const resp = await fetch(`${API_V1}/k8s/pvcs/${encodedName}${forceParam}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Suppression impossible');
+            }
+            await refreshPvcs({ render: true, force: true });
+            populatePvcSelect(deploymentTypeInput.value);
+        } catch (error) {
+            alert(`Erreur lors de la suppression du volume: ${error.message}`);
+        }
+    }
     function renderServicePortsSummary(portsDetails, serviceType) {
         if (!Array.isArray(portsDetails) || portsDetails.length === 0) return '';
         const items = portsDetails.map(detail => {
@@ -1277,7 +1719,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // --- Service Selection (dynamique) ---
     function bindServiceCard(card) {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', async () => {
             const serviceName = card.getAttribute('data-service');
             const serviceIcon = card.getAttribute('data-icon');
             const deploymentType = card.getAttribute('data-deployment-type');
@@ -1296,6 +1738,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Reset form (optional)
             configForm.reset();
+            if (existingPvcSelect) {
+                existingPvcSelect.value = '';
+            }
 
             // Affichage des options selon le type de service
             jupyterOptions.style.display = (deploymentType === 'jupyter') ? 'block' : 'none';
@@ -1318,6 +1763,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Rétablir le nom par défaut (après reset)
             document.getElementById('deployment-name').value = deploymentName.value;
+
+            try {
+                if (['vscode', 'jupyter'].includes(deploymentType)) {
+                    await refreshPvcs({ render: true });
+                }
+            } catch (error) {
+                console.warn('Impossible de rafraîchir les PVC avant configuration:', error);
+            }
+            populatePvcSelect(deploymentType);
 
             showView('config-view');
 
@@ -1676,6 +2130,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     memory_request: memoryRequest,
                     memory_limit: memoryLimit
                 });
+
+                if ((deploymentType === 'vscode' || deploymentType === 'jupyter') && existingPvcSelect && existingPvcSelect.value) {
+                    params.append('existing_pvc_name', existingPvcSelect.value);
+                }
                 
                 // Appel API pour créer le déploiement
                 const response = await fetch(`${API_V1}/k8s/deployments?${params.toString()}`, {
@@ -1851,6 +2309,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         password: connectionHints.novnc.password,
                     } : undefined
                 });
+
+                try {
+                    await refreshPvcs({ render: true, force: true });
+                } catch (error) {
+                    console.warn('Impossible de rafraîchir les PVC après création:', error);
+                }
 
                 // Mettre à jour la liste des déploiements
                 fetchAndRenderDeployments();
@@ -2319,6 +2783,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     
                     // Mettre à jour la liste des déploiements
                     fetchAndRenderDeployments();
+                    try {
+                        await refreshPvcs({ render: true, force: true });
+                        populatePvcSelect(deploymentTypeInput.value);
+                    } catch (error) {
+                        console.warn('Impossible de rafraîchir les PVC après arrêt:', error);
+                    }
                     
                     // Afficher le message "aucun lab" si nécessaire
                     if (activeLabsList.children.length === 0 || (activeLabsList.children.length === 1 && activeLabsList.children[0].classList.contains('no-labs-message'))) {
@@ -2374,6 +2844,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         
     initUserInfo();
     if (quotasContent) { refreshQuotas(); }
+    try {
+        await refreshPvcs({ render: true, force: true });
+    } catch (error) {
+        console.warn('Impossible de charger les PVC au démarrage:', error);
+    }
     // Charger le catalogue dynamiquement
     await loadTemplates();
         // Vérifier la connexion à l'API
@@ -2389,6 +2864,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     fetchAndRenderNamespaces();
                     fetchAndRenderPods();
                     fetchAndRenderDeployments();
+                    if (adminPvcsPanel) {
+                        refreshAdminPvcs({ force: true }).catch(err => {
+                            console.warn('Chargement des PVC admin impossible au démarrage', err);
+                        });
+                    }
                 } else {
                     // Afficher un message clair dans les panneaux K8s
                     ['namespaces-list', 'pods-list', 'deployments-list'].forEach(id => {
@@ -2397,6 +2877,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             el.innerHTML = '<div class="error-message">Kubernetes indisponible. Réessayez plus tard.</div>';
                         }
                     });
+                    if (adminPvcsList) {
+                        adminPvcsList.innerHTML = '<div class="error-message"><i class="fas fa-exclamation-triangle"></i> Kubernetes indisponible pour lister les volumes.</div>';
+                    }
                 }
             } else {
                 // Étudiants: n'appellent pas les endpoints /namespaces et /pods

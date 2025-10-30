@@ -87,6 +87,20 @@
     form = modal.querySelector('#rc-form');
     titleEl = modal.querySelector('#rc-modal-title');
     modal.querySelectorAll('.close-rc-modal').forEach(btn => btn.addEventListener('click', closeModal));
+    
+    // Fermer en cliquant à l'extérieur du modal
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+    
+    // Fermer avec la touche Échap
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && modal.classList.contains('show')) {
+        closeModal();
+      }
+    });
   }
 
   function openModal(editing = false, data = null) {

@@ -60,3 +60,5 @@ cd /data
 ls -la
 exit
 ```
+
+> **Astuce LabOnDemand** : une fois vos StorageClass et PVC opérationnels dans le cluster, le tableau de bord LabOnDemand détecte automatiquement les volumes étiquetés `managed-by=labondemand`. Les utilisateurs peuvent ainsi lister, réutiliser et supprimer leurs PVC directement depuis l’interface sans passer par kubectl.
