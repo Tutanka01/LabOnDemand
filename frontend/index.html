@@ -72,40 +72,43 @@
                 </div>
             </div>
 
-            <div class="dashboard-grid">
-                <div class="card glass-card quotas-card" id="my-quotas-card">
-                    <div class="quotas-header">
-                        <h2><i class="fas fa-gauge-high"></i> Vos ressources</h2>
-                        <button id="refresh-quotas" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
+            <div class="dashboard-cards-compact">
+                <div class="compact-card quotas-compact" id="my-quotas-card">
+                    <div class="compact-card-header">
+                        <h3><i class="fas fa-gauge-high"></i> Vos ressources</h3>
+                        <button id="refresh-quotas" class="btn-icon-refresh" title="Rafraîchir"><i class="fas fa-sync-alt"></i></button>
                     </div>
-                    <div id="quotas-content" class="quotas-content">Chargement...</div>
+                    <div id="quotas-content" class="quotas-content-compact">Chargement...</div>
                 </div>
 
-                <div class="card glass-card tips-card">
-                    <h2><i class="fas fa-lightbulb"></i> Astuces express</h2>
-                    <ul class="tips-list">
-                        <li><i class="fas fa-rotate"></i> Actualisez après un arrêt ou une création pour mettre à jour les stats.</li>
-                        <li><i class="fas fa-database"></i> Renommez vos déploiements pour identifier facilement les volumes associés.</li>
-                        <li><i class="fas fa-shield-alt"></i> Les volumes LabOnDemand sont isolés par utilisateur et vérifiés côté API.</li>
-                    </ul>
-                </div>
-
-                <div class="card glass-card pvc-quick-card" id="pvc-quick-card">
-                    <h2><i class="fas fa-hdd"></i> Volumes persistants</h2>
-                    <div class="pvc-quick-stats">
-                        <div class="pvc-stat-item">
-                            <span class="pvc-stat-value" id="pvc-stat-total">—</span>
-                            <span class="pvc-stat-label">Total</span>
+                <div class="compact-card pvc-compact">
+                    <div class="compact-card-header">
+                        <h3><i class="fas fa-hdd"></i> Volumes</h3>
+                    </div>
+                    <div class="compact-stats-grid">
+                        <div class="stat-compact">
+                            <span class="stat-compact-value" id="pvc-stat-total">—</span>
+                            <span class="stat-compact-label">Total</span>
                         </div>
-                        <div class="pvc-stat-item">
-                            <span class="pvc-stat-value bound" id="pvc-stat-bound">—</span>
-                            <span class="pvc-stat-label">Attachés</span>
+                        <div class="stat-compact bound">
+                            <span class="stat-compact-value" id="pvc-stat-bound">—</span>
+                            <span class="stat-compact-label">Attachés</span>
                         </div>
                     </div>
-                    <button id="show-pvc-panel-btn" class="btn btn-secondary btn-block">
-                        <i class="fas fa-list"></i> Voir tous les volumes
+                    <button id="show-pvc-panel-btn" class="btn-compact">
+                        <i class="fas fa-list"></i> Détails
                     </button>
-                    <p class="pvc-hint"><i class="fas fa-info-circle"></i> Sélectionnez un volume lors du lancement VS Code ou Jupyter.</p>
+                </div>
+
+                <div class="compact-card tips-compact">
+                    <div class="compact-card-header">
+                        <h3><i class="fas fa-lightbulb"></i> Conseils</h3>
+                    </div>
+                    <ul class="tips-compact-list">
+                        <li><i class="fas fa-rotate"></i> <span>Rafraîchissez pour voir les mises à jour</span></li>
+                        <li><i class="fas fa-database"></i> <span>Nommez vos apps pour retrouver vos volumes</span></li>
+                        <li><i class="fas fa-shield-alt"></i> <span>Vos volumes sont isolés et sécurisés</span></li>
+                    </ul>
                 </div>
             </div>
 

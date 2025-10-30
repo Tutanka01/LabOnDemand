@@ -460,6 +460,232 @@ main {
     line-height: 1;
 }
 
+/* Compact dashboard cards - streamlined design */
+.dashboard-cards-compact {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+}
+
+.compact-card {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.95) 100%);
+    border: 1px solid rgba(203, 213, 225, 0.5);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    transition: all 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.compact-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
+}
+
+.compact-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.compact-card-header h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1E293B;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.compact-card-header h3 i {
+    font-size: 1rem;
+    color: #3B82F6;
+}
+
+.btn-icon-refresh {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 8px;
+    background: rgba(248, 250, 252, 0.8);
+    color: #64748B;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.btn-icon-refresh:hover {
+    background: #3B82F6;
+    color: white;
+    border-color: #3B82F6;
+    transform: rotate(90deg);
+}
+
+/* Compact quotas */
+.quotas-content-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.quotas-content-compact .quota-item {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.04) 0%, rgba(96, 165, 250, 0.02) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.12);
+    border-radius: 10px;
+    padding: 12px;
+}
+
+.quotas-content-compact .quota-item h4 {
+    font-size: 0.88rem;
+    margin-bottom: 6px;
+}
+
+.quotas-content-compact .quota-metric {
+    font-size: 0.82rem;
+    margin-bottom: 4px;
+}
+
+.quotas-content-compact .progress {
+    height: 6px;
+}
+
+.quotas-content-compact .quota-legend {
+    font-size: 0.78rem;
+    margin-top: 4px;
+}
+
+/* Compact PVC card */
+.compact-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.stat-compact {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(96, 165, 250, 0.04) 100%);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+}
+
+.stat-compact:hover {
+    transform: scale(1.03);
+}
+
+.stat-compact.bound {
+    background: linear-gradient(135deg, rgba(6, 182, 212, 0.08) 0%, rgba(14, 165, 233, 0.04) 100%);
+    border-color: rgba(6, 182, 212, 0.2);
+}
+
+.stat-compact-value {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #1E40AF;
+    line-height: 1;
+}
+
+.stat-compact.bound .stat-compact-value {
+    color: #0E7490;
+}
+
+.stat-compact-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748B;
+    font-weight: 600;
+}
+
+.btn-compact {
+    width: 100%;
+    padding: 8px 14px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 8px;
+    background: rgba(248, 250, 252, 0.9);
+    color: #475569;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+
+.btn-compact:hover {
+    background: #3B82F6;
+    color: white;
+    border-color: #3B82F6;
+    box-shadow: 0 4px 10px rgba(59, 130, 246, 0.25);
+}
+
+/* Compact tips */
+.tips-compact-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tips-compact-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.06) 0%, rgba(245, 158, 11, 0.03) 100%);
+    border-left: 3px solid #F59E0B;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #475569;
+    line-height: 1.4;
+    transition: all 0.2s ease;
+}
+
+.tips-compact-list li:hover {
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+    transform: translateX(4px);
+}
+
+.tips-compact-list li i {
+    color: #F59E0B;
+    font-size: 0.9rem;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.tips-compact-list li span {
+    flex: 1;
+}
+
+@media (max-width: 1100px) {
+    .dashboard-cards-compact {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 700px) {
+    .dashboard-cards-compact {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+}
+
 .dashboard-grid {
     display: grid;
     grid-template-columns: 1.2fr 1fr 0.9fr;
@@ -1764,69 +1990,7 @@ footer {
 .usage-source.requests { background: #64748b; }
 }
 
-/* Harmonize column card heights for better alignment */
-.quotas-card, .pvc-quick-card, .tips-card {
-    min-height: 280px;
-    display: flex;
-    flex-direction: column;
-}
-
-.quotas-card .quotas-content {
-    flex: 1 1 auto;
-}
-
-/* New compact PVC summary card */
-.pvc-quick-card h2 {
-    margin-bottom: 20px;
-}
-
-.pvc-quick-stats {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    margin-bottom: 20px;
-}
-
-.pvc-stat-item {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.06) 0%, rgba(96, 165, 250, 0.03) 100%);
-    border: 1px solid rgba(59, 130, 246, 0.15);
-    border-radius: 12px;
-    padding: 16px 18px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.25s ease;
-}
-
-.pvc-stat-item:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.12);
-}
-
-.pvc-stat-value {
-    font-size: 2rem;
-    font-weight: 800;
-    color: #1E40AF;
-    line-height: 1;
-}
-
-.pvc-stat-value.bound {
-    color: #0E7490;
-}
-
-.pvc-stat-label {
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #64748B;
-    font-weight: 600;
-}
-
-.btn-block {
-    width: 100%;
-    justify-content: center;
-}
+/* Legacy card styles - now obsolete, replaced by compact design above */
 
 /* PVC collapsible section at the bottom */
 .pvc-section {
