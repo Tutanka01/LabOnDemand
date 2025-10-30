@@ -1754,6 +1754,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     document.getElementById('service-target-port').value = defaultPort;
                 }
                 document.getElementById('service-type-select').value = defaultServiceType;
+            } else if (deploymentType === 'vscode') {
+                const cpuSelect = document.getElementById('cpu');
+                if (cpuSelect) cpuSelect.value = 'low';
             } else if (deploymentType === 'netbeans') {
                 const cpuSelect = document.getElementById('cpu');
                 const ramSelect = document.getElementById('ram');
@@ -1831,9 +1834,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             if (isStudent) {
+                const studentCpuPreset = deploymentType === 'vscode' ? 'low' : 'medium';
                 // Étudiants: pas de choix CPU/RAM ni de replicas; valeurs imposées et clamp backend
                 if (cpuSelect) {
-                    cpuSelect.value = 'medium';
+                    cpuSelect.value = studentCpuPreset;
                     cpuSelect.disabled = true;
                     ensurePolicyNote(cpuSelect, 'Les ressources sont fixées par la politique étudiante.');
                     cpuSelect.title = 'Ressources fixées par la politique';
