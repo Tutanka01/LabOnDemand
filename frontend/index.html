@@ -125,13 +125,13 @@
                 </div>
             </div>
 
-            <!-- Section PVC détaillée déplaçable en bas -->
+            <!-- Section PVC détaillée (visible par défaut pour les étudiants) -->
             <div class="collapsible-section pvc-section">
-                <div class="collapsible-header" id="pvc-section-toggle">
+                <div class="collapsible-header active" id="pvc-section-toggle">
                     <h2><i class="fas fa-hdd"></i> Mes volumes persistants</h2>
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
-                <div id="pvc-resources" class="collapsible-content">
+                <div id="pvc-resources" class="collapsible-content active">
                     <div class="pvc-panel-actions">
                         <button id="refresh-pvcs" class="btn btn-secondary btn-sm"><i class="fas fa-sync-alt"></i> Rafraîchir</button>
                     </div>
@@ -139,8 +139,8 @@
                 </div>
             </div>
             
-            <!-- Section pour les listes Kubernetes (masquée par défaut) -->
-            <div class="collapsible-section">
+            <!-- Section pour les listes Kubernetes (masquée par défaut, réservée aux admins) -->
+            <div class="collapsible-section k8s-admin-only" style="display: none;">
                 <div class="collapsible-header" id="k8s-section-toggle">
                     <h2><i class="fas fa-server"></i> Informations Kubernetes</h2>
                     <i class="fas fa-chevron-down toggle-icon"></i>

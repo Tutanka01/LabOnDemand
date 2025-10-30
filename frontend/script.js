@@ -120,13 +120,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Adapter l'UI selon le rôle: masquer la section K8s pour les étudiants
-        const k8sSection = document.querySelector('.collapsible-section');
+        const k8sSection = document.querySelector('.k8s-admin-only');
         if (k8sSection) {
             if (authManager.isAdmin() || authManager.isTeacher()) {
                 k8sSection.style.display = 'block';
             } else {
                 k8sSection.style.display = 'none';
+                if (k8sSectionToggle && k8sResources) {
+                    k8sSectionToggle.classList.remove('active');
+                    k8sResources.classList.remove('active');
+                }
             }
+        }
+
+        // Assurer que la section PVC reste visible pour tous les rôles
+        const pvcSection = document.querySelector('.pvc-section');
+        if (pvcSection) {
+            pvcSection.style.display = 'block';
+        }
+
+        if (pvcSectionToggle && pvcResources) {
+            pvcSectionToggle.classList.add('active');
+            pvcResources.classList.add('active');
         }
 
         if (adminPvcsPanel) {

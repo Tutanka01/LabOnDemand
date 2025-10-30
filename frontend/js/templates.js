@@ -151,6 +151,22 @@
   addBtn.addEventListener('click', () => openModal(false));
   closeBtns.forEach(btn => btn.addEventListener('click', closeModal));
 
+  // Fermer en cliquant à l'extérieur du modal
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+  }
+
+  // Fermer avec la touche Échap
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal && modal.classList.contains('show')) {
+      closeModal();
+    }
+  });
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = idEl.value || null;
