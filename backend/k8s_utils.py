@@ -154,7 +154,7 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
             }
             lr_default = {"cpu": "500m", "memory": "512Mi"}
             lr_request = {"cpu": "100m", "memory": "128Mi"}
-        else:
+        elif role == "teacher":
             rq_hard = {
                 "pods": "20",
                 "requests.cpu": "4000m",
@@ -166,6 +166,21 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
             }
             lr_default = {"cpu": "1000m", "memory": "1Gi"}
             lr_request = {"cpu": "250m", "memory": "256Mi"}
+        else:
+            # Espace admin: valeurs très élevées pour ne pas limiter les tests de charge
+            rq_hard = {
+                "pods": "200",
+                "requests.cpu": "64000m",
+                "requests.memory": "128Gi",
+                "limits.cpu": "128",
+                "limits.memory": "256Gi",
+                "count/deployments.apps": "200",
+                "count/services": "200",
+                "count/persistentvolumeclaims": "100",
+                "requests.storage": "2Ti",
+            }
+            lr_default = {"cpu": "2000m", "memory": "2Gi"}
+            lr_request = {"cpu": "500m", "memory": "512Mi"}
 
         # ResourceQuota (créer ou mettre à jour pour matcher les valeurs désirées)
         rq_name = "baseline-quota"
