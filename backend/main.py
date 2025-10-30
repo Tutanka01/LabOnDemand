@@ -322,7 +322,7 @@ def ensure_admin_exists():
                     target_port=8080,
                     default_service_type="NodePort",
                     allowed_for_students=True,
-                    min_cpu_request="200m",
+                    min_cpu_request="150m",
                     min_memory_request="256Mi",
                     min_cpu_limit="500m",
                     min_memory_limit="512Mi",

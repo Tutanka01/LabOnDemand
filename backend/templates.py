@@ -153,7 +153,7 @@ class DeploymentConfig:
         "image": "tutanka01/k8s:vscode",
         "target_port": 8080,
         "service_type": "NodePort",
-        "min_cpu_request": "200m",
+        "min_cpu_request": "150m",
         "min_memory_request": "256Mi",
         "min_cpu_limit": "500m",
         "min_memory_limit": "512Mi"

@@ -13,8 +13,8 @@ Usage
         --password admin123 \
         --count 60
 
-By default the script starts 60 VS Code deployments using the "medium" CPU/RAM
-preset.  See ``python tests/load_test_deployments.py --help`` for the available
+By default the script starts 60 VS Code deployments using the "low" CPU/RAM
+preset (0.25 vCPU, 256 Mi).  See ``python tests/load_test_deployments.py --help`` for the available
 options (different template, resource presets, pacing delay, automatic cleanup,
 etc.).
 
@@ -127,7 +127,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--cpu",
         choices=sorted(CPU_PRESETS.keys()),
-        default="medium",
+        default="low",
         help="CPU preset to request (mirrors the frontend options)",
     )
     parser.add_argument(
