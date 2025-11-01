@@ -872,6 +872,7 @@ async def get_deployment_details(
     try:
         apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
+        networking_v1 = client.NetworkingV1Api()
         
         # Récupérer le déploiement, avec fallbacks (stack-name puis label app)
         try:
@@ -987,16 +988,83 @@ async def get_deployment_details(
             },
         )
 
-        # Construire les URLs d'accès si des services NodePort existent
+        # Préparer les données Ingress (ajoutées même si aucun NodePort)
+        ingress_entries: List[Dict[str, Any]] = []
+        ingress_by_service: Dict[str, List[Dict[str, Any]]] = {}
+        ingress_access_entries: List[Dict[str, Any]] = []
+        try:
+            if stack_name:
+                ingress_selector = f"managed-by=labondemand,stack-name={stack_name}"
+            else:
+                ingress_selector = f"managed-by=labondemand,app={name}"
+            ingress_list = networking_v1.list_namespaced_ingress(namespace, label_selector=ingress_selector)
+        except Exception:
+            ingress_list = client.V1IngressList(items=[])
+
+        for ingress in getattr(ingress_list, "items", []) or []:
+            ingress_meta = getattr(ingress, "metadata", None)
+            ingress_spec = getattr(ingress, "spec", None)
+            ingress_class = getattr(ingress_spec, "ingress_class_name", None) if ingress_spec else None
+            tls_hosts = set()
+            if ingress_spec and getattr(ingress_spec, "tls", None):
+                for tls_block in ingress_spec.tls:
+                    for host in getattr(tls_block, "hosts", []) or []:
+                        if host:
+                            tls_hosts.add(host)
+
+            for rule in getattr(ingress_spec, "rules", []) or []:
+                host = getattr(rule, "host", None)
+                http_block = getattr(rule, "http", None)
+                if not host or not http_block:
+                    continue
+                for path in getattr(http_block, "paths", []) or []:
+                    backend = getattr(path, "backend", None)
+                    service_ref = getattr(backend, "service", None) if backend else None
+                    service_name = getattr(service_ref, "name", None) if service_ref else None
+                    if not service_name:
+                        continue
+                    service_port_ref = getattr(service_ref, "port", None) if service_ref else None
+                    service_port = getattr(service_port_ref, "number", None) if service_port_ref else None
+                    if service_port is None:
+                        service_port = getattr(service_port_ref, "name", None)
+                    path_value = getattr(path, "path", None) or settings.INGRESS_DEFAULT_PATH
+                    tls_enabled = host in tls_hosts or bool(settings.INGRESS_TLS_SECRET)
+                    scheme = "https" if tls_enabled else "http"
+                    entry = {
+                        "ingress": getattr(ingress_meta, "name", None),
+                        "host": host,
+                        "path": path_value,
+                        "service": service_name,
+                        "service_port": service_port,
+                        "class": ingress_class,
+                        "tls": tls_enabled,
+                        "annotations": dict(getattr(ingress_meta, "annotations", {}) or {}),
+                        "url": f"{scheme}://{host}{path_value}",
+                    }
+                    ingress_entries.append(entry)
+                    ingress_by_service.setdefault(service_name, []).append(entry)
+                    ingress_access_entries.append({
+                        "url": entry["url"],
+                        "service": service_name,
+                        "ingress": entry["ingress"],
+                        "host": host,
+                        "protocol": scheme,
+                        "secure": tls_enabled,
+                        "path": path_value,
+                    })
+
+        # Construire les URLs d'accès (NodePort + Ingress)
         access_urls = []
         service_data = []
 
         for svc in services.items:
+            service_name = svc.metadata.name
             service_info = {
                 "name": svc.metadata.name,
                 "type": svc.spec.type,
                 "cluster_ip": svc.spec.cluster_ip,
-                "ports": []
+                "ports": [],
+                "ingresses": ingress_by_service.get(service_name, []),
             }
             
             for port in svc.spec.ports or []:
@@ -1041,6 +1109,8 @@ async def get_deployment_details(
             
             service_data.append(service_info)
         
+        access_urls.extend(ingress_access_entries)
+
         return {
             "deployment": {
                 "name": deployment.metadata.name,
@@ -1061,6 +1131,7 @@ async def get_deployment_details(
                 for pod in pods.items
             ],
             "services": service_data,
+            "ingresses": ingress_entries,
             "access_urls": access_urls
         }
         
@@ -1182,7 +1253,15 @@ async def get_deployment_credentials(
             db_host = f"{stack_name}-mariadb-service"
             db_port = 3306
 
-            return {
+            wp_url = None
+            if deployment_service._should_attach_ingress("wordpress"):
+                try:
+                    host = deployment_service._build_ingress_host(stack_name, current_user)
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    wp_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+                except Exception:
+                    wp_url = None
+            response = {
                 "type": "wordpress",
                 "wordpress": {
                     "username": wp_user,
@@ -1197,6 +1276,9 @@ async def get_deployment_credentials(
                     "database": db_name,
                 },
             }
+            if wp_url:
+                response["wordpress"]["url"] = wp_url
+            return response
 
         if app_type == "mysql":
             # Secrets MySQL + interface phpMyAdmin
@@ -1204,6 +1286,14 @@ async def get_deployment_credentials(
             db_pass = dec("MYSQL_PASSWORD")
             db_name = dec("MYSQL_DATABASE")
             db_host = f"{stack_name}-mysql-service"
+            pma_url_hint = "http://<NODE_IP>:<NODE_PORT>/"
+            if deployment_service._should_attach_ingress("mysql"):
+                try:
+                    host = deployment_service._build_ingress_host(stack_name, current_user, component="pma")
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    pma_url_hint = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+                except Exception:
+                    pma_url_hint = "http://<NODE_IP>:<NODE_PORT>/"
             return {
                 "type": "mysql",
                 "database": {
@@ -1213,7 +1303,7 @@ async def get_deployment_credentials(
                     "password": db_pass,
                     "database": db_name,
                 },
-                "phpmyadmin": {"url_hint": "http://<NODE_IP>:<NODE_PORT>/"},
+                "phpmyadmin": {"url_hint": pma_url_hint},
             }
         if app_type == "lamp":
             # Stack LAMP: même secret que MySQL; ajouter un hint phpMyAdmin
@@ -1221,7 +1311,19 @@ async def get_deployment_credentials(
             db_pass = dec("MYSQL_PASSWORD")
             db_name = dec("MYSQL_DATABASE")
             db_host = f"{stack_name}-mysql-service"
-            return {
+            lamp_pma_hint = "http://<NODE_IP>:<NODE_PORT>/"
+            lamp_web_url = None
+            if deployment_service._should_attach_ingress("lamp"):
+                try:
+                    host_pma = deployment_service._build_ingress_host(stack_name, current_user, component="pma")
+                    host_web = deployment_service._build_ingress_host(stack_name, current_user, component="web")
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    lamp_pma_hint = f"{scheme}://{host_pma}{settings.INGRESS_DEFAULT_PATH}"
+                    lamp_web_url = f"{scheme}://{host_web}{settings.INGRESS_DEFAULT_PATH}"
+                except Exception:
+                    lamp_pma_hint = "http://<NODE_IP>:<NODE_PORT>/"
+                    lamp_web_url = None
+            response = {
                 "type": "lamp",
                 "database": {
                     "host": db_host,
@@ -1230,8 +1332,11 @@ async def get_deployment_credentials(
                     "password": db_pass,
                     "database": db_name,
                 },
-                "phpmyadmin": {"url_hint": "http://<NODE_IP>:<NODE_PORT>/"},
+                "phpmyadmin": {"url_hint": lamp_pma_hint},
             }
+            if lamp_web_url:
+                response["web"] = {"url_hint": lamp_web_url}
+            return response
 
         # Par défaut: retourner toutes les paires décodées disponibles
         decoded = {k: dec(k) for k in data.keys()}
@@ -1376,6 +1481,19 @@ async def delete_deployment(
     try:
         apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
+        networking_v1 = client.NetworkingV1Api()
+
+        def delete_associated_ingress(service_name: str) -> None:
+            if not service_name.endswith("-service"):
+                return
+            ingress_name = f"{service_name[:-8]}-ingress"
+            try:
+                networking_v1.delete_namespaced_ingress(ingress_name, namespace)
+            except client.exceptions.ApiException as exc:
+                if exc.status != 404:
+                    raise
+            except Exception:
+                pass
 
         # Résoudre le déploiement cible avec fallbacks (stack-name puis label app)
         stack_mode = False
@@ -1443,8 +1561,10 @@ async def delete_deployment(
                 for svc_name in [f"{wp_name}-service", f"{db_name}-service"]:
                     try:
                         core_v1.delete_namespaced_service(svc_name, namespace)
-                    except client.exceptions.ApiException:
-                        pass
+                    except client.exceptions.ApiException as exc:
+                        if exc.status != 404:
+                            raise
+                    delete_associated_ingress(svc_name)
 
             # Supprimer PVC et Secret si demandé
             if delete_persistent:
@@ -1494,8 +1614,10 @@ async def delete_deployment(
                 for svc_name in [f"{db_name}-service", f"{pma_name}-service"]:
                     try:
                         core_v1.delete_namespaced_service(svc_name, namespace)
-                    except client.exceptions.ApiException:
-                        pass
+                    except client.exceptions.ApiException as exc:
+                        if exc.status != 404:
+                            raise
+                    delete_associated_ingress(svc_name)
 
             if delete_persistent:
                 # PVC DB
@@ -1545,8 +1667,10 @@ async def delete_deployment(
                 for svc_name in [f"{web_name}-service", f"{db_name}-service", f"{pma_name}-service"]:
                     try:
                         core_v1.delete_namespaced_service(svc_name, namespace)
-                    except client.exceptions.ApiException:
-                        pass
+                    except client.exceptions.ApiException as exc:
+                        if exc.status != 404:
+                            raise
+                    delete_associated_ingress(svc_name)
 
             if delete_persistent:
                 # PVC DB
@@ -1581,8 +1705,10 @@ async def delete_deployment(
             if delete_service:
                 try:
                     core_v1.delete_namespaced_service(f"{name}-service", namespace)
-                except client.exceptions.ApiException:
-                    pass
+                except client.exceptions.ApiException as exc:
+                    if exc.status != 404:
+                        raise
+                delete_associated_ingress(f"{name}-service")
             audit_logger.info(
                 "deployment_deleted",
                 extra={
