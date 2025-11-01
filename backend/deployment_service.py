@@ -4,12 +4,14 @@ Principe KISS : une classe focalisée sur la création de déploiements
 """
 import datetime
 import logging
-from typing import Dict, Any, Optional, List
+import re
+from typing import Dict, Any, Optional, List, Tuple
 from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy.orm import Session
 
 from .models import User, UserRole, RuntimeConfig
+from .config import settings
 from .k8s_utils import (
     validate_k8s_name, 
     validate_resource_format, 
@@ -36,7 +38,148 @@ class DeploymentService:
     def __init__(self):
         self.apps_v1 = client.AppsV1Api()
         self.core_v1 = client.CoreV1Api()
+        self.networking_v1 = client.NetworkingV1Api()
     
+    @staticmethod
+    def _ingress_supported() -> bool:
+        """Retourne True si la configuration Ingress est utilisable."""
+        if not settings.INGRESS_ENABLED:
+            return False
+        if not settings.INGRESS_BASE_DOMAIN:
+            logger.debug("ingress_disabled_missing_domain")
+            return False
+        return True
+
+    @staticmethod
+    def _should_attach_ingress(deployment_type: str) -> bool:
+        if not DeploymentService._ingress_supported():
+            return False
+        d_type = (deployment_type or "").lower()
+        if d_type in settings.INGRESS_EXCLUDED_TYPES:
+            return False
+        if settings.INGRESS_AUTO_TYPES and d_type not in settings.INGRESS_AUTO_TYPES:
+            return False
+        return True
+
+    @staticmethod
+    def _dns_label(value: str, fallback: str = "app") -> str:
+        slug = re.sub(r"[^a-z0-9-]", "-", value.lower()).strip("-")
+        slug = re.sub(r"-+", "-", slug)
+        if not slug:
+            slug = fallback
+        if len(slug) > 62:
+            slug = slug[:62].rstrip("-")
+            if not slug:
+                slug = fallback
+        return slug
+
+    def _build_ingress_host(self, base_name: str, current_user: User, component: Optional[str] = None) -> str:
+        label_parts = [self._dns_label(base_name)]
+        if component:
+            label_parts.append(self._dns_label(component))
+        label_parts.append(self._dns_label(f"u{current_user.id}", fallback="u"))
+        label = "-".join([part for part in label_parts if part])
+        if len(label) > 62:
+            label = label[:62].rstrip("-")
+            if not label:
+                label = "app"
+        return f"{label}.{settings.INGRESS_BASE_DOMAIN}"
+
+    def _base_ingress_annotations(self) -> Dict[str, str]:
+        annotations = dict(settings.INGRESS_EXTRA_ANNOTATIONS)
+        controller_hint = (settings.INGRESS_CLASS_NAME or "").lower()
+        if controller_hint.startswith("traefik"):
+            entrypoints = "websecure,web" if settings.INGRESS_TLS_SECRET else "web"
+            annotations.setdefault("traefik.ingress.kubernetes.io/router.entrypoints", entrypoints)
+        elif controller_hint.startswith("nginx") and settings.INGRESS_TLS_SECRET and settings.INGRESS_FORCE_TLS_REDIRECT:
+            annotations.setdefault("nginx.ingress.kubernetes.io/force-ssl-redirect", "true")
+        return annotations
+
+    def create_ingress_manifest(
+        self,
+        ingress_name: str,
+        host: str,
+        service_name: str,
+        service_port: int,
+        labels: Dict[str, str],
+    ) -> Dict[str, Any]:
+        app_label = labels.get("app")
+        if not app_label and service_name.endswith("-service"):
+            app_label = service_name[:-8]
+        if not app_label:
+            app_label = service_name
+        metadata: Dict[str, Any] = {
+            "name": ingress_name,
+            "labels": {
+                "app": app_label,
+                **labels,
+            },
+        }
+        annotations = self._base_ingress_annotations()
+        if annotations:
+            metadata["annotations"] = annotations
+
+        spec: Dict[str, Any] = {
+            "ingressClassName": settings.INGRESS_CLASS_NAME,
+            "rules": [
+                {
+                    "host": host,
+                    "http": {
+                        "paths": [
+                            {
+                                "path": settings.INGRESS_DEFAULT_PATH,
+                                "pathType": settings.INGRESS_PATH_TYPE,
+                                "backend": {
+                                    "service": {
+                                        "name": service_name,
+                                        "port": {"number": service_port},
+                                    }
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        if settings.INGRESS_TLS_SECRET:
+            spec["tls"] = [
+                {
+                    "hosts": [host],
+                    "secretName": settings.INGRESS_TLS_SECRET,
+                }
+            ]
+
+        return {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "Ingress",
+            "metadata": metadata,
+            "spec": spec,
+        }
+
+    def _apply_ingress(
+        self,
+        namespace: str,
+        ingress_manifest: Dict[str, Any],
+    ) -> Tuple[Optional[client.V1Ingress], bool]:
+        """Crée ou met à jour un Ingress. Retourne (objet, created)."""
+        try:
+            created_ingress = self.networking_v1.create_namespaced_ingress(namespace, ingress_manifest)
+            return created_ingress, True
+        except client.exceptions.ApiException as exc:
+            if exc.status == 409:
+                # Ressource existante: effectuer un patch pour mettre à jour labels/spec
+                name = ingress_manifest["metadata"]["name"]
+                body = {
+                    "metadata": {
+                        "labels": ingress_manifest["metadata"].get("labels", {}),
+                        "annotations": ingress_manifest["metadata"].get("annotations", {}),
+                    },
+                    "spec": ingress_manifest["spec"],
+                }
+                updated = self.networking_v1.patch_namespaced_ingress(name=name, namespace=namespace, body=body)
+                return updated, False
+            raise
     def validate_permissions(self, user: User, deployment_type: str):
         """Valide les permissions selon le rôle utilisateur"""
         if user.role == UserRole.student:
@@ -782,6 +925,13 @@ class DeploymentService:
             service_type,
         )
 
+        use_ingress = self._should_attach_ingress(deployment_type)
+        if use_ingress and config["create_service"]:
+            if config["service_type"] in ["NodePort", "LoadBalancer"]:
+                config["service_type"] = "ClusterIP"
+            if service_port is None:
+                service_port = config.get("service_target_port") or 80
+
         # Auto-détermination des ports pour les runtimes configurés (DB) ou connus (fallback):
         # - Si has_runtime_config est vrai OU runtime est vscode/jupyter, alors service_port = target_port
         if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter", "netbeans"}:
@@ -962,6 +1112,7 @@ class DeploymentService:
             node_port = None
             ports_details: List[Dict[str, Any]] = []
             connection_hints: Optional[Dict[str, Any]] = None
+            ingress_details: Optional[Dict[str, Any]] = None
             if config["create_service"]:
                 service_manifest = self.create_service_manifest(
                     name,
@@ -1011,6 +1162,28 @@ class DeploymentService:
                         f". Service {name}-service créé (type: {config['service_type']}, "
                         f"port: {service_port})"
                     )
+
+                if use_ingress:
+                    ingress_name = f"{name}-ingress"
+                    host = self._build_ingress_host(name, current_user)
+                    ingress_manifest = self.create_ingress_manifest(
+                        ingress_name,
+                        host,
+                        f"{name}-service",
+                        service_port,
+                        labels,
+                    )
+                    ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    ingress_details = {
+                        "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
+                        "host": host,
+                        "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
+                        "class": settings.INGRESS_CLASS_NAME,
+                        "tls": bool(settings.INGRESS_TLS_SECRET),
+                        "created": created_flag,
+                    }
+                    result_message += f" Ingress disponible sur {ingress_details['url']}"
 
                 # Instructions d'accès spécifiques
                 if (
@@ -1073,6 +1246,7 @@ class DeploymentService:
                     "port": service_port if config["create_service"] else None,
                     "node_port": node_port,
                     "ports_detail": ports_details if config["create_service"] else [],
+                    "ingress": ingress_details,
                 },
                 "connection_hints": connection_hints,
             }
@@ -1157,6 +1331,10 @@ class DeploymentService:
         )
         labels_wp = {**labels_base, "stack-name": name, "component": "wordpress"}
         labels_db = {**labels_base, "stack-name": name, "component": "database"}
+
+        use_ingress = self._should_attach_ingress("wordpress")
+        if use_ingress and service_type in ["NodePort", "LoadBalancer"]:
+            service_type = "ClusterIP"
 
         # Générer des mots de passe/identifiants
         db_user = "wp_user"
@@ -1391,6 +1569,7 @@ class DeploymentService:
                 pass
 
             node_port = None
+            ingress_details: Optional[Dict[str, Any]] = None
             if service_type in ["NodePort", "LoadBalancer"]:
                 node_port = created_wp_svc.spec.ports[0].node_port
 
@@ -1398,6 +1577,28 @@ class DeploymentService:
                 f"Stack WordPress créée: DB={db_name}, WP={wp_name} dans {effective_namespace}. "
                 f"Admin: {wp_admin_user}/{wp_admin_pass}. DB user: {db_user}/{db_pass}."
             )
+
+            if use_ingress:
+                ingress_name = f"{wp_name}-ingress"
+                host = self._build_ingress_host(wp_name, current_user)
+                ingress_manifest = self.create_ingress_manifest(
+                    ingress_name,
+                    host,
+                    svc_wp,
+                    service_port,
+                    labels_wp,
+                )
+                ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
+                scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                ingress_details = {
+                    "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
+                    "host": host,
+                    "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
+                    "class": settings.INGRESS_CLASS_NAME,
+                    "tls": bool(settings.INGRESS_TLS_SECRET),
+                    "created": created_flag,
+                }
+                msg += f" Accès web: {ingress_details['url']}"
 
             return {
                 "message": msg,
@@ -1408,6 +1609,7 @@ class DeploymentService:
                     "type": service_type,
                     "port": service_port,
                     "node_port": node_port,
+                    "ingress": ingress_details,
                 },
                 "created_objects": {
                     "secret": secret_name,
@@ -1462,6 +1664,10 @@ class DeploymentService:
         )
         labels_db = {**labels_base, "stack-name": name, "component": "database"}
         labels_pma = {**labels_base, "stack-name": name, "component": "phpmyadmin"}
+
+        use_ingress = self._should_attach_ingress("mysql")
+        if use_ingress and service_type in ["NodePort", "LoadBalancer"]:
+            service_type = "ClusterIP"
 
         # Credentials
         db_user = "student"
@@ -1619,6 +1825,7 @@ class DeploymentService:
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_pma_manifest)
 
             node_port = None
+            ingress_details: Optional[Dict[str, Any]] = None
             if service_type in ["NodePort", "LoadBalancer"]:
                 node_port = created_pma_svc.spec.ports[0].node_port
 
@@ -1628,11 +1835,43 @@ class DeploymentService:
                 f"DB user={db_user}, database={db_default}."
             )
 
+            if use_ingress:
+                ingress_name = f"{pma_name}-ingress"
+                host = self._build_ingress_host(name, current_user, component="pma")
+                ingress_manifest = self.create_ingress_manifest(
+                    ingress_name,
+                    host,
+                    svc_pma,
+                    service_port,
+                    labels_pma,
+                )
+                ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
+                scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                ingress_details = {
+                    "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
+                    "host": host,
+                    "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
+                    "class": settings.INGRESS_CLASS_NAME,
+                    "tls": bool(settings.INGRESS_TLS_SECRET),
+                    "created": created_flag,
+                }
+                msg = (
+                    f"Stack MySQL+phpMyAdmin créée dans {effective_namespace}. "
+                    f"phpMyAdmin accessible via {ingress_details['url']}. "
+                    f"DB user={db_user}, database={db_default}."
+                )
+
             return {
                 "message": msg,
                 "deployment_type": "mysql",
                 "namespace": effective_namespace,
-                "service_info": {"created": True, "type": service_type, "port": service_port, "node_port": node_port},
+                "service_info": {
+                    "created": True,
+                    "type": service_type,
+                    "port": service_port,
+                    "node_port": node_port,
+                    "ingress": ingress_details,
+                },
                 "created_objects": {
                     "secret": secret_name,
                     "pvc": pvc_db,
@@ -1682,6 +1921,10 @@ class DeploymentService:
         labels_web = {**labels_base, "stack-name": name, "component": "web"}
         labels_db = {**labels_base, "stack-name": name, "component": "database"}
         labels_pma = {**labels_base, "stack-name": name, "component": "phpmyadmin"}
+
+        use_ingress = self._should_attach_ingress("lamp")
+        if use_ingress and service_type in ["NodePort", "LoadBalancer"]:
+            service_type = "ClusterIP"
 
         # Credentials MySQL
         db_user = "appuser"
@@ -1964,6 +2207,10 @@ chmod 644 /workdir/index.php
 
             node_port_web = None
             node_port_pma = None
+            ingress_details: Dict[str, Optional[Dict[str, Any]]] = {
+                "web": None,
+                "phpmyadmin": None,
+            }
             if service_type in ["NodePort", "LoadBalancer"]:
                 try:
                     node_port_web = created_web_svc.spec.ports[0].node_port
@@ -1975,9 +2222,58 @@ chmod 644 /workdir/index.php
                     node_port_pma = None
 
             msg = (
-                f"Stack LAMP créée: WEB={web_name} (NodePort={node_port_web}), DB={db_name}, PMA={pma_name} (NodePort={node_port_pma}) dans {effective_namespace}. "
+                f"Stack LAMP créée: WEB={web_name}, DB={db_name}, PMA={pma_name} dans {effective_namespace}. "
                 f"DB user: {db_user}/{db_pass}, database: {db_default}."
             )
+
+            if use_ingress:
+                scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+
+                ingress_web_name = f"{web_name}-ingress"
+                host_web = self._build_ingress_host(name, current_user, component="web")
+                ingress_web_manifest = self.create_ingress_manifest(
+                    ingress_web_name,
+                    host_web,
+                    svc_web,
+                    service_port,
+                    labels_web,
+                )
+                ingress_web_obj, created_web = self._apply_ingress(effective_namespace, ingress_web_manifest)
+                ingress_details["web"] = {
+                    "name": getattr(getattr(ingress_web_obj, "metadata", None), "name", ingress_web_name),
+                    "host": host_web,
+                    "url": f"{scheme}://{host_web}{settings.INGRESS_DEFAULT_PATH}",
+                    "class": settings.INGRESS_CLASS_NAME,
+                    "tls": bool(settings.INGRESS_TLS_SECRET),
+                    "created": created_web,
+                }
+
+                ingress_pma_name = f"{pma_name}-ingress"
+                host_pma = self._build_ingress_host(name, current_user, component="pma")
+                ingress_pma_manifest = self.create_ingress_manifest(
+                    ingress_pma_name,
+                    host_pma,
+                    svc_pma,
+                    8081,
+                    labels_pma,
+                )
+                ingress_pma_obj, created_pma = self._apply_ingress(effective_namespace, ingress_pma_manifest)
+                ingress_details["phpmyadmin"] = {
+                    "name": getattr(getattr(ingress_pma_obj, "metadata", None), "name", ingress_pma_name),
+                    "host": host_pma,
+                    "url": f"{scheme}://{host_pma}{settings.INGRESS_DEFAULT_PATH}",
+                    "class": settings.INGRESS_CLASS_NAME,
+                    "tls": bool(settings.INGRESS_TLS_SECRET),
+                    "created": created_pma,
+                }
+
+                msg += (
+                    f" Web: {ingress_details['web']['url']} – phpMyAdmin: {ingress_details['phpmyadmin']['url']}."
+                )
+            else:
+                msg += (
+                    f" NodePorts: web={node_port_web}, phpMyAdmin={node_port_pma}."
+                )
 
             return {
                 "message": msg,
@@ -1988,6 +2284,7 @@ chmod 644 /workdir/index.php
                     "type": service_type,
                     "web": {"port": service_port, "node_port": node_port_web, "service": svc_web},
                     "phpmyadmin": {"port": 8081, "node_port": node_port_pma, "service": svc_pma},
+                    "ingress": ingress_details,
                 },
                 "created_objects": {
                     "secret": secret_name,
