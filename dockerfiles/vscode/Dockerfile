@@ -1,6 +1,15 @@
 FROM codercom/code-server:latest
 
+# Proxy pour build et runtime
+ENV HTTP_PROXY="http://cache.univ-pau.fr:3128" \
+    HTTPS_PROXY="http://cache.univ-pau.fr:3128" \
+    http_proxy="http://cache.univ-pau.fr:3128" \
+    https_proxy="http://cache.univ-pau.fr:3128"
+
 USER root
+
+# Configurer le proxy pour APT
+RUN printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$HTTP_PROXY" "$HTTP_PROXY" > /etc/apt/apt.conf.d/01proxy
 
 # Installer les dépendances de base
 RUN apt-get update && apt-get install -y \
@@ -12,6 +21,13 @@ RUN apt-get update && apt-get install -y \
     npm \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Configurer npm, git et pip pour utiliser le proxy
+RUN npm config set proxy "$HTTP_PROXY" \
+    && npm config set https-proxy "$HTTPS_PROXY" \
+    && git config --system http.proxy "$HTTP_PROXY" \
+    && git config --system https.proxy "$HTTPS_PROXY" \
+    && printf '[global]\nproxy = %s\n' "$HTTP_PROXY" > /etc/pip.conf
 
 # Installer des extensions VS Code populaires
 RUN code-server --install-extension ms-python.python \
