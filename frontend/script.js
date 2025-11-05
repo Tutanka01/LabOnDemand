@@ -66,6 +66,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let labCounter = 0;
     const novncEndpoints = new Map();
     let lastLaunchedDeployment = null;
+    let currentStatusDeployment = null;
     let cachedPvcs = [];
     let pvcsLastFetched = 0;
     let cachedAdminPvcs = [];
@@ -287,6 +288,132 @@ document.addEventListener('DOMContentLoaded', async () => {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function buildStatusAccessHtml(accessUrl, state) {
+        if (!accessUrl) return '';
+
+        const sanitizedUrl = escapeHtml(accessUrl);
+        const hasPlaceholder = /IP_DU_NOEUD|IP_EXTERNE|NODE_PORT/.test(accessUrl) || accessUrl.includes('<');
+
+        if (state === 'ready' && !hasPlaceholder) {
+            return `
+                <p style="margin-top: 15px;">Accédez à votre service :</p>
+                <a class="access-link" href="${sanitizedUrl}" target="_blank" rel="noopener">
+                    <i class="fas fa-link"></i> ${sanitizedUrl}
+                    <span class="status-badge success">Prêt</span>
+                </a>
+            `;
+        }
+
+        const infoText = state === 'timeout'
+            ? 'Nous ne parvenons pas à récupérer l\'URL pour le moment.'
+            : 'Utilisez les informations ci-dessus pour déterminer l\'adresse finale une fois le service prêt.';
+        const badgeClass = state === 'timeout' ? 'status-badge error' : 'status-badge';
+        const badgeLabel = state === 'timeout' ? 'Indisponible' : 'En attente';
+
+        return `
+            <p style="margin-top: 15px;">${infoText}</p>
+            <div class="access-link disabled">
+                <i class="fas fa-link"></i>
+                <span>${sanitizedUrl}</span>
+                <span class="${badgeClass}">${badgeLabel}</span>
+            </div>
+        `;
+    }
+
+    function renderStatusView(state, overrides = {}) {
+        if (!statusContent) return;
+
+        if (!currentStatusDeployment) {
+            currentStatusDeployment = {};
+        }
+
+        currentStatusDeployment = { ...currentStatusDeployment, ...overrides, state };
+
+        const serviceName = currentStatusDeployment.serviceName || currentStatusDeployment.id || 'Application';
+        const message = currentStatusDeployment.message || '';
+        const portsSummaryHtml = currentStatusDeployment.portsSummaryHtml || '';
+        const connectionHintsHtml = currentStatusDeployment.connectionHintsHtml || '';
+        const inlineNovncBlock = currentStatusDeployment.inlineNovncBlock || '';
+        const accessUrl = currentStatusDeployment.accessUrl || '';
+        const deploymentType = currentStatusDeployment.deploymentType || '';
+
+        let headerHtml = '';
+        let availabilityHtml = '';
+
+        if (state === 'ready') {
+            headerHtml = `
+                <i class="fas fa-check-circle status-icon success"></i>
+                <h2>${serviceName} est prêt</h2>
+                <p>Votre environnement est prêt à être utilisé.</p>
+            `;
+            availabilityHtml = `
+                <div class="app-availability ready">
+                    <i class="fas fa-check-circle app-availability-icon"></i>
+                    <span class="app-availability-text">L'application est prête à être utilisée</span>
+                </div>
+            `;
+        } else if (state === 'timeout') {
+            headerHtml = `
+                <i class="fas fa-exclamation-triangle status-icon" style="color: var(--error-color);"></i>
+                <h2>Problème de démarrage</h2>
+                <p>${serviceName} ne répond pas comme prévu. Vérifiez les détails ou contactez un administrateur.</p>
+            `;
+            availabilityHtml = `
+                <div class="app-availability error">
+                    <i class="fas fa-exclamation-triangle app-availability-icon"></i>
+                    <span class="app-availability-text">Problème lors de l'initialisation de l'application</span>
+                </div>
+            `;
+        } else if (state === 'deleted') {
+            headerHtml = `
+                <i class="fas fa-info-circle status-icon"></i>
+                <h2>Déploiement indisponible</h2>
+                <p>L'environnement ${serviceName} n'existe plus ou a été supprimé.</p>
+            `;
+            availabilityHtml = '';
+        } else {
+            headerHtml = `
+                <i class="fas fa-circle-notch fa-spin status-icon"></i>
+                <h2>${serviceName} est en cours de préparation</h2>
+                <p>Votre environnement a été déployé avec succès, mais les conteneurs sont toujours en cours de démarrage.</p>
+            `;
+            availabilityHtml = `
+                <div class="app-availability pending">
+                    <i class="fas fa-hourglass-half app-availability-icon"></i>
+                    <span class="app-availability-text">L'application est en cours d'initialisation. Veuillez patienter...</span>
+                </div>
+                <p>Vous serez notifié quand votre environnement sera prêt à être utilisé.</p>
+            `;
+        }
+
+        const messageHtml = message ? `<div class="api-response">${message}</div>` : '';
+        const accessHtml = buildStatusAccessHtml(accessUrl, state);
+
+        statusContent.innerHTML = `
+            ${headerHtml}
+            ${availabilityHtml}
+            ${messageHtml}
+            ${portsSummaryHtml}
+            ${connectionHintsHtml}
+            ${inlineNovncBlock}
+            ${accessHtml}
+        `;
+
+        if (statusActions) {
+            statusActions.style.display = 'block';
+        }
+
+        if (deploymentType === 'netbeans') {
+            bindNovncButtons(statusContent);
+            updateNovncButtonsAvailability(currentStatusDeployment.id);
+        }
+    }
+
+    function updateStatusViewForDeployment(deploymentId, state, overrides = {}) {
+        if (!currentStatusDeployment || currentStatusDeployment.id !== deploymentId) return;
+        renderStatusView(state, overrides);
     }
 
     function mapPhaseToClass(phase) {
@@ -2111,6 +2238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Afficher la vue de statut avec chargement
             showView('status-view');
+            currentStatusDeployment = null;
             statusContent.innerHTML = `
                 <i class="fas fa-spinner fa-spin status-icon loading"></i>
                 <h2>Lancement de l'application ${serviceName} en cours...</h2>
@@ -2337,53 +2465,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 ` : '';
 
-                let accessInfoHtml = '';
-                if (accessUrl) {
-                    const isPlaceholder = ['IP_DU_NOEUD', 'IP_EXTERNE', 'NODE_PORT'].some(token => accessUrl.includes(token));
-                    if (isPlaceholder) {
-                        accessInfoHtml = `
-                            <p style="margin-top: 15px;">Utilisez les informations ci-dessus pour déterminer l'adresse finale une fois le service prêt.</p>
-                            <div class="access-link disabled">
-                                <i class="fas fa-link"></i>
-                                <span>${escapeHtml(accessUrl)}</span>
-                                <span class="status-badge">En attente</span>
-                            </div>
-                        `;
-                    } else {
-                        accessInfoHtml = `
-                            <p style="margin-top: 15px;">Une fois prêt, vous pourrez accéder à votre service via :</p>
-                            <a class="access-link disabled" href="${accessUrl}" target="_blank" rel="noopener">
-                                <i class="fas fa-link"></i> ${escapeHtml(accessUrl)}
-                                <span class="status-badge">En attente</span>
-                            </a>
-                        `;
-                    }
-                }
+                currentStatusDeployment = {
+                    id: labId,
+                    namespace: effectiveNamespace,
+                    serviceName,
+                    message: escapedMessage,
+                    portsSummaryHtml,
+                    connectionHintsHtml,
+                    inlineNovncBlock,
+                    accessUrl,
+                    deploymentType,
+                };
 
-                // Afficher la réussite du déploiement initial (pas de l'application)
-                statusContent.innerHTML = `
-                    <i class="fas fa-circle-notch fa-spin status-icon"></i>
-                    <h2>${serviceName} est en cours de préparation</h2>
-                    <p>Votre environnement a été déployé avec succès, mais les conteneurs sont toujours en cours de démarrage.</p>
-                    
-                    <div class="app-availability pending">
-                        <i class="fas fa-hourglass-half app-availability-icon"></i>
-                        <span class="app-availability-text">L'application est en cours d'initialisation. Veuillez patienter...</span>
-                    </div>
-                    
-                    <p>Vous serez notifié quand votre environnement sera prêt à être utilisé.</p>
-                    <div class="api-response">${escapedMessage}</div>
-                    ${portsSummaryHtml}
-                    ${connectionHintsHtml}
-                    ${inlineNovncBlock}
-                    ${accessInfoHtml}
-                `;
-                statusActions.style.display = 'block';
-
-                if (deploymentType === 'netbeans') {
-                    bindNovncButtons(statusContent);
-                    updateNovncButtonsAvailability(labId);
-                }
+                renderStatusView('pending');
                 
             } catch (error) {
                 console.error('Erreur:', error);
@@ -2394,6 +2488,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="error-message">${error.message}</div>
                 `;
                 statusActions.style.display = 'block'; // Afficher le bouton "Terminé" même en cas d'erreur
+                currentStatusDeployment = null;
             }
         });
     }
@@ -2463,6 +2558,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         card.id = labDetails.id;
         card.dataset.namespace = labDetails.namespace;
         card.dataset.deploymentType = labDetails.deploymentType || '';
+        card.dataset.serviceName = labDetails.name || labDetails.id;
 
         let datasetsHtml = '';
         if (labDetails.datasets && labDetails.datasets.length > 0) {
@@ -2575,6 +2671,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     accessBtn.href = accessUrl;
                     console.log(`URL d'accès récupérée pour ${name}: ${accessUrl}`);
                 }
+                if (currentStatusDeployment && currentStatusDeployment.id === name) {
+                    const state = currentStatusDeployment.state || 'pending';
+                    updateStatusViewForDeployment(name, state, { accessUrl });
+                }
             } else {
                 console.warn(`Aucune URL d'accès disponible pour ${name}`);
             }
@@ -2598,24 +2698,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             // Si le déploiement n'existe pas (404), arrêter les vérifications et supprimer la carte
             if (response.status === 404) {
                 console.warn(`Déploiement ${name} non trouvé (404). Suppression de la carte et arrêt des vérifications.`);
-                
-                // Nettoyer le timer
-                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
-                deploymentCheckTimers.delete(`${namespace}-${name}`);
-                
-                // Supprimer la carte de l'application
+
+                const timerKey = `${namespace}-${name}`;
+                clearTimeout(deploymentCheckTimers.get(timerKey));
+                deploymentCheckTimers.delete(timerKey);
+
                 const card = document.getElementById(name);
+                const serviceName = card?.dataset?.serviceName || name;
+                updateStatusViewForDeployment(name, 'deleted', { serviceName });
+
                 if (card) {
                     card.remove();
                     console.log(`Carte d'application ${name} supprimée car le déploiement n'existe plus.`);
                 }
-                
-                // Vérifier si la liste est maintenant vide
+
                 const noLabsMessage = document.querySelector('.no-labs-message');
                 if (activeLabsList.children.length === 0) {
                     if (noLabsMessage) noLabsMessage.style.display = 'block';
                 }
-                
+
                 return;
             }
             
@@ -2686,20 +2787,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     function updateLabCardStatus(deploymentId, isReady, deploymentData, timeout = false) {
         const card = document.getElementById(deploymentId);
         if (!card) return;
-        
-        // Mettre à jour les classes de la carte
+
+        const serviceName = card.dataset.serviceName || deploymentId;
+        let resolvedAccessUrl = '';
+
         if (isReady) {
             card.classList.remove('lab-pending');
             card.classList.add('lab-ready');
-            // Ajouter temporairement une classe pour mettre en évidence le changement
             card.classList.add('status-changed');
             setTimeout(() => card.classList.remove('status-changed'), 2000);
         } else if (timeout) {
             card.classList.remove('lab-pending');
             card.classList.add('lab-error');
         }
-        
-        // Récupérer et mettre à jour l'indicateur d'état
+
         const statusIndicator = card.querySelector('.status-indicator');
         if (statusIndicator) {
             if (isReady) {
@@ -2710,8 +2811,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 statusIndicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Problème de démarrage';
             }
         }
-        
-        // Mettre à jour l'indicateur de disponibilité de l'application
+
         const appStatus = document.getElementById(`app-status-${deploymentId}`);
         if (appStatus) {
             if (isReady) {
@@ -2728,21 +2828,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 `;
             }
         }
-        
-        // Mettre à jour le bouton d'accès
+
         const accessBtn = document.getElementById(`access-btn-${deploymentId}`);
         if (accessBtn) {
             if (isReady) {
                 accessBtn.classList.remove('disabled');
                 accessBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Accéder';
-                
-                // Si des URLs d'accès sont disponibles, mettre à jour l'URL du bouton
-                if (deploymentData && deploymentData.access_urls && deploymentData.access_urls.length > 0) {
+
+                if (deploymentData && Array.isArray(deploymentData.access_urls) && deploymentData.access_urls.length > 0) {
                     const accessUrl = deploymentData.access_urls[0].url;
                     accessBtn.href = accessUrl;
+                    resolvedAccessUrl = accessUrl;
                     console.log(`URL d'accès mise à jour pour ${deploymentId}: ${accessUrl}`);
                 } else {
                     console.warn(`Aucune URL d'accès trouvée pour ${deploymentId}`);
+                    if (accessBtn.href) {
+                        resolvedAccessUrl = accessBtn.href;
+                    }
                 }
             } else if (timeout) {
                 accessBtn.innerHTML = '<i class="fas fa-exclamation-circle"></i> Vérifier les détails';
@@ -2759,9 +2861,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                     protocol: novncInfo.protocol,
                     secure: novncInfo.secure,
                 });
-            } else {
-                updateNovncButtonsAvailability(deploymentId);
             }
+            updateNovncButtonsAvailability(deploymentId);
+        }
+
+        if (isReady) {
+            const overrides = { serviceName };
+            if (resolvedAccessUrl) {
+                overrides.accessUrl = resolvedAccessUrl;
+            }
+            updateStatusViewForDeployment(deploymentId, 'ready', overrides);
+        } else if (timeout) {
+            updateStatusViewForDeployment(deploymentId, 'timeout', { serviceName });
         }
     }
 
