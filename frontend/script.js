@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const serviceTypeInput = document.getElementById('service-type');
     const serviceIconInput = document.getElementById('service-icon-class');
     const deploymentTypeInput = document.getElementById('deployment-type');
+    const serviceGuidanceBox = document.getElementById('service-guidance');
     const jupyterOptions = document.getElementById('jupyter-options');
     const customDeploymentOptions = document.getElementById('custom-deployment-options');
     const statusContent = document.getElementById('status-content');
@@ -61,6 +62,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     const API_V1 = `${API_BASE_URL}/api/v1`;
     
     console.log('LabOnDemand Script - Corrections de filtrage des déploiements et gestion d\'erreurs améliorée');
+
+    const serviceGuidanceMessages = {
+        mysql: {
+            icon: 'fas fa-database',
+            title: 'MySQL + phpMyAdmin',
+            description: 'Installe une base MySQL accompagnée de l’interface phpMyAdmin pour la gérer facilement.',
+            bulletPoints: [
+                'Vos données MySQL sont conservées automatiquement (jusqu’à 1 Go).',
+                'Les identifiants de connexion s’affichent dans le récapitulatif une fois l’environnement prêt.',
+                'Vous accédez à la base via phpMyAdmin (lien fourni quand le service est disponible).'
+            ],
+        },
+        wordpress: {
+            icon: 'fab fa-wordpress',
+            title: 'WordPress',
+            description: 'Déploie WordPress avec sa base MariaDB déjà configurée.',
+            bulletPoints: [
+                'Le site et la base sont sauvegardés automatiquement (jusqu’à 1 Go).',
+                'Les identifiants administrateur apparaissent dans le récapitulatif quand le site est prêt.',
+                'Pensez à exporter votre contenu si vous supprimez le déploiement.'
+            ],
+        },
+    };
 
     // Compteur pour les labs (utilisé pour les demos uniquement)
     let labCounter = 0;
@@ -288,6 +312,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function updateServiceGuidance(deploymentType) {
+        if (!serviceGuidanceBox) return;
+        const info = serviceGuidanceMessages[deploymentType];
+        if (!info) {
+            serviceGuidanceBox.innerHTML = '';
+            serviceGuidanceBox.classList.remove('active');
+            return;
+        }
+
+        const iconClass = info.icon || 'fas fa-info-circle';
+        const descriptionHtml = info.description ? `<p>${info.description}</p>` : '';
+        const bullets = Array.isArray(info.bulletPoints) && info.bulletPoints.length
+            ? `<ul>${info.bulletPoints.map(item => `<li>${item}</li>`).join('')}</ul>`
+            : '';
+
+        serviceGuidanceBox.innerHTML = `
+            <h4><i class="${iconClass}"></i>${info.title}</h4>
+            ${descriptionHtml}
+            ${bullets}
+        `;
+        serviceGuidanceBox.classList.add('active');
     }
 
     function buildStatusAccessHtml(accessUrl, state) {
@@ -1827,6 +1874,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (viewId === 'config-view') {
                 const errorElement = document.querySelector('#config-form .error-message');
                 if (errorElement) errorElement.remove();
+            } else if (serviceGuidanceBox) {
+                serviceGuidanceBox.innerHTML = '';
+                serviceGuidanceBox.classList.remove('active');
             }
         }
     }
@@ -1902,6 +1952,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.warn('Impossible de rafraîchir les PVC avant configuration:', error);
             }
             populatePvcSelect(deploymentType);
+            updateServiceGuidance(deploymentType);
 
             showView('config-view');
 
