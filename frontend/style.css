@@ -1357,6 +1357,48 @@ main {
     background-color: #f8f9fa;
 }
 
+.service-guidance {
+    display: none;
+    margin-top: 20px;
+    padding: 18px;
+    border: 1px dashed var(--grey-border);
+    border-radius: var(--border-radius);
+    background-color: #f0f6ff;
+    color: var(--labondemand-blue);
+}
+
+.service-guidance.active {
+    display: block;
+}
+
+.service-guidance h4 {
+    margin: 0 0 10px 0;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.service-guidance h4 i {
+    margin-right: 0;
+    color: var(--labondemand-green);
+}
+
+.service-guidance p {
+    margin-bottom: 10px;
+    color: #3b4b60;
+}
+
+.service-guidance ul {
+    margin: 0;
+    padding-left: 18px;
+    color: #3b4b60;
+}
+
+.service-guidance li {
+    margin-bottom: 6px;
+}
+
 small {
     display: block;
     margin-top: 5px;
