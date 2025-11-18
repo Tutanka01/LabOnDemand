@@ -164,7 +164,7 @@ Sans TLS, l'application fonctionnera en HTTP mais les cookies `Secure` ne seront
 
 ## 6. Variables `.env` côté backend
 
-Ajouter ou adapter les clés suivantes (valeurs indicatives) :
+Ajouter ou adapter les clés suivantes (valeurs indicatives):
 
 ```ini
 # Activer l'Ingress
