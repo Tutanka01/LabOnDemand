@@ -8,6 +8,11 @@ import secrets
 import os
 import json
 import base64
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+# Limiteur de débit pour l'API
+limiter = Limiter(key_func=get_remote_address)
 
 # Gestion des importations pour fonctionner à la fois comme module et comme script
 try:
@@ -40,6 +45,28 @@ def verify_password(plain_password, hashed_password):
 # Génération de hachage de mot de passe
 def get_password_hash(password):
     return pwd_context.hash(password)
+
+# Validation de la force du mot de passe
+def validate_password_strength(password: str) -> bool:
+    """
+    Vérifie que le mot de passe respecte les critères de sécurité :
+    - Au moins 12 caractères
+    - Au moins une majuscule
+    - Au moins une minuscule
+    - Au moins un chiffre
+    - Au moins un caractère spécial
+    """
+    if len(password) < 12:
+        return False
+    if not any(c.isupper() for c in password):
+        return False
+    if not any(c.islower() for c in password):
+        return False
+    if not any(c.isdigit() for c in password):
+        return False
+    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?/~`" for c in password):
+        return False
+    return True
 
 # Gestion des sessions
 def create_session(user_id: int, username: str, role: UserRole) -> str:
