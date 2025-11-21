@@ -12,7 +12,8 @@ from .models import User, UserRole
 from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse
 from .security import (
     authenticate_user, create_session, get_password_hash, 
-    get_current_user, delete_session, is_admin, is_teacher_or_admin
+    get_current_user, delete_session, is_admin, is_teacher_or_admin,
+    limiter, validate_password_strength
 )
 from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
 
@@ -22,6 +23,7 @@ logger = logging.getLogger("labondemand.auth")
 audit_logger = logging.getLogger("labondemand.audit")
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 def login(
     user_credentials: UserLogin,
     response: Response,
@@ -159,6 +161,13 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
             detail="Cet email est déjà utilisé"
         )
     
+    # Vérifier la force du mot de passe
+    if not validate_password_strength(user.password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial."
+        )
+
     # Créer un nouvel utilisateur
     hashed_password = get_password_hash(user.password)
     db_user = User(
@@ -239,6 +248,11 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
         db_user.full_name = user_update.full_name
     
     if user_update.password is not None:
+        if not validate_password_strength(user_update.password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial."
+            )
         db_user.hashed_password = get_password_hash(user_update.password)
     
     if user_update.role is not None:
@@ -333,6 +347,11 @@ def update_user_me(user_update: UserUpdate, current_user: User = Depends(get_cur
     
     # Mise à jour du mot de passe
     if user_update.password is not None:
+        if not validate_password_strength(user_update.password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial."
+            )
         current_user.hashed_password = get_password_hash(user_update.password)
     
     db.commit()
@@ -400,11 +419,11 @@ def change_password(
             detail="Le nouveau mot de passe doit être différent de l'ancien"
         )
     
-    # Vérifier que le nouveau mot de passe a une longueur minimale
-    if len(new_password) < 8:
+    # Vérifier la force du nouveau mot de passe
+    if not validate_password_strength(new_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le nouveau mot de passe doit comporter au moins 8 caractères"
+            detail="Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial."
         )
     
     # Mettre à jour le mot de passe
@@ -425,42 +444,4 @@ def change_password(
     
     return current_user
 
-@router.get("/debug-auth-status")
-def debug_auth_status(db: Session = Depends(get_db)):
-    """
-    Endpoint de débogage pour vérifier l'état de l'authentification
-    """
-    try:
-        # Vérifier si l'admin existe
-        admin = db.query(User).filter(User.username == "admin").first()
-        
-        # Obtenir tous les utilisateurs
-        users = db.query(User).all()
-        user_list = []
-        for user in users:
-            user_list.append({
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role.value,
-                "is_active": user.is_active
-            })
-        
-        # Statistiques
-        stats = {
-            "admin_exists": admin is not None,
-            "total_users": len(users),
-            "connection_string": os.environ.get("DB_HOST", "localhost")
-        }
-        
-        return {
-            "status": "success",
-            "database_connection": "ok",
-            "stats": stats,
-            "users": user_list
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+

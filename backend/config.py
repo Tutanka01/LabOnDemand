@@ -97,7 +97,7 @@ class Settings:
     # Sessions (Redis)
     REDIS_URL = os.getenv("REDIS_URL", None)
     SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
-    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Lax")
+    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Strict")
     SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
     COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
 

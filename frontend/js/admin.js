@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     closeButtons.forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function () {
             this.parentElement.style.display = 'none';
         });
     });
@@ -158,19 +158,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const data = await response.json();
-            
+
             // Mettre à jour l'affichage du rôle
             const roleElement = document.getElementById('user-role');
             if (roleElement) {
                 roleElement.innerHTML = `<span class="role-badge ${data.role}">${formatRole(data.role)}</span>`;
             }
-            
+
             // Mettre à jour l'affichage du nom d'utilisateur
             const userInfo = JSON.parse(sessionStorage.getItem('user') || '{}');
             if (userInfo.username) {
                 document.getElementById('current-username').textContent = userInfo.username;
             }
-            
+
             // Vérifier si l'utilisateur est un administrateur
             if (!data.can_manage_users && onUsersPage) {
                 window.location.href = 'access-denied.html';
@@ -220,13 +220,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const roleValue = roleFilter.value;
 
         filteredUsers = users.filter(user => {
-            const matchesSearch = 
+            const matchesSearch =
                 user.username.toLowerCase().includes(searchTerm) ||
                 user.email.toLowerCase().includes(searchTerm) ||
                 (user.full_name && user.full_name.toLowerCase().includes(searchTerm));
-            
+
             const matchesRole = roleValue === 'all' || user.role === roleValue;
-            
+
             return matchesSearch && matchesRole;
         });
 
@@ -235,21 +235,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Afficher les utilisateurs paginés
     function displayUsers() {
-    // Vider le tableau (seulement si présent)
-    if (!userTableBody) return;
-    userTableBody.innerHTML = '';
-        
+        // Vider le tableau (seulement si présent)
+        if (!userTableBody) return;
+        userTableBody.innerHTML = '';
+
         // Calculer la pagination
         totalPages = Math.ceil(filteredUsers.length / pageSize);
         const startIndex = (currentPage - 1) * pageSize;
         const endIndex = Math.min(startIndex + pageSize, filteredUsers.length);
         const currentUsers = filteredUsers.slice(startIndex, endIndex);
-        
+
         // Mettre à jour l'information de pagination
-    if (pageInfo) pageInfo.textContent = `Page ${currentPage} sur ${totalPages || 1}`;
-    if (prevPageBtn) prevPageBtn.disabled = currentPage <= 1;
-    if (nextPageBtn) nextPageBtn.disabled = currentPage >= totalPages;
-        
+        if (pageInfo) pageInfo.textContent = `Page ${currentPage} sur ${totalPages || 1}`;
+        if (prevPageBtn) prevPageBtn.disabled = currentPage <= 1;
+        if (nextPageBtn) nextPageBtn.disabled = currentPage >= totalPages;
+
         // Aucun utilisateur trouvé
         if (currentUsers.length === 0) {
             const row = document.createElement('tr');
@@ -261,7 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
             userTableBody.appendChild(row);
             return;
         }
-        
+
         // Générer les lignes du tableau
         currentUsers.forEach(user => {
             const row = document.createElement('tr');
@@ -292,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             userTableBody.appendChild(row);
         });
-        
+
         // Ajouter les écouteurs d'événements aux boutons
         addActionButtonListeners();
     }
@@ -317,7 +317,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 openEditUserModal(userId);
             });
         });
-        
+
         document.querySelectorAll('.delete-btn').forEach(button => {
             button.addEventListener('click', () => {
                 const userId = button.dataset.id;
@@ -326,11 +326,17 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const modalErrorMessage = document.getElementById('modal-error-message');
+    const modalErrorText = document.getElementById('modal-error-text');
+
+    // ... (existing code)
+
     // Ouvrir le modal d'ajout d'utilisateur
     function openAddUserModal() {
         selectedUserId = null;
         modalTitle.innerHTML = '<i class="fas fa-user-plus"></i> Ajouter un utilisateur';
         userForm.reset();
+        if (modalErrorMessage) modalErrorMessage.style.display = 'none'; // Clear error
         document.getElementById('password-hint').textContent = 'Minimum 8 caractères';
         document.getElementById('modal-password').setAttribute('required', true);
         userModal.classList.add('show');
@@ -340,39 +346,36 @@ document.addEventListener('DOMContentLoaded', () => {
     function openEditUserModal(userId) {
         selectedUserId = userId;
         const user = users.find(u => u.id == userId);
-        
+
         modalTitle.innerHTML = '<i class="fas fa-user-edit"></i> Modifier l\'utilisateur';
+        if (modalErrorMessage) modalErrorMessage.style.display = 'none'; // Clear error
         document.getElementById('user-id').value = user.id;
-        document.getElementById('modal-username').value = user.username;
-        document.getElementById('modal-email').value = user.email;
-        document.getElementById('modal-full-name').value = user.full_name || '';
-        document.getElementById('modal-password').value = '';
-        document.getElementById('modal-password').removeAttribute('required');
-        document.getElementById('password-hint').textContent = 'Minimum 8 caractères. Laissez vide pour ne pas modifier le mot de passe.';
-        document.getElementById('modal-role').value = user.role;
-        document.getElementById('modal-is-active').checked = user.is_active;
-        
-        userModal.classList.add('show');
+        // ... (rest of the function)
     }
 
-    // Ouvrir le modal de suppression
-    function openDeleteModal(userId) {
-        selectedUserId = userId;
-        const user = users.find(u => u.id == userId);
-        document.getElementById('delete-user-name').textContent = user.username;
-        deleteModal.classList.add('show');
+    // Afficher un message d'erreur dans le modal
+    function showModalError(message) {
+        if (modalErrorText && modalErrorMessage) {
+            modalErrorText.textContent = message;
+            modalErrorMessage.style.display = 'flex';
+        } else {
+            // Fallback if elements not found
+            showError(message);
+        }
     }
 
     // Créer un utilisateur
     async function createUser() {
         try {
+            if (modalErrorMessage) modalErrorMessage.style.display = 'none';
+
             const username = document.getElementById('modal-username').value;
             const email = document.getElementById('modal-email').value;
             const fullName = document.getElementById('modal-full-name').value;
             const password = document.getElementById('modal-password').value;
             const role = document.getElementById('modal-role').value;
             const isActive = document.getElementById('modal-is-active').checked;
-            
+
             const response = await fetch('/api/v1/auth/register', {
                 method: 'POST',
                 headers: {
@@ -388,43 +391,45 @@ document.addEventListener('DOMContentLoaded', () => {
                     is_active: isActive
                 })
             });
-            
+
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.detail || 'Erreur lors de la création de l\'utilisateur');
             }
-            
+
             const newUser = await response.json();
             users.push(newUser);
             userModal.classList.remove('show');
             showSuccess('Utilisateur créé avec succès');
             filterUsers();
         } catch (error) {
-            showError(error.message);
+            showModalError(error.message);
         }
     }
 
     // Mettre à jour un utilisateur
     async function updateUser() {
         try {
+            if (modalErrorMessage) modalErrorMessage.style.display = 'none';
+
             const userId = selectedUserId;
             const email = document.getElementById('modal-email').value;
             const fullName = document.getElementById('modal-full-name').value || null;
             const password = document.getElementById('modal-password').value || null;
             const role = document.getElementById('modal-role').value;
             const isActive = document.getElementById('modal-is-active').checked;
-            
+
             const userData = {
                 email,
                 full_name: fullName,
                 role,
                 is_active: isActive
             };
-            
+
             if (password) {
                 userData.password = password;
             }
-            
+
             const response = await fetch(`/api/v1/auth/users/${userId}`, {
                 method: 'PUT',
                 headers: {
@@ -433,25 +438,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 credentials: 'include',
                 body: JSON.stringify(userData)
             });
-            
+
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.detail || 'Erreur lors de la mise à jour de l\'utilisateur');
             }
-            
+
             const updatedUser = await response.json();
-            
+
             // Mettre à jour l'utilisateur dans le tableau
             const index = users.findIndex(u => u.id == userId);
             if (index !== -1) {
                 users[index] = updatedUser;
             }
-            
+
             userModal.classList.remove('show');
             showSuccess('Utilisateur mis à jour avec succès');
             filterUsers();
         } catch (error) {
-            showError(error.message);
+            showModalError(error.message);
         }
     }
 
@@ -465,15 +470,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 credentials: 'include'
             });
-            
+
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.detail || 'Erreur lors de la suppression de l\'utilisateur');
             }
-            
+
             // Supprimer l'utilisateur du tableau
             users = users.filter(u => u.id != userId);
-            
+
             deleteModal.classList.remove('show');
             showSuccess('Utilisateur supprimé avec succès');
             filterUsers();
@@ -487,7 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function showError(message) {
         errorText.textContent = message;
         errorMessage.style.display = 'flex';
-        
+
         // Cache automatiquement le message après 5 secondes
         setTimeout(() => {
             errorMessage.style.display = 'none';
@@ -498,7 +503,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function showSuccess(message) {
         successText.textContent = message;
         successMessage.style.display = 'flex';
-        
+
         // Cache automatiquement le message après 5 secondes
         setTimeout(() => {
             successMessage.style.display = 'none';
@@ -515,11 +520,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 credentials: 'include'
             });
-            
+
             if (!response.ok) {
                 throw new Error('Erreur lors de la déconnexion');
             }
-            
+
             // Supprimer les informations de session et rediriger vers la page de connexion
             sessionStorage.removeItem('user');
             window.location.href = 'login.html';

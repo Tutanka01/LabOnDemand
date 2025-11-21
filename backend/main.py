@@ -25,8 +25,11 @@ from .session import setup_session_handler
 from .error_handlers import global_exception_handler
 from . import models  # Importer les modèles pour enregistrer les tables avant create_all
 from .models import User, UserRole, Template, RuntimeConfig
-from .security import get_password_hash
+from .models import User, UserRole, Template, RuntimeConfig
+from .security import get_password_hash, limiter
 from .templates import get_deployment_templates
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 # When running in debug inside a Docker volume on Windows, watchfiles can fail
 # with "Invalid argument" unless it falls back to polling. Force this behaviour
@@ -48,6 +51,10 @@ app = FastAPI(
     version=settings.API_VERSION,
     debug=settings.DEBUG_MODE,
 )
+
+# Configuration du rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.middleware("http")

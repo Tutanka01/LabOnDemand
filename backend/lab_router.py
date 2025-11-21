@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -9,6 +10,7 @@ from .schemas import LabCreate, LabResponse, LabUpdate
 from .security import get_current_user, is_admin, is_teacher_or_admin
 
 router = APIRouter(prefix="/api/v1/labs", tags=["labs"])
+audit_logger = logging.getLogger("labondemand.audit")
 
 # Créer un nouveau laboratoire
 @router.post("/", response_model=LabResponse, status_code=status.HTTP_201_CREATED)
@@ -17,6 +19,14 @@ def create_lab(lab: LabCreate, current_user: User = Depends(get_current_user), d
     Crée un nouveau laboratoire pour l'utilisateur actuel
     """
     # Créer un nouveau laboratoire
+    # Validation de sécurité : empêcher les étudiants de déployer dans les namespaces système
+    if current_user.role == UserRole.student:
+        if lab.k8s_namespace and lab.k8s_namespace.startswith("kube-"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Vous ne pouvez pas déployer dans les namespaces système"
+            )
+
     db_lab = Lab(
         name=lab.name,
         description=lab.description,
@@ -30,6 +40,19 @@ def create_lab(lab: LabCreate, current_user: User = Depends(get_current_user), d
     db.add(db_lab)
     db.commit()
     db.refresh(db_lab)
+
+    audit_logger.info(
+        "lab_created",
+        extra={
+            "extra_fields": {
+                "lab_id": db_lab.id,
+                "lab_name": db_lab.name,
+                "user_id": current_user.id,
+                "username": current_user.username,
+                "role": current_user.role.value,
+            }
+        },
+    )
     
     return db_lab
 
@@ -110,6 +133,19 @@ def delete_lab(lab_id: int, current_user: User = Depends(get_current_user), db: 
     
     db.delete(db_lab)
     db.commit()
+
+    audit_logger.info(
+        "lab_deleted",
+        extra={
+            "extra_fields": {
+                "lab_id": lab_id,
+                "lab_name": db_lab.name,
+                "user_id": current_user.id,
+                "username": current_user.username,
+                "role": current_user.role.value,
+            }
+        },
+    )
     
     return None
 
