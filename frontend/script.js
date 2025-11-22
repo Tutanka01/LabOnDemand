@@ -1200,6 +1200,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!response.ok) throw new Error('Erreur lors de la récupération des pods');
             
             const data = await response.json();
+            const lifecycle = data.lifecycle || {};
+            const lifecycleState = (lifecycle.state || 'unknown').toLowerCase();
+            const isPaused = lifecycleState === 'paused';
+            const lifecycleLabelMap = {
+                paused: 'En pause',
+                running: 'Actif',
+                mixed: 'Redémarrage',
+                starting: 'Initialisation',
+                unknown: 'Inconnu'
+            };
+            const lifecycleLabel = lifecycleLabelMap[lifecycleState] || lifecycleLabelMap.unknown;
+            const pauseAction = isPaused ? 'resume' : 'pause';
+            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
+            const pausedSince = lifecycle.paused_at ? new Date(lifecycle.paused_at).toLocaleString('fr-FR', { hour12: false }) : null;
+            const pausedBy = lifecycle.paused_by || null;
             const pods = data.pods || [];
             
             // Filtre pour n'afficher que les pods dans les namespaces LabOnDemand
@@ -1274,6 +1289,116 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function formatLifecycleBadge(lifecycle) {
+        if (!lifecycle) {
+            return '<span class="lifecycle-badge unknown"><i class="fas fa-question-circle"></i> Inconnu</span>';
+        }
+        const state = (lifecycle.state || 'unknown').toLowerCase();
+        const mapping = {
+            paused: { label: 'En pause', icon: 'fa-circle-pause', css: 'paused' },
+            running: { label: 'Actif', icon: 'fa-circle-check', css: 'running' },
+            mixed: { label: 'Relance en cours', icon: 'fa-rotate', css: 'starting' },
+            starting: { label: 'Initialisation', icon: 'fa-rotate', css: 'starting' },
+            unknown: { label: 'Inconnu', icon: 'fa-question-circle', css: 'unknown' },
+        };
+        const meta = mapping[state] || mapping.unknown;
+        return `<span class="lifecycle-badge ${meta.css}"><i class="fas ${meta.icon}"></i> ${meta.label}</span>`;
+    }
+
+    function pushLifecycleFeedback(message, tone = 'info') {
+        const feedbackEl = document.getElementById('pause-feedback');
+        if (!feedbackEl) {
+            console.info('pause-mode:', message);
+            return;
+        }
+        feedbackEl.textContent = message;
+        feedbackEl.dataset.tone = tone;
+    }
+
+    async function toggleDeploymentLifecycleRequest(namespace, name, action) {
+        const endpoint = `${API_V1}/k8s/deployments/${namespace}/${name}/${action}`;
+        const response = await fetch(endpoint, { method: 'POST' });
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (error) {
+            payload = {};
+        }
+        if (!response.ok) {
+            throw new Error(payload.detail || payload.message || 'Impossible d\'appliquer cette action.');
+        }
+        return payload;
+    }
+
+    async function refreshDeploymentLifecycle(namespace, name, options = {}) {
+        const { silent = false } = options;
+        try {
+            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
+            if (!response.ok) {
+                throw new Error('Impossible d\'obtenir l\'état actuel');
+            }
+            const data = await response.json();
+            if (data.lifecycle) {
+                applyLifecycleStateToLabCard(name, data.lifecycle);
+            }
+            return data.lifecycle;
+        } catch (error) {
+            if (!silent) {
+                console.warn('refreshDeploymentLifecycle', error);
+            }
+            return null;
+        }
+    }
+
+    function bindPauseButtons(root = document) {
+        const scope = root || document;
+        scope.querySelectorAll('.btn-toggle-pause').forEach(btn => {
+            if (btn.dataset.bound === 'true') {
+                return;
+            }
+            btn.dataset.bound = 'true';
+            btn.addEventListener('click', onTogglePauseClick);
+        });
+    }
+
+    async function onTogglePauseClick(event) {
+        const btn = event.currentTarget;
+        const namespace = btn.getAttribute('data-namespace');
+        const name = btn.getAttribute('data-name');
+        const action = btn.getAttribute('data-action');
+        if (!namespace || !name || !action) {
+            return;
+        }
+
+        if (action === 'pause') {
+            const confirmed = confirm(`Mettre l'application "${name}" en pause ? Cela libèrera les pods mais conservera vos données.`);
+            if (!confirmed) {
+                return;
+            }
+        }
+
+        btn.disabled = true;
+        btn.classList.add('loading');
+
+        try {
+            const payload = await toggleDeploymentLifecycleRequest(namespace, name, action);
+            pushLifecycleFeedback(payload.message || (action === 'pause' ? 'Application mise en pause.' : 'Application relancée.'), 'success');
+            await fetchAndRenderDeployments();
+            const lifecycle = await refreshDeploymentLifecycle(namespace, name, { silent: true });
+            if (action === 'resume') {
+                checkDeploymentReadiness(namespace, name);
+            }
+            return lifecycle;
+        } catch (error) {
+            console.error('pause/resume error', error);
+            pushLifecycleFeedback(error.message || 'Action impossible.', 'error');
+            alert(`Erreur: ${error.message}`);
+        } finally {
+            btn.disabled = false;
+            btn.classList.remove('loading');
+        }
+    }
+
     async function fetchAndRenderDeployments() {
         const deploymentsListEl = document.getElementById('deployments-list');
         
@@ -1313,6 +1438,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <th>Nom</th>
                             <th>Namespace</th>
                             <th>Type</th>
+                            <th>État</th>
                             <th>CPU</th>
                             <th>Mémoire</th>
                             <th>Actions</th>
@@ -1344,12 +1470,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                             const cpuDisplay = u ? `${u.cpu_m} m` : 'N/A';
                             const memDisplay = u ? `${u.mem_mi} Mi` : 'N/A';
                             const srcBadge = u ? `<span class="usage-source ${u.source === 'live' ? 'live' : 'requests'}" title="${u.source === 'live' ? 'Mesures live (metrics-server)' : 'Estimation par requests'}">${u.source === 'live' ? 'Live' : 'Req'}</span>` : '';
+                            const lifecycle = dep.lifecycle || dep.lifecycle_summary || null;
+                            const lifecycleBadge = formatLifecycleBadge(lifecycle);
+                            const isPaused = lifecycle?.state === 'paused' || lifecycle?.paused;
+                            const pauseAction = isPaused ? 'resume' : 'pause';
+                            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
 
                             return `
                                 <tr>
                                     <td><i class="fas ${icon}"></i> ${dep.name}</td>
                                     <td>${dep.namespace}</td>
                                     <td>${typeBadge}</td>
+                                    <td>${lifecycleBadge}</td>
                                     <td>${cpuDisplay} ${srcBadge}</td>
                                     <td>${memDisplay}</td>
                                     <td class="action-cell">
@@ -1357,6 +1489,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                                                 data-name="${dep.name}" 
                                                 data-namespace="${dep.namespace}">
                                             <i class="fas fa-eye"></i>
+                                        </button>
+                                        <button class="btn btn-warning btn-toggle-pause" 
+                                                data-name="${dep.name}" 
+                                                data-namespace="${dep.namespace}"
+                                            data-action="${pauseAction}"
+                                            data-variant="icon"
+                                                title="${isPaused ? 'Relancer cette application' : 'Mettre temporairement en pause'}">
+                                            <i class="fas ${pauseIcon}"></i>
                                         </button>
                                         <button class="btn btn-danger btn-delete-deployment" 
                                                 data-name="${dep.name}" 
@@ -1408,6 +1548,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 });
             });
+
+            bindPauseButtons(deploymentsListEl);
         } catch (error) {
             console.error('Erreur:', error);
             deploymentsListEl.innerHTML = '<div class="error-message">Erreur lors du chargement des déploiements</div>';
@@ -1437,7 +1579,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             
             const data = await response.json();
-            
+
+            const lifecycle = data.lifecycle || {};
+            const lifecycleState = (lifecycle.state || 'unknown').toLowerCase();
+            const lifecycleLabelMap = {
+                paused: 'En pause',
+                running: 'Actif',
+                mixed: 'Redémarrage',
+                starting: 'Initialisation',
+                unknown: 'Inconnu',
+            };
+            const lifecycleLabel = lifecycleLabelMap[lifecycleState] || lifecycleLabelMap.unknown;
+            const isPaused = lifecycleState === 'paused' || lifecycle.paused === true;
+            const pauseAction = isPaused ? 'resume' : 'pause';
+            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
+            const pausedSince = lifecycle.paused_at
+                ? new Date(lifecycle.paused_at).toLocaleString('fr-FR', { hour12: false })
+                : null;
+            const pausedBy = lifecycle.paused_by || null;
+
             // Formater les données pour l'affichage
             let accessUrlsHtml = '';
             if (data.access_urls && data.access_urls.length > 0) {
@@ -1471,6 +1631,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <ul>
                             <li><strong>Namespace:</strong> ${data.deployment.namespace}</li>
                             <li><strong>Image:</strong> ${data.deployment.image || 'N/A'}</li>
+                            <li><strong>État:</strong> ${lifecycleLabel}${isPaused && pausedSince ? ` – en pause depuis ${pausedSince}` : ''}</li>
                             <li>
                                 <strong>Réplicas:</strong> ${data.deployment.replicas} 
                                 <span class="replica-status ${data.deployment.available_replicas > 0 ? 'ready' : 'pending'}">
@@ -1479,7 +1640,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                             </li>
                         </ul>
                         
-                        ${data.deployment.available_replicas > 0 ? `
+                        ${isPaused ? `
+                            <div class="app-availability paused">
+                                <i class="fas fa-circle-pause app-availability-icon"></i>
+                                <span class="app-availability-text">Application en pause. Vos volumes et secrets sont conservés.</span>
+                            </div>
+                        ` : data.deployment.available_replicas > 0 ? `
                             <div class="app-availability ready">
                                 <i class="fas fa-check-circle app-availability-icon"></i>
                                 <span class="app-availability-text">L'application est prête à être utilisée</span>
@@ -1500,6 +1666,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         <i class="fas fa-unlock"></i> Afficher les identifiants
                                     </button>
                                     <div id="credentials-content" class="credentials-content" style="display:none;"></div>
+                                </div>
+                                <div class="energy-panel">
+                                    <h4><i class="fas fa-leaf"></i> Mode économie de ressources</h4>
+                                    <p class="muted">Mettez votre application en pause pour libérer immédiatement CPU et mémoire tout en conservant vos données persistantes.</p>
+                                    <ul class="pause-benefits">
+                                        <li><i class="fas fa-clock"></i> Reprise en quelques secondes</li>
+                                        <li><i class="fas fa-shield-alt"></i> Volumes et secrets intacts</li>
+                                    </ul>
+                                    <div class="pause-actions">
+                                        <button class="btn btn-warning btn-toggle-pause" data-name="${name}" data-namespace="${namespace}" data-action="${pauseAction}" data-variant="text">
+                                            <i class="fas ${pauseIcon}"></i> ${isPaused ? 'Reprendre l\'application' : 'Mettre en pause'}
+                                        </button>
+                                        <a class="btn btn-ghost" href="documentation/QUICKSTART.md#mode-pause" target="_blank">
+                                            <i class="fas fa-book-open"></i> Comprendre cette fonctionnalité
+                                        </a>
+                                    </div>
+                                    <p class="pause-note">${isPaused ? `En pause${pausedSince ? ` depuis ${pausedSince}` : ''}${pausedBy ? ` (initiée par ${pausedBy})` : ''}.` : 'Conseil : mettez vos TP en veille au lieu de les supprimer lorsque vous faites une pause.'}</p>
                                 </div>
                                 <hr>
                                 <h4><i class="fas fa-terminal"></i> Console intégrée (beta)</h4>
@@ -1583,6 +1766,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 </div>
             `;
+
+            bindPauseButtons(modalContent);
 
             // Gestion des tabs
             const tabBtns = modalContent.querySelectorAll('.tab-btn');
@@ -2482,6 +2667,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     link: accessUrl,
                     namespace: effectiveNamespace,
                     ready: false,
+                    lifecycle: { state: 'starting', paused: false },
                     deploymentType,
                     nodePort: nodePort ? Number(nodePort) : undefined,
                     urlTemplate: connectionHints?.novnc?.url_template,
@@ -2597,6 +2783,72 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    function applyLifecycleStateToLabCard(deploymentId, lifecycle) {
+        const card = document.getElementById(deploymentId);
+        if (!card) {
+            return;
+        }
+        const state = (lifecycle && lifecycle.state) || 'unknown';
+        card.dataset.lifecycleState = state;
+        const statusIndicator = card.querySelector('.status-indicator');
+        const availabilityBlock = document.getElementById(`app-status-${deploymentId}`);
+        const accessBtn = document.getElementById(`access-btn-${deploymentId}`);
+        const pauseBtn = card.querySelector(`.btn-toggle-pause[data-name="${deploymentId}"]`);
+
+        if (state === 'paused') {
+            card.classList.add('lab-paused');
+            card.classList.remove('lab-ready', 'lab-pending', 'lab-error');
+            if (statusIndicator) {
+                statusIndicator.className = 'status-indicator paused';
+                statusIndicator.innerHTML = '<i class="fas fa-circle-pause"></i> En pause';
+            }
+            if (availabilityBlock) {
+                availabilityBlock.className = 'app-availability paused';
+                availabilityBlock.innerHTML = `
+                    <i class="fas fa-circle-pause app-availability-icon"></i>
+                    <span class="app-availability-text">Application en pause. Cliquez sur "Reprendre" pour la relancer.</span>
+                `;
+            }
+            if (accessBtn) {
+                accessBtn.classList.add('disabled');
+                accessBtn.innerHTML = '<i class="fas fa-circle-pause"></i> En pause';
+            }
+            if (pauseBtn) {
+                pauseBtn.setAttribute('data-action', 'resume');
+                if (pauseBtn.dataset.variant === 'text') {
+                    pauseBtn.innerHTML = '<i class="fas fa-circle-play"></i> Reprendre';
+                } else {
+                    pauseBtn.innerHTML = '<i class="fas fa-circle-play"></i>';
+                }
+            }
+        } else {
+            card.classList.remove('lab-paused');
+            if (statusIndicator && statusIndicator.classList.contains('paused')) {
+                statusIndicator.className = 'status-indicator pending';
+                statusIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> En préparation...';
+            }
+            if (availabilityBlock && availabilityBlock.classList.contains('paused')) {
+                availabilityBlock.className = 'app-availability pending';
+                availabilityBlock.innerHTML = `
+                    <i class="fas fa-hourglass-half app-availability-icon"></i>
+                    <span class="app-availability-text">L'application redémarre...</span>
+                `;
+            }
+            if (accessBtn && accessBtn.classList.contains('disabled')) {
+                accessBtn.classList.remove('disabled');
+                accessBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Accéder';
+            }
+            if (pauseBtn) {
+                pauseBtn.setAttribute('data-action', 'pause');
+                if (pauseBtn.dataset.variant === 'text') {
+                    pauseBtn.innerHTML = '<i class="fas fa-circle-pause"></i> Pause';
+                } else {
+                    pauseBtn.innerHTML = '<i class="fas fa-circle-pause"></i>';
+                }
+            }
+        }
+    }
+
     function addLabCard(labDetails) {
          if (noLabsMessage) {
              noLabsMessage.style.display = 'none'; // Hide "no labs" message
@@ -2604,8 +2856,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const card = document.createElement('div');
         card.classList.add('card', 'lab-card');
-        // Ajouter une classe pour l'état initial (pending ou ready)
-        card.classList.add(labDetails.ready ? 'lab-ready' : 'lab-pending');
+        const lifecycleState = (labDetails.lifecycle && labDetails.lifecycle.state) || null;
+        const isPaused = lifecycleState === 'paused' || labDetails.isPaused;
+        if (isPaused) {
+            card.classList.add('lab-paused');
+        } else {
+            card.classList.add(labDetails.ready ? 'lab-ready' : 'lab-pending');
+        }
         card.id = labDetails.id;
         card.dataset.namespace = labDetails.namespace;
         card.dataset.deploymentType = labDetails.deploymentType || '';
@@ -2624,9 +2881,37 @@ document.addEventListener('DOMContentLoaded', async () => {
         ` : '';
 
         // Déterminer l'indicateur d'état à afficher
-        const statusIndicator = labDetails.ready 
-            ? '<span class="status-indicator ready"><i class="fas fa-check-circle"></i> Prêt</span>'
-            : '<span class="status-indicator pending"><i class="fas fa-spinner fa-spin"></i> En préparation...</span>';        card.innerHTML = `
+        let statusIndicator = '<span class="status-indicator pending"><i class="fas fa-spinner fa-spin"></i> En préparation...</span>';
+        if (isPaused) {
+            statusIndicator = '<span class="status-indicator paused"><i class="fas fa-circle-pause"></i> En pause</span>';
+        } else if (labDetails.ready) {
+            statusIndicator = '<span class="status-indicator ready"><i class="fas fa-check-circle"></i> Prêt</span>';
+        }
+
+        const availabilityHtml = isPaused ? `
+            <div class="app-availability paused" id="app-status-${labDetails.id}">
+                <i class="fas fa-circle-pause app-availability-icon"></i>
+                <span class="app-availability-text">L'application est en pause, aucune ressource n'est consommée.</span>
+            </div>
+        ` : labDetails.ready ? `
+            <div class="app-availability ready" id="app-status-${labDetails.id}">
+                <i class="fas fa-check-circle app-availability-icon"></i>
+                <span class="app-availability-text">L'application est prête à être utilisée</span>
+            </div>
+        ` : `
+            <div class="app-availability pending" id="app-status-${labDetails.id}">
+                <i class="fas fa-hourglass-half app-availability-icon"></i>
+                <span class="app-availability-text">L'application est en cours d'initialisation</span>
+            </div>
+        `;
+
+        const pauseButtonHtml = `
+            <button class="btn btn-warning btn-toggle-pause" data-name="${labDetails.id}" data-namespace="${labDetails.namespace}" data-action="${isPaused ? 'resume' : 'pause'}" data-variant="text">
+                <i class="fas ${isPaused ? 'fa-circle-play' : 'fa-circle-pause'}"></i> ${isPaused ? 'Reprendre' : 'Pause'}
+            </button>
+        `;
+
+        card.innerHTML = `
             <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
             <div class="lab-subtitle">
                 <span class="id-badge"><i class="fas fa-tag"></i>${labDetails.id}</span>
@@ -2637,17 +2922,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <span class="meta-item"><i class="fas fa-memory"></i>${labDetails.ram}</span>
             </div>
             ${datasetsHtml}
-            ${!labDetails.ready ? `
-                <div class="app-availability pending" id="app-status-${labDetails.id}">
-                    <i class="fas fa-hourglass-half app-availability-icon"></i>
-                    <span class="app-availability-text">L'application est en cours d'initialisation</span>
-                </div>
-            ` : `
-                <div class="app-availability ready" id="app-status-${labDetails.id}">
-                    <i class="fas fa-check-circle app-availability-icon"></i>
-                    <span class="app-availability-text">L'application est prête à être utilisée</span>
-                </div>
-            `}
+            ${availabilityHtml}
             <div class="lab-actions">
                 <a href="${labDetails.link}" target="_blank" class="btn btn-primary ${labDetails.ready ? '' : 'disabled'}" id="access-btn-${labDetails.id}">
                     <i class="fas fa-external-link-alt"></i> ${labDetails.ready ? 'Accéder' : 'En préparation...'}
@@ -2656,6 +2931,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <button class="btn btn-secondary btn-details" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
                     <i class="fas fa-info-circle"></i> Détails
                 </button>
+                ${pauseButtonHtml}
                 <button class="btn btn-danger stop-lab-btn" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
                     <i class="fas fa-stop-circle"></i> Arrêter
                 </button>
@@ -2663,6 +2939,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
 
         activeLabsList.appendChild(card);
+        bindPauseButtons(card);
 
         if (isNetbeans) {
             registerNovncEndpoint(labDetails.id, labDetails.namespace, {
@@ -2678,6 +2955,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         bindNovncButtons(card);
         if (isNetbeans) {
             updateNovncButtonsAvailability(labDetails.id);
+        }
+
+        if (labDetails.lifecycle) {
+            applyLifecycleStateToLabCard(labDetails.id, labDetails.lifecycle);
+        } else if (isPaused) {
+            applyLifecycleStateToLabCard(labDetails.id, { state: 'paused' });
         }
 
         // Ajouter l'écouteur pour le bouton détails
@@ -2700,7 +2983,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         
         // Si le déploiement n'est pas prêt, démarrer les vérifications périodiques
-        if (!labDetails.ready) {
+        if (!labDetails.ready && !isPaused) {
             checkDeploymentReadiness(labDetails.namespace, labDetails.id);
         }
     }
@@ -2789,6 +3072,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             
             const data = await response.json();
+            if (data.lifecycle) {
+                applyLifecycleStateToLabCard(name, data.lifecycle);
+                if (data.lifecycle.state === 'paused') {
+                    const pausedKey = `${namespace}-${name}`;
+                    if (deploymentCheckTimers.has(pausedKey)) {
+                        clearTimeout(deploymentCheckTimers.get(pausedKey));
+                        deploymentCheckTimers.delete(pausedKey);
+                    }
+                    return;
+                }
+            }
             const available = (data.deployment && (data.deployment.available_replicas || 0) > 0);
             // Ne pas considérer "pods prêts" si la liste est vide (every([]) === true -> piège)
             const podsReady = Array.isArray(data.pods) && data.pods.length > 0 && data.pods.every(pod => pod.status === 'Running');
@@ -2838,6 +3132,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     function updateLabCardStatus(deploymentId, isReady, deploymentData, timeout = false) {
         const card = document.getElementById(deploymentId);
         if (!card) return;
+
+        if (card.dataset.lifecycleState === 'paused' && !isReady && !timeout) {
+            return;
+        }
 
         const serviceName = card.dataset.serviceName || deploymentId;
         let resolvedAccessUrl = '';
@@ -3158,6 +3456,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 link: accessUrl,
                                 namespace: deployment.namespace,
                                 ready: isReady,
+                                lifecycle: detailsData.lifecycle,
+                                isPaused: deployment.is_paused,
                                 deploymentType: deployment.type,
                                 nodePort: novncInfo.nodePort,
                                 urlTemplate: undefined,

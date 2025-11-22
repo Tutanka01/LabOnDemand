@@ -28,6 +28,12 @@
     border: 1px solid #f5c6cb;
 }
 
+.status-indicator.paused {
+    background-color: #e0e7ff;
+    color: #1e3a8a;
+    border: 1px solid #c7d2fe;
+}
+
 /* Styles pour les cartes de lab */
 .lab-card {
     transition: all 0.3s ease;
@@ -43,6 +49,10 @@
 
 .lab-error {
     border-left: 5px solid #dc3545;
+}
+
+.lab-paused {
+    border-left: 5px solid #6b7bff;
 }
 
 /* Style pour les boutons d'accès désactivés */

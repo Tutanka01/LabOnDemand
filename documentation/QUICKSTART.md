@@ -59,6 +59,13 @@ Docs: voir documentation/lamp.md et documentation/terminal.md
 3. Après l’arrêt d’un environnement, revenez sur la carte pour supprimer les volumes dont vous n’avez plus besoin; un volume encore `Bound` demandera une confirmation forcée.
 4. Les volumes réutilisables sont préfixés avec des labels LabOnDemand (`managed-by=labondemand`, `user-id=<id>`); si la StorageClass par défaut est absente, la sélection reste disponible mais le déploiement basculera en `emptyDir`.
 
+### 8. Mettre en pause/reprendre un environnement
+1. Dans la section « Déploiements actifs », utilisez le bouton `Pause` pour envoyer la requête `/api/v1/k8s/deployments/{namespace}/{name}/pause`. L’API réduit immédiatement les réplicas, verrouille le stack et stocke l’état dans les annotations `labondemand.io/paused*`.
+2. Une application en pause affiche un badge gris « Pause » dans les tableaux et sur la carte du lab; la carte passe en mode économie d’énergie et rappelle le dernier coût estimé.
+3. Pour relancer, cliquez sur `Reprendre` : l’API restaure les réplicas préalablement sauvegardés (`labondemand.io/paused-replicas`) et supprime le verrou. Le badge repasse à l’état temps réel (Ready/Progress).
+4. Les piles complètes se mettent en pause d’un bloc. Si certains services sont interdits (quota, label `pause-disabled=true`), l’appel retourne un détail dans la modale et aucune ressource n’est modifiée.
+5. Les appels REST sont journalisés dans `audit.log` avec l’auteur, le namespace et la liste des composants impactés.
+
 ## 🔧 Scripts utiles
 
 ### Test de connexion

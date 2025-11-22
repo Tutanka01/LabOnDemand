@@ -30,6 +30,11 @@ from .templates import DeploymentConfig
 logger = logging.getLogger("labondemand.deployment")
 audit_logger = logging.getLogger("labondemand.audit")
 
+PAUSE_FLAG_ANNOTATION = "labondemand.io/paused"
+PAUSE_REPLICAS_ANNOTATION = "labondemand.io/paused-replicas"
+PAUSE_BY_ANNOTATION = "labondemand.io/paused-by"
+PAUSE_AT_ANNOTATION = "labondemand.io/paused-at"
+
 class DeploymentService:
     """
     Service responsable de la création et gestion des déploiements
@@ -512,6 +517,413 @@ class DeploymentService:
                 status_code=403,
                 detail="Quota Kubernetes dépassé: " + "; ".join(violations),
             )
+
+    @staticmethod
+    def _assert_namespace_allowed(namespace: str, current_user: User) -> None:
+        """Empêche un étudiant de manipuler un namespace qui n'est pas le sien."""
+        if current_user.role != UserRole.student:
+            return
+        expected = build_user_namespace(current_user)
+        if namespace != expected:
+            audit_logger.warning(
+                "namespace_access_denied",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "expected_namespace": expected,
+                        "user_id": getattr(current_user, "id", None),
+                    }
+                },
+            )
+            raise HTTPException(status_code=403, detail="Namespace non autorisé pour cet utilisateur")
+
+    @staticmethod
+    def _can_control_foreign_deployments(user: User) -> bool:
+        role = getattr(user, "role", None)
+        return role == UserRole.admin
+
+    def _assert_deployment_access(
+        self,
+        labels: Dict[str, str],
+        current_user: User,
+        namespace: str,
+        deployment_name: str,
+    ) -> None:
+        managed = labels.get("managed-by")
+        owner_id = labels.get("user-id")
+        if managed != "labondemand":
+            audit_logger.warning(
+                "deployment_access_blocked_non_managed",
+                extra={
+                    "extra_fields": {
+                        "deployment": deployment_name,
+                        "namespace": namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "managed": managed,
+                    }
+                },
+            )
+            raise HTTPException(status_code=403, detail="Déploiement hors périmètre LabOnDemand")
+
+        if not owner_id:
+            audit_logger.warning(
+                "deployment_access_blocked_no_owner",
+                extra={
+                    "extra_fields": {
+                        "deployment": deployment_name,
+                        "namespace": namespace,
+                        "user_id": getattr(current_user, "id", None),
+                    }
+                },
+            )
+            raise HTTPException(status_code=403, detail="Déploiement sans propriétaire identifié")
+
+        if owner_id == str(getattr(current_user, "id", "")):
+            return
+
+        if self._can_control_foreign_deployments(current_user):
+            return
+
+        audit_logger.warning(
+            "deployment_access_blocked_foreign_owner",
+            extra={
+                "extra_fields": {
+                    "deployment": deployment_name,
+                    "namespace": namespace,
+                    "user_id": getattr(current_user, "id", None),
+                    "target_owner": owner_id,
+                }
+            },
+        )
+        raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
+
+    def _stack_label_selector(self, stack_name: str, current_user: User) -> str:
+        selector = f"managed-by=labondemand,stack-name={stack_name}"
+        if current_user.role == UserRole.student:
+            selector += f",user-id={current_user.id}"
+        return selector
+
+    def _resolve_target_deployments(
+        self,
+        namespace: str,
+        name: str,
+        current_user: User,
+    ) -> Dict[str, Any]:
+        namespace = validate_k8s_name(namespace)
+        name = validate_k8s_name(name)
+        self._assert_namespace_allowed(namespace, current_user)
+
+        deployments: List[client.V1Deployment] = []
+        stack_name: Optional[str] = None
+        stack_mode = False
+
+        try:
+            deployment = self.apps_v1.read_namespaced_deployment(name, namespace)
+            deployments = [deployment]
+            labels = deployment.metadata.labels or {}
+            stack_name = labels.get("stack-name")
+            if stack_name:
+                stack_mode = True
+                deployments = (
+                    self.apps_v1.list_namespaced_deployment(
+                        namespace, label_selector=self._stack_label_selector(stack_name, current_user)
+                    ).items
+                    or []
+                )
+        except client.exceptions.ApiException as exc:
+            if exc.status != 404:
+                raise
+
+        if not deployments:
+            stack_selector = self._stack_label_selector(name, current_user)
+            stack_candidates = self.apps_v1.list_namespaced_deployment(namespace, label_selector=stack_selector)
+            if stack_candidates.items:
+                deployments = stack_candidates.items
+                stack_name = name
+                stack_mode = True
+            else:
+                app_selector = f"app={name}"
+                app_candidates = self.apps_v1.list_namespaced_deployment(namespace, label_selector=app_selector)
+                if app_candidates.items:
+                    deployments = app_candidates.items
+                else:
+                    raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+
+        filtered: List[client.V1Deployment] = []
+        for dep in deployments:
+            labels = dep.metadata.labels or {}
+            self._assert_deployment_access(labels, current_user, namespace, dep.metadata.name)
+            filtered.append(dep)
+
+        deployments = filtered
+        if not deployments:
+            raise HTTPException(status_code=404, detail="Déploiement introuvable")
+
+        base_labels = deployments[0].metadata.labels or {}
+        app_type = base_labels.get("app-type", "custom")
+        display_name = stack_name or base_labels.get("stack-name") or deployments[0].metadata.name
+
+        return {
+            "deployments": deployments,
+            "stack_mode": stack_mode,
+            "stack_name": stack_name,
+            "display_name": display_name,
+            "namespace": namespace,
+            "app_type": app_type,
+        }
+
+    def describe_component_lifecycle(self, deployment: client.V1Deployment) -> Dict[str, Any]:
+        annotations = dict(getattr(deployment.metadata, "annotations", {}) or {})
+        requested = int(getattr(getattr(deployment, "spec", None), "replicas", 0) or 0)
+        ready = int(getattr(getattr(deployment, "status", None), "ready_replicas", 0) or 0)
+        available = int(getattr(getattr(deployment, "status", None), "available_replicas", 0) or ready)
+        paused_flag = annotations.get(PAUSE_FLAG_ANNOTATION) == "true"
+        state = "running"
+        if paused_flag or requested == 0:
+            state = "paused"
+        elif available > 0 and ready >= available:
+            state = "running"
+        else:
+            state = "starting"
+
+        stored_replicas = annotations.get(PAUSE_REPLICAS_ANNOTATION)
+        resume_replicas: Optional[int] = None
+        if stored_replicas:
+            try:
+                resume_replicas = max(int(stored_replicas), 1)
+            except (TypeError, ValueError):
+                resume_replicas = None
+
+        return {
+            "name": deployment.metadata.name,
+            "state": state,
+            "paused": state == "paused",
+            "requested_replicas": requested,
+            "ready_replicas": ready,
+            "available_replicas": available,
+            "paused_at": annotations.get(PAUSE_AT_ANNOTATION),
+            "paused_by": annotations.get(PAUSE_BY_ANNOTATION),
+            "resume_replicas": resume_replicas or max(requested, 1) or 1,
+        }
+
+    def summarize_lifecycle(self, components: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not components:
+            return {"state": "unknown", "paused": False, "paused_components": 0, "total_components": 0}
+
+        total = len(components)
+        paused_count = sum(1 for comp in components if comp.get("state") == "paused")
+        running_count = sum(1 for comp in components if comp.get("state") == "running")
+
+        if paused_count == total:
+            state = "paused"
+        elif running_count == total:
+            state = "running"
+        else:
+            state = "mixed"
+
+        paused_at_values = [comp.get("paused_at") for comp in components if comp.get("paused_at")]
+        paused_by_values = [comp.get("paused_by") for comp in components if comp.get("paused_by")]
+
+        return {
+            "state": state,
+            "paused": paused_count == total and total > 0,
+            "paused_components": paused_count,
+            "total_components": total,
+            "paused_at": max(paused_at_values) if paused_at_values else None,
+            "paused_by": paused_by_values[0] if paused_by_values else None,
+        }
+
+    async def pause_application(self, namespace: str, name: str, current_user: User) -> Dict[str, Any]:
+        resolved = self._resolve_target_deployments(namespace, name, current_user)
+        components_payload: List[Dict[str, Any]] = []
+        iso_now = datetime.datetime.utcnow().isoformat() + "Z"
+        paused_by = getattr(current_user, "username", str(getattr(current_user, "id", "unknown")))
+
+        for deployment in resolved["deployments"]:
+            lifecycle_before = self.describe_component_lifecycle(deployment)
+            if lifecycle_before["state"] == "paused":
+                components_payload.append({
+                    "name": deployment.metadata.name,
+                    "already_paused": True,
+                    "lifecycle": lifecycle_before,
+                })
+                continue
+
+            previous_replicas = max(lifecycle_before.get("requested_replicas", 0), 1)
+            patch_body = {
+                "metadata": {
+                    "annotations": {
+                        PAUSE_FLAG_ANNOTATION: "true",
+                        PAUSE_REPLICAS_ANNOTATION: str(previous_replicas),
+                        PAUSE_BY_ANNOTATION: paused_by,
+                        PAUSE_AT_ANNOTATION: iso_now,
+                    }
+                },
+                "spec": {"replicas": 0},
+            }
+            updated = self.apps_v1.patch_namespaced_deployment(
+                name=deployment.metadata.name,
+                namespace=resolved["namespace"],
+                body=patch_body,
+            )
+            lifecycle_after = self.describe_component_lifecycle(updated)
+            components_payload.append({
+                "name": deployment.metadata.name,
+                "previous_replicas": previous_replicas,
+                "lifecycle": lifecycle_after,
+            })
+
+        lifecycle_summary = self.summarize_lifecycle([c["lifecycle"] for c in components_payload])
+
+        audit_logger.info(
+            "deployment_paused",
+            extra={
+                "extra_fields": {
+                    "namespace": resolved["namespace"],
+                    "display_name": resolved["display_name"],
+                    "user_id": getattr(current_user, "id", None),
+                    "stack_mode": resolved["stack_mode"],
+                    "components": [c["name"] for c in components_payload],
+                }
+            },
+        )
+
+        return {
+            "action": "paused",
+            "name": resolved["display_name"],
+            "namespace": resolved["namespace"],
+            "stack": resolved["stack_name"],
+            "components": components_payload,
+            "lifecycle": lifecycle_summary,
+            "message": "Application mise en pause. Les pods seront libérés dans quelques secondes.",
+        }
+
+    async def resume_application(self, namespace: str, name: str, current_user: User) -> Dict[str, Any]:
+        resolved = self._resolve_target_deployments(namespace, name, current_user)
+        components_payload: List[Dict[str, Any]] = []
+
+        # Calculer l'impact quota avant de relancer les pods
+        planned_pods = 0
+        planned_cpu_m = 0
+        planned_mem_mi = 0
+        planned_limits_cpu_m = 0
+        planned_limits_mem_mi = 0
+
+        for deployment in resolved["deployments"]:
+            lifecycle = self.describe_component_lifecycle(deployment)
+            target_replicas = lifecycle.get("resume_replicas") or 1
+            planned_pods += target_replicas
+
+            tmpl_spec = getattr(getattr(deployment.spec, "template", None), "spec", None)
+            containers = []
+            if tmpl_spec and getattr(tmpl_spec, "containers", None):
+                containers = tmpl_spec.containers
+            for container in containers:
+                resources = getattr(container, "resources", None)
+                requests = getattr(resources, "requests", None) if resources else None
+                limits = getattr(resources, "limits", None) if resources else None
+                cpu_req = None
+                mem_req = None
+                cpu_lim = None
+                mem_lim = None
+                if isinstance(requests, dict):
+                    cpu_req = requests.get("cpu")
+                    mem_req = requests.get("memory")
+                if isinstance(limits, dict):
+                    cpu_lim = limits.get("cpu")
+                    mem_lim = limits.get("memory")
+                if cpu_req:
+                    planned_cpu_m += parse_cpu_to_millicores(str(cpu_req)) * target_replicas
+                if mem_req:
+                    planned_mem_mi += parse_memory_to_mi(str(mem_req)) * target_replicas
+                if cpu_lim:
+                    planned_limits_cpu_m += parse_cpu_to_millicores(str(cpu_lim)) * target_replicas
+                if mem_lim:
+                    planned_limits_mem_mi += parse_memory_to_mi(str(mem_lim)) * target_replicas
+
+        if planned_pods == 0:
+            planned_pods = len(resolved["deployments"])
+
+        self._assert_user_quota(
+            current_user=current_user,
+            planned_apps=1,
+            planned_pods=planned_pods,
+            planned_cpu_request_m=int(planned_cpu_m),
+            planned_memory_request_mi=int(planned_mem_mi),
+        )
+        try:
+            self._preflight_k8s_quota(
+                resolved["namespace"],
+                planned_requests_cpu_m=int(planned_cpu_m),
+                planned_limits_cpu_m=int(planned_limits_cpu_m or planned_cpu_m),
+                planned_requests_mem_mi=int(planned_mem_mi),
+                planned_limits_mem_mi=int(planned_limits_mem_mi or planned_mem_mi),
+                planned_pods=planned_pods,
+                planned_deployments=len(resolved["deployments"]),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "resume_quota_preflight_failed",
+                extra={
+                    "extra_fields": {
+                        "namespace": resolved["namespace"],
+                        "error": str(exc),
+                    }
+                },
+            )
+
+        for deployment in resolved["deployments"]:
+            lifecycle_before = self.describe_component_lifecycle(deployment)
+            target_replicas = lifecycle_before.get("resume_replicas") or 1
+            patch_body = {
+                "metadata": {
+                    "annotations": {
+                        PAUSE_FLAG_ANNOTATION: None,
+                        PAUSE_REPLICAS_ANNOTATION: None,
+                        PAUSE_BY_ANNOTATION: None,
+                        PAUSE_AT_ANNOTATION: None,
+                    }
+                },
+                "spec": {"replicas": target_replicas},
+            }
+            updated = self.apps_v1.patch_namespaced_deployment(
+                name=deployment.metadata.name,
+                namespace=resolved["namespace"],
+                body=patch_body,
+            )
+            lifecycle_after = self.describe_component_lifecycle(updated)
+            components_payload.append({
+                "name": deployment.metadata.name,
+                "target_replicas": target_replicas,
+                "lifecycle": lifecycle_after,
+            })
+
+        lifecycle_summary = self.summarize_lifecycle([c["lifecycle"] for c in components_payload])
+
+        audit_logger.info(
+            "deployment_resumed",
+            extra={
+                "extra_fields": {
+                    "namespace": resolved["namespace"],
+                    "display_name": resolved["display_name"],
+                    "user_id": getattr(current_user, "id", None),
+                    "stack_mode": resolved["stack_mode"],
+                    "components": [c["name"] for c in components_payload],
+                }
+            },
+        )
+
+        return {
+            "action": "resumed",
+            "name": resolved["display_name"],
+            "namespace": resolved["namespace"],
+            "stack": resolved["stack_name"],
+            "components": components_payload,
+            "lifecycle": lifecycle_summary,
+            "message": "Application redémarrée. Les pods seront recréés sous peu.",
+        }
 
     def _validate_existing_pvc(
         self,
