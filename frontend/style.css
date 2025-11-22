@@ -82,6 +82,120 @@ p.subtitle {
     font-size: 1.1rem;
 }
 
+.energy-hint-card {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background: #f2fbf3;
+    border: 1px solid #d6f0da;
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 18px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.04);
+}
+
+.energy-hint-card .icon {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: #e7f7ea;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #2f855a;
+    font-size: 1.4rem;
+}
+
+.energy-hint-card strong {
+    display: block;
+    font-size: 1rem;
+    margin-bottom: 4px;
+}
+
+#pause-feedback {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #0f5132;
+}
+
+#pause-feedback[data-tone="success"] { color: var(--success-color); }
+#pause-feedback[data-tone="error"] { color: var(--error-color); }
+
+.btn-outline {
+    border: 1px solid #2f855a;
+    color: #2f855a;
+    background: transparent;
+    padding: 8px 14px;
+    border-radius: 24px;
+    transition: background var(--transition-speed);
+}
+
+.btn-outline:hover {
+    background: #2f855a;
+    color: #fff;
+}
+
+.lifecycle-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.lifecycle-badge.running { background: #daf5e6; color: #155724; }
+.lifecycle-badge.paused { background: #e0e7ff; color: #1e3a8a; }
+.lifecycle-badge.starting { background: #fff4e6; color: #a15c07; }
+.lifecycle-badge.unknown { background: #f1f5f9; color: #475569; }
+
+.energy-panel {
+    margin-top: 18px;
+    padding: 16px;
+    border: 1px dashed #bee3be;
+    border-radius: 12px;
+    background: #fbfffb;
+}
+
+.pause-benefits {
+    list-style: none;
+    padding-left: 0;
+    margin: 10px 0;
+}
+
+.pause-benefits li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #2f855a;
+    margin-bottom: 6px;
+}
+
+.pause-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 12px 0;
+}
+
+.btn-ghost {
+    border: none;
+    background: transparent;
+    color: var(--labondemand-blue);
+    padding: 8px 10px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-ghost:hover { text-decoration: underline; }
+
+.pause-note {
+    font-size: 0.88rem;
+    color: #4c4c4c;
+}
+
 a {
     color: var(--labondemand-green);
     text-decoration: none;
@@ -1991,6 +2105,12 @@ footer {
     background-color: #fff3cd;
     color: #856404;
     border: 1px solid #ffeaa7;
+}
+
+.app-availability.paused {
+    background-color: #e0e7ff;
+    color: #1e3a8a;
+    border: 1px solid #c7d2fe;
 }
 
 .app-availability.error {

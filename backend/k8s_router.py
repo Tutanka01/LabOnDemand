@@ -799,6 +799,7 @@ async def get_labondemand_deployments(current_user: User = Depends(get_current_u
                 else:
                     stack_name = dep_name
 
+            lifecycle = deployment_service.describe_component_lifecycle(dep)
             entry = {
                 "name": dep.metadata.name,
                 "namespace": dep.metadata.namespace,
@@ -806,7 +807,9 @@ async def get_labondemand_deployments(current_user: User = Depends(get_current_u
                 "labels": labels,
                 "replicas": dep.spec.replicas,
                 "ready_replicas": dep.status.ready_replicas or 0,
-                "image": dep.spec.template.spec.containers[0].image if dep.spec.template.spec.containers else "Unknown"
+                "image": dep.spec.template.spec.containers[0].image if dep.spec.template.spec.containers else "Unknown",
+                "lifecycle": lifecycle,
+                "is_paused": lifecycle.get("paused", False),
             }
 
             if stack_name:
@@ -818,14 +821,20 @@ async def get_labondemand_deployments(current_user: User = Depends(get_current_u
                         "namespace": dep.metadata.namespace,
                         "type": app_type,
                         "labels": labels,
-                        "replicas": dep.spec.replicas,
+                        "replicas": dep.spec.replicas or 0,
                         "ready_replicas": dep.status.ready_replicas or 0,
+                        "lifecycle": deployment_service.summarize_lifecycle([lifecycle]),
                         "components": [entry],
+                        "is_paused": lifecycle.get("paused", False),
                     }
                 else:
                     agg["components"].append(entry)
-                    # consolider readiness simple: si au moins un composant ready, laisser comme tel; sinon prendre min
-                    agg["ready_replicas"] = max(agg.get("ready_replicas", 0), entry["ready_replicas"])
+                    agg["replicas"] = (agg.get("replicas", 0) or 0) + (dep.spec.replicas or 0)
+                    agg["ready_replicas"] = (agg.get("ready_replicas", 0) or 0) + (dep.status.ready_replicas or 0)
+                    agg["lifecycle"] = deployment_service.summarize_lifecycle([
+                        component.get("lifecycle") for component in agg["components"]
+                    ])
+                    agg["is_paused"] = agg["lifecycle"].get("paused", False)
             else:
                 singles.append(entry)
 
@@ -904,6 +913,22 @@ async def get_deployment_details(
         # Déterminer si on est dans une "stack" (wordpress/mysql) pour agréger via stack-name
         dep_labels = deployment.metadata.labels or {}
         stack_name = dep_labels.get("stack-name")
+
+        component_deployments: List[client.V1Deployment] = []
+        if stack_name:
+            try:
+                comp_list = apps_v1.list_namespaced_deployment(
+                    namespace,
+                    label_selector=f"managed-by=labondemand,stack-name={stack_name}"
+                )
+                component_deployments = comp_list.items or []
+            except Exception:
+                component_deployments = []
+        if not component_deployments:
+            component_deployments = [deployment]
+
+        lifecycle_components = [deployment_service.describe_component_lifecycle(dep) for dep in component_deployments]
+        lifecycle_summary = deployment_service.summarize_lifecycle(lifecycle_components)
 
         # Récupérer les pods associés (par stack-name si disponible)
         if stack_name:
@@ -1119,7 +1144,16 @@ async def get_deployment_details(
                 "ready_replicas": deployment.status.ready_replicas or 0,
                 "available_replicas": deployment.status.available_replicas or 0,
                 "image": deployment.spec.template.spec.containers[0].image if deployment.spec.template.spec.containers else None,
-                "labels": dict(deployment.metadata.labels) if deployment.metadata.labels else {}
+                "labels": dict(deployment.metadata.labels) if deployment.metadata.labels else {},
+                "state": lifecycle_summary.get("state"),
+                "paused": lifecycle_summary.get("paused", False),
+            },
+            "lifecycle": {
+                "state": lifecycle_summary.get("state"),
+                "paused": lifecycle_summary.get("paused", False),
+                "paused_at": lifecycle_summary.get("paused_at"),
+                "paused_by": lifecycle_summary.get("paused_by"),
+                "components": lifecycle_components,
             },
             "pods": [
                 {
@@ -1427,6 +1461,39 @@ async def create_deployment(
         current_user=current_user,
         existing_pvc_name=existing_pvc_name,
     )
+
+# ============= ENDPOINTS DE CONTRÔLE =============
+
+@router.post("/deployments/{namespace}/{name}/pause")
+async def pause_deployment(
+    namespace: str,
+    name: str,
+    current_user: User = Depends(get_current_user),
+):
+    namespace = validate_k8s_name(namespace)
+    name = validate_k8s_name(name)
+    try:
+        return await deployment_service.pause_application(namespace, name, current_user)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_k8s_http(exc)
+
+
+@router.post("/deployments/{namespace}/{name}/resume")
+async def resume_deployment(
+    namespace: str,
+    name: str,
+    current_user: User = Depends(get_current_user),
+):
+    namespace = validate_k8s_name(namespace)
+    name = validate_k8s_name(name)
+    try:
+        return await deployment_service.resume_application(namespace, name, current_user)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_k8s_http(exc)
 
 # ============= ENDPOINTS DE SUPPRESSION =============
 
