@@ -1579,7 +1579,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             
             const data = await response.json();
-            
+
+            const lifecycle = data.lifecycle || {};
+            const lifecycleState = (lifecycle.state || 'unknown').toLowerCase();
+            const lifecycleLabelMap = {
+                paused: 'En pause',
+                running: 'Actif',
+                mixed: 'Redémarrage',
+                starting: 'Initialisation',
+                unknown: 'Inconnu',
+            };
+            const lifecycleLabel = lifecycleLabelMap[lifecycleState] || lifecycleLabelMap.unknown;
+            const isPaused = lifecycleState === 'paused' || lifecycle.paused === true;
+            const pauseAction = isPaused ? 'resume' : 'pause';
+            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
+            const pausedSince = lifecycle.paused_at
+                ? new Date(lifecycle.paused_at).toLocaleString('fr-FR', { hour12: false })
+                : null;
+            const pausedBy = lifecycle.paused_by || null;
+
             // Formater les données pour l'affichage
             let accessUrlsHtml = '';
             if (data.access_urls && data.access_urls.length > 0) {

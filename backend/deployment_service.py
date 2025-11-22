@@ -518,13 +518,84 @@ class DeploymentService:
                 detail="Quota Kubernetes dépassé: " + "; ".join(violations),
             )
 
-    def _assert_namespace_allowed(self, namespace: str, current_user: User) -> None:
+    @staticmethod
+    def _assert_namespace_allowed(namespace: str, current_user: User) -> None:
         """Empêche un étudiant de manipuler un namespace qui n'est pas le sien."""
         if current_user.role != UserRole.student:
             return
         expected = build_user_namespace(current_user)
         if namespace != expected:
+            audit_logger.warning(
+                "namespace_access_denied",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "expected_namespace": expected,
+                        "user_id": getattr(current_user, "id", None),
+                    }
+                },
+            )
             raise HTTPException(status_code=403, detail="Namespace non autorisé pour cet utilisateur")
+
+    @staticmethod
+    def _can_control_foreign_deployments(user: User) -> bool:
+        role = getattr(user, "role", None)
+        return role == UserRole.admin
+
+    def _assert_deployment_access(
+        self,
+        labels: Dict[str, str],
+        current_user: User,
+        namespace: str,
+        deployment_name: str,
+    ) -> None:
+        managed = labels.get("managed-by")
+        owner_id = labels.get("user-id")
+        if managed != "labondemand":
+            audit_logger.warning(
+                "deployment_access_blocked_non_managed",
+                extra={
+                    "extra_fields": {
+                        "deployment": deployment_name,
+                        "namespace": namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "managed": managed,
+                    }
+                },
+            )
+            raise HTTPException(status_code=403, detail="Déploiement hors périmètre LabOnDemand")
+
+        if not owner_id:
+            audit_logger.warning(
+                "deployment_access_blocked_no_owner",
+                extra={
+                    "extra_fields": {
+                        "deployment": deployment_name,
+                        "namespace": namespace,
+                        "user_id": getattr(current_user, "id", None),
+                    }
+                },
+            )
+            raise HTTPException(status_code=403, detail="Déploiement sans propriétaire identifié")
+
+        if owner_id == str(getattr(current_user, "id", "")):
+            return
+
+        if self._can_control_foreign_deployments(current_user):
+            return
+
+        audit_logger.warning(
+            "deployment_access_blocked_foreign_owner",
+            extra={
+                "extra_fields": {
+                    "deployment": deployment_name,
+                    "namespace": namespace,
+                    "user_id": getattr(current_user, "id", None),
+                    "target_owner": owner_id,
+                }
+            },
+        )
+        raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
 
     def _stack_label_selector(self, stack_name: str, current_user: User) -> str:
         selector = f"managed-by=labondemand,stack-name={stack_name}"
@@ -581,11 +652,7 @@ class DeploymentService:
         filtered: List[client.V1Deployment] = []
         for dep in deployments:
             labels = dep.metadata.labels or {}
-            if current_user.role == UserRole.student:
-                managed = labels.get("managed-by")
-                owner_id = labels.get("user-id")
-                if managed != "labondemand" or owner_id != str(current_user.id):
-                    raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
+            self._assert_deployment_access(labels, current_user, namespace, dep.metadata.name)
             filtered.append(dep)
 
         deployments = filtered
