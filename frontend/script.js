@@ -1,5 +1,11 @@
-// Importation du gestionnaire d'authentification
+// Importation du gestionnaire d'authentification et des modules du tableau de bord
 import authManager from './js/auth.js';
+import { createDashboardState } from './js/dashboard/state.js';
+import { createNovncModule } from './js/dashboard/novnc.js';
+import { createStatusView } from './js/dashboard/statusView.js';
+import { createResourceModule } from './js/dashboard/resources.js';
+import { createDeploymentsModule } from './js/dashboard/deployments.js';
+import { escapeHtml } from './js/dashboard/utils.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     // Vérifier l'authentification avant de continuer
@@ -56,1994 +62,231 @@ document.addEventListener('DOMContentLoaded', async () => {
     const showPvcPanelBtn = document.getElementById('show-pvc-panel-btn');
     const pvcStatTotal = document.getElementById('pvc-stat-total');
     const pvcStatBound = document.getElementById('pvc-stat-bound');
+    const deploymentDetailsModal = document.getElementById('deployment-details-modal');
+    const deploymentDetailsContent = document.getElementById('deployment-details-content');
+        const API_V1 = '/api/v1';
 
-    // URL de base de l'API (à adapter selon votre configuration)
-    const API_BASE_URL = ''; // Vide pour les requêtes relatives
-    const API_V1 = `${API_BASE_URL}/api/v1`;
-    
-    console.log('LabOnDemand Script - Corrections de filtrage des déploiements et gestion d\'erreurs améliorée');
+        const state = createDashboardState();
 
-    const serviceGuidanceMessages = {
-        mysql: {
-            icon: 'fas fa-database',
-            title: 'MySQL + phpMyAdmin',
-            description: 'Installe une base MySQL accompagnée de l’interface phpMyAdmin pour la gérer facilement.',
-            bulletPoints: [
-                'Vos données MySQL sont conservées automatiquement (jusqu’à 1 Go).',
-                'Les identifiants de connexion s’affichent dans le récapitulatif une fois l’environnement prêt.',
-                'Vous accédez à la base via phpMyAdmin (lien fourni quand le service est disponible).'
-            ],
-        },
-        wordpress: {
-            icon: 'fab fa-wordpress',
-            title: 'WordPress',
-            description: 'Déploie WordPress avec sa base MariaDB déjà configurée.',
-            bulletPoints: [
-                'Le site et la base sont sauvegardés automatiquement (jusqu’à 1 Go).',
-                'Les identifiants administrateur apparaissent dans le récapitulatif quand le site est prêt.',
-                'Pensez à exporter votre contenu si vous supprimez le déploiement.'
-            ],
-        },
-    };
-
-    // Compteur pour les labs (utilisé pour les demos uniquement)
-    let labCounter = 0;
-    const novncEndpoints = new Map();
-    let lastLaunchedDeployment = null;
-    let currentStatusDeployment = null;
-    let cachedPvcs = [];
-    let pvcsLastFetched = 0;
-    let cachedAdminPvcs = [];
-    let adminPvcsLastFetched = 0;
-    let lastQuotaData = null;
-
-    // --- UI: Toggle section Kubernetes ---
-    if (k8sSectionToggle && k8sResources) {
-        k8sSectionToggle.addEventListener('click', () => {
-            k8sSectionToggle.classList.toggle('active');
-            k8sResources.classList.toggle('active');
+        const novncModule = createNovncModule({
+            API_V1,
+            state,
+            elements: {
+                novncModal,
+                novncModalTitle,
+                novncFrame,
+                novncStatusBanner,
+                novncCredentialsBox,
+            },
         });
-    }
 
-    // --- UI: Toggle section PVC détaillée ---
-    if (pvcSectionToggle && pvcResources) {
-        pvcSectionToggle.addEventListener('click', () => {
-            pvcSectionToggle.classList.toggle('active');
-            pvcResources.classList.toggle('active');
+        const statusViewModule = createStatusView({
+            state,
+            elements: { statusContent, statusActions },
+            novnc: novncModule,
         });
-    }
 
-    // --- UI: Show PVC panel button ---
-    if (showPvcPanelBtn && pvcSectionToggle) {
-        showPvcPanelBtn.addEventListener('click', () => {
-            pvcSectionToggle.classList.add('active');
-            pvcResources.classList.add('active');
-            pvcSectionToggle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const resourcesModule = createResourceModule({
+            API_V1,
+            state,
+            elements: {
+                quotasContent,
+                statActiveAppsEl,
+                statReadyAppsEl,
+                statPvcsEl,
+                statQuotaAppsEl,
+                pvcStatTotal,
+                pvcStatBound,
+                pvcListContainer,
+                existingPvcSelect,
+                pvcSelectGroup,
+                adminPvcsList,
+            },
         });
-    }
 
-    // --- Auth UI: infos utilisateur + bouton logout ---
-    function initUserInfo() {
-        // Message de bienvenue
-        if (userGreeting) {
-            const name = authManager.getUserDisplayName();
-            let roleIcon = '<i class="fas fa-user"></i>';
-            const role = authManager.getUserRole();
-            if (role === 'admin') roleIcon = '<i class="fas fa-user-shield"></i>';
-            else if (role === 'teacher') roleIcon = '<i class="fas fa-chalkboard-teacher"></i>';
-            else if (role === 'student') roleIcon = '<i class="fas fa-user-graduate"></i>';
-
-            userGreeting.innerHTML = `Bonjour, ${name} ${roleIcon}`;
-        }
-
-        // Déconnexion
-        if (logoutBtn) {
-            // éviter de dupliquer les listeners si le script est rechargé
-            logoutBtn.onclick = async () => {
-                await authManager.logout();
-            };
-        }
-
-        // Adapter l'UI selon le rôle: masquer la section K8s pour les étudiants
-        const k8sSection = document.querySelector('.k8s-admin-only');
-        if (k8sSection) {
-            if (authManager.isAdmin() || authManager.isTeacher()) {
-                k8sSection.style.display = 'block';
-            } else {
-                k8sSection.style.display = 'none';
-                if (k8sSectionToggle && k8sResources) {
-                    k8sSectionToggle.classList.remove('active');
-                    k8sResources.classList.remove('active');
-                }
-            }
-        }
-
-        // Assurer que la section PVC reste visible pour tous les rôles
-        const pvcSection = document.querySelector('.pvc-section');
-        if (pvcSection) {
-            pvcSection.style.display = 'block';
-        }
-
-        if (pvcSectionToggle && pvcResources) {
-            pvcSectionToggle.classList.add('active');
-            pvcResources.classList.add('active');
-        }
-
-        if (adminPvcsPanel) {
-            if (authManager.isAdmin() || authManager.isTeacher()) {
-                adminPvcsPanel.style.display = '';
-            } else {
-                adminPvcsPanel.style.display = 'none';
-            }
-        }
-    }
-
-    // --- API: statut ---
-    async function checkApiStatus() {
-        try {
-            const resp = await fetch(`${API_V1}/status`);
-            if (!resp.ok) throw new Error('Statut API non OK');
-            const data = await resp.json();
-            if (apiStatusEl) {
-                apiStatusEl.textContent = `API v${data.version} connectée`;
-                apiStatusEl.classList.add('online');
-                apiStatusEl.classList.remove('offline');
-            }
-            // Ping rapide de l'API Kubernetes pour savoir si on peut afficher la section K8s
-            try {
-                const ping = await fetch(`${API_V1}/k8s/ping`);
-                if (!ping.ok) throw new Error('K8s KO');
-                return { api: true, k8s: true };
-            } catch (e) {
-                console.warn('Kubernetes indisponible:', e.message || e);
-                return { api: true, k8s: false };
-            }
-        } catch (err) {
-            console.error("Erreur de connexion à l'API:", err);
-            if (apiStatusEl) {
-                apiStatusEl.textContent = 'API non disponible';
-                apiStatusEl.classList.add('offline');
-                apiStatusEl.classList.remove('online');
-            }
-            return { api: false, k8s: false };
-        }
-    }
-
-    // --- Quotas: fetch + rendu ---
-    async function fetchMyQuotas() {
-        const resp = await fetch(`${API_V1}/quotas/me`, { credentials: 'include' });
-        if (!resp.ok) throw new Error('Quotas indisponibles');
-        return await resp.json();
-    }
-    function pct(part, whole) { return whole ? Math.min(100, Math.round((part / whole) * 100)) : 0; }
-    function barClass(p) { return p < 70 ? 'pb-green' : (p < 90 ? 'pb-amber' : 'pb-red'); }
-    function renderQuotasCard(data) {
-        if (!quotasContent) return;
-        lastQuotaData = data;
-        const { limits, usage } = data || {};
-        if (!limits || !usage) {
-            quotasContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> Quotas indisponibles</div>`;
-            updateDashboardStats();
-            return;
-        }
-        const rows = [
-            { title: 'Applications', icon: 'fa-layer-group', used: usage.apps_used, max: limits.max_apps, unit: '' },
-            { title: 'CPU', icon: 'fa-microchip', used: usage.cpu_m_used, max: limits.max_requests_cpu_m, unit: 'm' },
-            { title: 'Mémoire', icon: 'fa-memory', used: usage.mem_mi_used, max: limits.max_requests_mem_mi, unit: 'Mi' },
-        ];
-        quotasContent.innerHTML = rows.map(r => {
-            const p = pct(r.used, r.max);
-            return `
-            <div class="quota-item">
-              <h4><i class="fas ${r.icon}"></i> ${r.title}</h4>
-              <div class="quota-metric"><i class="fas fa-chart-bar"></i> ${r.used} / ${r.max} ${r.unit}</div>
-              <div class="progress"><div class="progress-bar ${barClass(p)}" style="width:${p}%"></div></div>
-              <div class="quota-legend">Reste: ${Math.max(r.max - r.used, 0)} ${r.unit}</div>
-            </div>`;
-        }).join('');
-        updateDashboardStats();
-    }
-    async function refreshQuotas() {
-        if (!quotasContent) return;
-        quotasContent.innerHTML = 'Chargement...';
-        try {
-            renderQuotasCard(await fetchMyQuotas());
-        }
-        catch (e) {
-            quotasContent.innerHTML = `<div class="error-message"><i class=\"fas fa-exclamation-triangle\"></i> ${e.message || 'Erreur quotas'}</div>`;
-            lastQuotaData = null;
-            updateDashboardStats();
-        }
-    }
-    if (refreshQuotasBtn) {
-        refreshQuotasBtn.addEventListener('click', refreshQuotas);
-        setInterval(() => { refreshQuotas(); }, 45000);
-    }
-
-    if (refreshPvcsBtn) {
-        refreshPvcsBtn.addEventListener('click', async () => {
-            try {
-                await refreshPvcs({ render: true, force: true });
-                const currentType = deploymentTypeInput ? deploymentTypeInput.value : '';
-                populatePvcSelect(currentType);
-            } catch (e) {
-                console.warn('Refresh PVCs failed', e);
-            }
+        const deploymentsModule = createDeploymentsModule({
+            API_V1,
+            state,
+            elements: {
+                activeLabsList,
+                noLabsMessage,
+                deploymentDetailsModal,
+                deploymentDetailsContent,
+            },
+            novnc: novncModule,
+            statusView: statusViewModule,
+            resources: resourcesModule,
         });
-    }
 
-    if (refreshAdminPvcsBtn) {
-        refreshAdminPvcsBtn.addEventListener('click', async () => {
-            refreshAdminPvcsBtn.disabled = true;
-            refreshAdminPvcsBtn.setAttribute('aria-busy', 'true');
-            try {
-                await refreshAdminPvcs({ force: true });
-            } catch (error) {
-                console.warn('Refresh admin PVCs failed', error);
-            } finally {
-                refreshAdminPvcsBtn.disabled = false;
-                refreshAdminPvcsBtn.removeAttribute('aria-busy');
+        const {
+            fetchAndRenderNamespaces,
+            fetchAndRenderPods,
+            fetchAndRenderDeployments,
+            showDeploymentDetails,
+            addLabCard,
+            refreshActiveLabs,
+            clearAllDeploymentTimers,
+        } = deploymentsModule;
+
+        const { renderStatusView, renderServicePortsSummary, renderConnectionHints } = statusViewModule;
+
+        const { fetchMyQuotas, refreshQuotas, refreshPvcs, populatePvcSelect, refreshAdminPvcs } = resourcesModule;
+
+        const { registerNovncEndpoint, resetNovncModal, extractNovncInfoFromDetails } = novncModule;
+
+        function bindCollapsibleToggle(trigger, content) {
+            if (!trigger || !content) {
+                return;
             }
-        });
-    }
-
-    if (refreshDashboardBtn) {
-        refreshDashboardBtn.addEventListener('click', async () => {
-            refreshDashboardBtn.disabled = true;
-            refreshDashboardBtn.setAttribute('aria-busy', 'true');
-            try {
-                await handleDashboardRefresh();
-                const currentType = deploymentTypeInput ? deploymentTypeInput.value : '';
-                populatePvcSelect(currentType);
-            } catch (error) {
-                console.warn('Dashboard refresh failed', error);
-            } finally {
-                refreshDashboardBtn.disabled = false;
-                refreshDashboardBtn.removeAttribute('aria-busy');
-            }
-        });
-    }
-
-    function escapeHtml(str) {
-        if (typeof str !== 'string') return str;
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function updateServiceGuidance(deploymentType) {
-        if (!serviceGuidanceBox) return;
-        const info = serviceGuidanceMessages[deploymentType];
-        if (!info) {
-            serviceGuidanceBox.innerHTML = '';
-            serviceGuidanceBox.classList.remove('active');
-            return;
+            trigger.addEventListener('click', () => {
+                const isActive = !trigger.classList.contains('active');
+                trigger.classList.toggle('active', isActive);
+                trigger.setAttribute('aria-expanded', String(isActive));
+                content.classList.toggle('active', isActive);
+            });
         }
 
-        const iconClass = info.icon || 'fas fa-info-circle';
-        const descriptionHtml = info.description ? `<p>${info.description}</p>` : '';
-        const bullets = Array.isArray(info.bulletPoints) && info.bulletPoints.length
-            ? `<ul>${info.bulletPoints.map(item => `<li>${item}</li>`).join('')}</ul>`
-            : '';
-
-        serviceGuidanceBox.innerHTML = `
-            <h4><i class="${iconClass}"></i>${info.title}</h4>
-            ${descriptionHtml}
-            ${bullets}
-        `;
-        serviceGuidanceBox.classList.add('active');
-    }
-
-    function buildStatusAccessHtml(accessUrl, state) {
-        if (!accessUrl) return '';
-
-        const sanitizedUrl = escapeHtml(accessUrl);
-        const hasPlaceholder = /IP_DU_NOEUD|IP_EXTERNE|NODE_PORT/.test(accessUrl) || accessUrl.includes('<');
-
-        if (state === 'ready' && !hasPlaceholder) {
-            return `
-                <p style="margin-top: 15px;">Accédez à votre service :</p>
-                <a class="access-link" href="${sanitizedUrl}" target="_blank" rel="noopener">
-                    <i class="fas fa-link"></i> ${sanitizedUrl}
-                    <span class="status-badge success">Prêt</span>
-                </a>
-            `;
-        }
-
-        const infoText = state === 'timeout'
-            ? 'Nous ne parvenons pas à récupérer l\'URL pour le moment.'
-            : 'Utilisez les informations ci-dessus pour déterminer l\'adresse finale une fois le service prêt.';
-        const badgeClass = state === 'timeout' ? 'status-badge error' : 'status-badge';
-        const badgeLabel = state === 'timeout' ? 'Indisponible' : 'En attente';
-
-        return `
-            <p style="margin-top: 15px;">${infoText}</p>
-            <div class="access-link disabled">
-                <i class="fas fa-link"></i>
-                <span>${sanitizedUrl}</span>
-                <span class="${badgeClass}">${badgeLabel}</span>
-            </div>
-        `;
-    }
-
-    function renderStatusView(state, overrides = {}) {
-        if (!statusContent) return;
-
-        if (!currentStatusDeployment) {
-            currentStatusDeployment = {};
-        }
-
-        currentStatusDeployment = { ...currentStatusDeployment, ...overrides, state };
-
-        const serviceName = currentStatusDeployment.serviceName || currentStatusDeployment.id || 'Application';
-        const message = currentStatusDeployment.message || '';
-        const portsSummaryHtml = currentStatusDeployment.portsSummaryHtml || '';
-        const connectionHintsHtml = currentStatusDeployment.connectionHintsHtml || '';
-        const inlineNovncBlock = currentStatusDeployment.inlineNovncBlock || '';
-        const accessUrl = currentStatusDeployment.accessUrl || '';
-        const deploymentType = currentStatusDeployment.deploymentType || '';
-
-        let headerHtml = '';
-        let availabilityHtml = '';
-
-        if (state === 'ready') {
-            headerHtml = `
-                <i class="fas fa-check-circle status-icon success"></i>
-                <h2>${serviceName} est prêt</h2>
-                <p>Votre environnement est prêt à être utilisé.</p>
-            `;
-            availabilityHtml = `
-                <div class="app-availability ready">
-                    <i class="fas fa-check-circle app-availability-icon"></i>
-                    <span class="app-availability-text">L'application est prête à être utilisée</span>
-                </div>
-            `;
-        } else if (state === 'timeout') {
-            headerHtml = `
-                <i class="fas fa-exclamation-triangle status-icon" style="color: var(--error-color);"></i>
-                <h2>Problème de démarrage</h2>
-                <p>${serviceName} ne répond pas comme prévu. Vérifiez les détails ou contactez un administrateur.</p>
-            `;
-            availabilityHtml = `
-                <div class="app-availability error">
-                    <i class="fas fa-exclamation-triangle app-availability-icon"></i>
-                    <span class="app-availability-text">Problème lors de l'initialisation de l'application</span>
-                </div>
-            `;
-        } else if (state === 'deleted') {
-            headerHtml = `
-                <i class="fas fa-info-circle status-icon"></i>
-                <h2>Déploiement indisponible</h2>
-                <p>L'environnement ${serviceName} n'existe plus ou a été supprimé.</p>
-            `;
-            availabilityHtml = '';
-        } else {
-            headerHtml = `
-                <i class="fas fa-circle-notch fa-spin status-icon"></i>
-                <h2>${serviceName} est en cours de préparation</h2>
-                <p>Votre environnement a été déployé avec succès, mais les conteneurs sont toujours en cours de démarrage.</p>
-            `;
-            availabilityHtml = `
-                <div class="app-availability pending">
-                    <i class="fas fa-hourglass-half app-availability-icon"></i>
-                    <span class="app-availability-text">L'application est en cours d'initialisation. Veuillez patienter...</span>
-                </div>
-                <p>Vous serez notifié quand votre environnement sera prêt à être utilisé.</p>
-            `;
-        }
-
-        const messageHtml = message ? `<div class="api-response">${message}</div>` : '';
-        const accessHtml = buildStatusAccessHtml(accessUrl, state);
-
-        statusContent.innerHTML = `
-            ${headerHtml}
-            ${availabilityHtml}
-            ${messageHtml}
-            ${portsSummaryHtml}
-            ${connectionHintsHtml}
-            ${inlineNovncBlock}
-            ${accessHtml}
-        `;
-
-        if (statusActions) {
-            statusActions.style.display = 'block';
-        }
-
-        if (deploymentType === 'netbeans') {
-            bindNovncButtons(statusContent);
-            updateNovncButtonsAvailability(currentStatusDeployment.id);
-        }
-    }
-
-    function updateStatusViewForDeployment(deploymentId, state, overrides = {}) {
-        if (!currentStatusDeployment || currentStatusDeployment.id !== deploymentId) return;
-        renderStatusView(state, overrides);
-    }
-
-    function mapPhaseToClass(phase) {
-        const value = (phase || '').toLowerCase();
-        if (value === 'bound') return 'bound';
-        if (value === 'available') return 'ready';
-        if (value === 'released') return 'released';
-        return '';
-    }
-
-    function formatIsoDateShort(iso) {
-        if (!iso) return 'Date inconnue';
-        try {
-            const date = new Date(iso);
-            if (Number.isNaN(date.getTime())) return iso;
-            return date.toLocaleString();
-        } catch {
-            return iso;
-        }
-    }
-
-    function updateDashboardStats() {
-        if (statActiveAppsEl) {
-            const total = document.querySelectorAll('.lab-card').length;
-            statActiveAppsEl.textContent = String(total);
-        }
-        if (statReadyAppsEl) {
-            const ready = document.querySelectorAll('.lab-card.lab-ready').length;
-            statReadyAppsEl.textContent = String(ready);
-        }
-        if (statPvcsEl) {
-            statPvcsEl.textContent = String(cachedPvcs.length);
-        }
-        if (statQuotaAppsEl) {
-            const remaining = lastQuotaData && lastQuotaData.remaining ? lastQuotaData.remaining.apps : null;
-            statQuotaAppsEl.textContent = typeof remaining === 'number' ? String(Math.max(remaining, 0)) : '—';
-        }
-
-        // Update PVC quick stats
-        if (pvcStatTotal) {
-            pvcStatTotal.textContent = String(cachedPvcs.length);
-        }
-        if (pvcStatBound) {
-            const boundCount = cachedPvcs.filter(pvc => pvc.bound || (pvc.phase && pvc.phase.toLowerCase() === 'bound')).length;
-            pvcStatBound.textContent = String(boundCount);
-        }
-    }
-
-    updateDashboardStats();
-
-    async function fetchUserPvcs() {
-        const resp = await fetch(`${API_V1}/k8s/pvcs`, { credentials: 'include' });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            const detail = err.detail || 'Impossible de récupérer les volumes persistants';
-            throw new Error(detail);
-        }
-        return resp.json();
-    }
-
-    function renderPvcList(items) {
-        if (!pvcListContainer) return;
-        if (!Array.isArray(items) || items.length === 0) {
-            pvcListContainer.innerHTML = `
-                <div class="empty-state">
-                    <i class="fas fa-database"></i> Aucun volume persistant. Lancez VS Code ou Jupyter pour en créer un.
-                </div>`;
-            return;
-        }
-
-        const rows = items.map(pvc => {
-            const phase = pvc.phase || 'Inconnu';
-            const phaseClass = mapPhaseToClass(phase);
-            const storage = pvc.storage || 'Taille inconnue';
-            const access = (pvc.access_modes && pvc.access_modes.length) ? pvc.access_modes.join(', ') : 'Mode non précisé';
-            const lastApp = pvc.last_bound_app || pvc.app_type || '—';
-            const createdAt = formatIsoDateShort(pvc.created_at);
-            const phaseBadgeClass = phaseClass ? ` status-${phaseClass}` : '';
-            return `
-                <tr data-pvc-name="${escapeHtml(pvc.name)}">
-                    <td>
-                        <div class="cell-main" title="${escapeHtml(pvc.name)}">${escapeHtml(pvc.name)}</div>
-                        <div class="cell-meta">
-                            <span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>
-                            <span class="badge-soft muted"><i class="fas fa-share-alt"></i> ${escapeHtml(access)}</span>
-                        </div>
-                    </td>
-                    <td>${escapeHtml(storage)}</td>
-                    <td>${escapeHtml(lastApp)}</td>
-                    <td>${escapeHtml(createdAt)}</td>
-                    <td class="cell-actions">
-                        <button type="button" class="btn btn-danger btn-icon pvc-delete-btn" data-name="${escapeHtml(pvc.name)}" title="Supprimer ce volume">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        pvcListContainer.innerHTML = `
-            <div class="pvc-table-wrapper">
-                <table class="pvc-table">
-                    <thead>
-                        <tr>
-                            <th>Volume</th>
-                            <th>Capacité</th>
-                            <th>Dernière application</th>
-                            <th>Créé le</th>
-                            <th class="text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
-        `;
-
-        pvcListContainer.querySelectorAll('.pvc-delete-btn').forEach(btn => {
-            const name = btn.getAttribute('data-name');
-            const pvc = items.find(item => item.name === name);
-            if (pvc) {
-                btn.addEventListener('click', () => handlePvcDelete(pvc));
-            }
-        });
-    }
-
-    async function fetchAllManagedPvcs() {
-        const resp = await fetch(`${API_V1}/k8s/pvcs/all`, { credentials: 'include' });
-        if (!resp.ok) {
-            if (resp.status === 403) {
-                throw new Error('ACCESS_DENIED');
-            }
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.detail || 'Impossible de récupérer les volumes globaux');
-        }
-        return resp.json();
-    }
-
-    function renderAdminPvcList(items) {
-        if (!adminPvcsList) return;
-        if (!Array.isArray(items) || items.length === 0) {
-            adminPvcsList.innerHTML = `<div class="empty-state"><i class="fas fa-hdd"></i> Aucun volume LabOnDemand trouvé.</div>`;
-            return;
-        }
-
-        const rows = items.map(pvc => {
-            const phase = pvc.phase || 'Inconnu';
-            const phaseClass = mapPhaseToClass(phase);
-            const storage = pvc.storage || 'n/a';
-            const lastApp = pvc.last_bound_app || pvc.app_type || 'n/a';
-            const owner = pvc.labels && pvc.labels['user-id'] ? `Utilisateur #${escapeHtml(String(pvc.labels['user-id']))}` : 'n/a';
-            const created = formatIsoDateShort(pvc.created_at);
-            const phaseBadgeClass = phaseClass ? ` status-${phaseClass}` : '';
-            const namespaceBadge = `<span class="badge-soft">${escapeHtml(pvc.namespace)}</span>`;
-            const phaseBadge = `<span class="badge-soft${phaseBadgeClass}">${escapeHtml(phase)}</span>`;
-            return `
-                <tr>
-                    <td>
-                        <div class="cell-main" title="${escapeHtml(pvc.name)}">${escapeHtml(pvc.name)}</div>
-                        <span class="cell-sub">${namespaceBadge}</span>
-                    </td>
-                    <td>${escapeHtml(storage)}</td>
-                    <td>${phaseBadge}</td>
-                    <td>${escapeHtml(lastApp)}</td>
-                    <td>${owner}</td>
-                    <td>${escapeHtml(created)}</td>
-                </tr>
-            `;
-        }).join('');
-
-        adminPvcsList.innerHTML = `
-            <div class="table-wrapper">
-                <table class="k8s-table compact-table">
-                    <thead>
-                        <tr>
-                            <th>Volume</th>
-                            <th>Capacité</th>
-                            <th>Phase</th>
-                            <th>Dernière application</th>
-                            <th>Propriétaire</th>
-                            <th>Créé le</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
-        `;
-    }
-
-    async function refreshAdminPvcs(options = {}) {
-        if (!adminPvcsList) return [];
-        const { force = false } = options;
-        if (!force && cachedAdminPvcs.length && Date.now() - adminPvcsLastFetched < 60000) {
-            renderAdminPvcList(cachedAdminPvcs);
-            return cachedAdminPvcs;
-        }
-
-        adminPvcsList.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
-        try {
-            const data = await fetchAllManagedPvcs();
-            cachedAdminPvcs = data.items || [];
-            adminPvcsLastFetched = Date.now();
-            renderAdminPvcList(cachedAdminPvcs);
-            return cachedAdminPvcs;
-        } catch (error) {
-            if (error.message === 'ACCESS_DENIED') {
-                adminPvcsList.innerHTML = '<div class="empty-state"><i class="fas fa-lock"></i> Accès réservé aux rôles enseignant ou admin.</div>';
-                return [];
-            }
-            adminPvcsList.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
-            throw error;
-        }
-    }
-
-    async function handleDashboardRefresh() {
-        let status = { api: false, k8s: false };
-        try {
-            status = await checkApiStatus();
-        } catch (error) {
-            console.warn('Impossible de vérifier le statut API lors du rafraîchissement', error);
-        }
-
-        const refreshOps = [];
-        if (status.api) {
-            refreshOps.push(refreshPvcs({ render: true, force: true }));
-            refreshOps.push(fetchAndRenderDeployments());
-
+        async function refreshDashboardData() {
+            const jobs = [
+                fetchAndRenderDeployments(),
+                refreshPvcs({ render: true, force: true }),
+            ];
             if (quotasContent) {
-                refreshOps.push(refreshQuotas());
+                jobs.push(refreshQuotas());
             }
-
-            const isElevated = authManager.isAdmin() || authManager.isTeacher();
-            if (isElevated) {
-                if (status.k8s) {
-                    refreshOps.push(fetchAndRenderPods());
-                    refreshOps.push(fetchAndRenderNamespaces());
-                }
-                if (adminPvcsList) {
-                    refreshOps.push(refreshAdminPvcs({ force: true }));
-                }
+            if (authManager.isAdmin() || authManager.isTeacher()) {
+                jobs.push(refreshAdminPvcs({ force: true }));
             }
-        }
-
-        if (refreshOps.length === 0) {
-            updateDashboardStats();
-            return;
-        }
-
-        const results = await Promise.allSettled(refreshOps);
-        results.forEach(result => {
-            if (result.status === 'rejected') {
-                console.warn('Rafraîchissement partiel échoué:', result.reason);
-            }
-        });
-        updateDashboardStats();
-    }
-
-    async function refreshPvcs(options = {}) {
-        const { render = true, force = false } = options;
-        if (!force && cachedPvcs.length && Date.now() - pvcsLastFetched < 60000) {
-            if (render) renderPvcList(cachedPvcs);
-            return cachedPvcs;
-        }
-
-        if (pvcListContainer && render) {
-            pvcListContainer.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>';
-        }
-
-        try {
-            const data = await fetchUserPvcs();
-            cachedPvcs = data.items || [];
-            pvcsLastFetched = Date.now();
-            if (render) renderPvcList(cachedPvcs);
-            updateDashboardStats();
-            return cachedPvcs;
-        } catch (error) {
-            if (pvcListContainer && render) {
-                pvcListContainer.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
-            }
-            updateDashboardStats();
-            throw error;
-        }
-    }
-
-    function populatePvcSelect(deploymentType) {
-        if (!pvcSelectGroup || !existingPvcSelect) return;
-        const supported = ['vscode', 'jupyter'];
-        if (!supported.includes(deploymentType)) {
-            pvcSelectGroup.style.display = 'none';
-            existingPvcSelect.value = '';
-            return;
-        }
-
-        pvcSelectGroup.style.display = 'block';
-        existingPvcSelect.innerHTML = '';
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = 'Créer un nouveau volume';
-        existingPvcSelect.appendChild(defaultOption);
-
-        cachedPvcs.forEach(pvc => {
-            const option = document.createElement('option');
-            option.value = pvc.name;
-            const storage = pvc.storage || 'taille inconnue';
-            const suffix = pvc.bound ? ' (attaché)' : '';
-            option.textContent = `${pvc.name} - ${storage}${suffix}`;
-            existingPvcSelect.appendChild(option);
-        });
-    }
-
-    async function handlePvcDelete(pvc) {
-        const encodedName = encodeURIComponent(pvc.name);
-        const boundMessage = pvc.bound ? '\nLe volume est encore attaché. Supprimer quand même ?' : '';
-        if (!confirm(`Supprimer le volume "${pvc.name}" ?${boundMessage}`)) return;
-        const forceParam = pvc.bound ? '?force=true' : '';
-        try {
-            const resp = await fetch(`${API_V1}/k8s/pvcs/${encodedName}${forceParam}`, {
-                method: 'DELETE',
-                credentials: 'include'
-            });
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                throw new Error(err.detail || 'Suppression impossible');
-            }
-            await refreshPvcs({ render: true, force: true });
-            populatePvcSelect(deploymentTypeInput.value);
-        } catch (error) {
-            alert(`Erreur lors de la suppression du volume: ${error.message}`);
-        }
-    }
-    function renderServicePortsSummary(portsDetails, serviceType) {
-        if (!Array.isArray(portsDetails) || portsDetails.length === 0) return '';
-        const items = portsDetails.map(detail => {
-            const label = detail.name ? `<strong>${escapeHtml(String(detail.name))}</strong>` : '<strong>Port</strong>';
-            const portVal = escapeHtml(String(detail.port ?? ''));
-            const targetVal = escapeHtml(String(detail.target_port ?? ''));
-            const nodePort = detail.node_port ? `<span class="port-node">NodePort ${escapeHtml(String(detail.node_port))}</span>` : '';
-            const protocol = detail.protocol ? `<span class="port-protocol">${escapeHtml(String(detail.protocol))}</span>` : '';
-            return `<li>${label}: ${portVal} → ${targetVal} ${protocol} ${nodePort}</li>`;
-        }).join('');
-        return `
-            <div class="service-ports-summary">
-                <h4><i class="fas fa-plug"></i> Ports exposés (${serviceType || 'Service'})</h4>
-                <ul class="ports-list">${items}</ul>
-            </div>
-        `;
-    }
-
-    function renderConnectionHints(hints) {
-        if (!hints || typeof hints !== 'object') return '';
-        const entries = Object.entries(hints).filter(([, info]) => info && typeof info === 'object');
-        if (!entries.length) return '';
-        const titleMap = {
-            novnc: 'Accès navigateur (NoVNC)',
-            vnc: 'Client VNC natif',
-            audio: 'Canal audio',
-        };
-        const cards = entries.map(([key, info]) => {
-            const title = titleMap[key] || key.toUpperCase();
-            const description = info.description ? `<p class="hint-description">${escapeHtml(String(info.description))}</p>` : '';
-            const nodePort = info.node_port ? `<li><strong>NodePort:</strong> ${escapeHtml(String(info.node_port))}</li>` : '';
-            const targetPort = info.target_port ? `<li><strong>Port interne:</strong> ${escapeHtml(String(info.target_port))}</li>` : '';
-            const username = info.username ? `<li><strong>Utilisateur:</strong> ${escapeHtml(String(info.username))}</li>` : '';
-            const password = info.password ? `<li><strong>Mot de passe:</strong> ${escapeHtml(String(info.password))}</li>` : '';
-            let urlTemplate = '';
-            if (info.url_template) {
-                let resolved = info.url_template;
-                if (info.node_port) {
-                    resolved = resolved.replace('<NODE_PORT>', info.node_port);
-                }
-                urlTemplate = `<li><strong>URL:</strong> <code>${escapeHtml(resolved)}</code></li>`;
-            }
-            const extra = info.notes ? `<li>${escapeHtml(String(info.notes))}</li>` : '';
-            const list = [urlTemplate, nodePort, targetPort, username, password, extra].filter(Boolean).join('');
-            if (!list && !description) return '';
-            return `
-                <div class="connection-hint-card">
-                    <h5>${title}</h5>
-                    ${description}
-                    ${list ? `<ul>${list}</ul>` : ''}
-                </div>
-            `;
-        }).filter(Boolean).join('');
-        if (!cards) return '';
-        return `
-            <div class="connection-hints">
-                <h4><i class="fas fa-satellite-dish"></i> Infos de connexion</h4>
-                <div class="connection-hints-grid">${cards}</div>
-            </div>
-        `;
-    }
-
-    function extractNovncInfoFromDetails(details) {
-        if (!details) return {};
-        const services = details.services || [];
-        const accessUrls = details.access_urls || [];
-    let nodePort = null;
-    let url = null;
-    let hostname = null;
-    let protocol = null;
-    let secure = null;
-
-        services.forEach(service => {
-            (service.ports || []).forEach(port => {
-                const isNovnc = port.name === 'novnc' || port.port === 6901;
-                if (isNovnc && port.node_port) {
-                    nodePort = port.node_port;
-                    const candidate = accessUrls.find(entry => entry.node_port === port.node_port);
-                    if (candidate) {
-                        url = candidate.url;
-                        try {
-                            hostname = new URL(candidate.url).hostname;
-                        } catch (err) {
-                            hostname = candidate.cluster_ip || hostname;
-                        }
-                        if (candidate.protocol) {
-                            protocol = candidate.protocol.toLowerCase();
-                        } else if (candidate.url) {
-                            if (candidate.url.startsWith('https://')) {
-                                protocol = 'https';
-                            } else if (candidate.url.startsWith('http://')) {
-                                protocol = 'http';
-                            }
-                        }
-                        if (candidate.secure !== undefined && candidate.secure !== null) {
-                            secure = Boolean(candidate.secure);
-                        }
-                    } else if (!protocol) {
-                        protocol = 'https';
-                        secure = true;
-                    }
+            const outcomes = await Promise.allSettled(jobs);
+            outcomes.forEach(result => {
+                if (result.status === 'rejected') {
+                    console.warn('Dashboard refresh error', result.reason);
                 }
             });
-        });
-
-        if (!nodePort && accessUrls.length === 1) {
-            const first = accessUrls[0];
-            nodePort = first.node_port ?? nodePort;
-            url = first.url || url;
-            try {
-                hostname = first.url ? new URL(first.url).hostname : (first.cluster_ip || hostname);
-            } catch (err) {
-                hostname = first.cluster_ip || hostname;
-            }
-            if (!protocol) {
-                if (first.protocol) {
-                    protocol = first.protocol.toLowerCase();
-                } else if (first.url) {
-                    if (first.url.startsWith('https://')) {
-                        protocol = 'https';
-                    } else if (first.url.startsWith('http://')) {
-                        protocol = 'http';
-                    }
-                }
-            }
-            if (secure === null && first.secure !== undefined) {
-                secure = Boolean(first.secure);
-            }
         }
 
-        if (!protocol && nodePort && Number(nodePort) === 6901) {
-            protocol = 'http';
-            if (secure === null) {
-                secure = false;
-            }
-        }
-
-        return { nodePort, url, hostname, protocol, secure };
-    }
-
-    function registerNovncEndpoint(deploymentId, namespace, info = {}) {
-        if (!deploymentId) return;
-        const previous = novncEndpoints.get(deploymentId) || {};
-        const merged = { ...previous };
-        if (namespace) merged.namespace = namespace;
-
-        Object.entries(info).forEach(([key, value]) => {
-            if (value === undefined || value === null) return;
-            if (key === 'nodePort') {
-                const numeric = Number(value);
-                if (!Number.isNaN(numeric)) {
-                    merged.nodePort = numeric;
-                }
-                return;
-            }
-            if (key === 'protocol') {
-                if (typeof value === 'string' && value.trim()) {
-                    merged.protocol = value.trim().toLowerCase();
-                }
-                return;
-            }
-            if (key === 'secure') {
-                merged.secure = Boolean(value);
-                return;
-            }
-            if (key === 'credentials' && typeof value === 'object') {
-                merged.credentials = { ...(previous.credentials || {}), ...value };
-                return;
-            }
-            merged[key] = value;
-        });
-
-        merged.updatedAt = Date.now();
-        novncEndpoints.set(deploymentId, merged);
-        updateNovncButtonsAvailability(deploymentId);
-    }
-
-    function buildNovncUrl(info) {
-        if (!info || !info.nodePort) return null;
-        const host = info.hostname || window.location.hostname;
-        const port = info.nodePort;
-        const preferredScheme = (() => {
-            if (typeof info.protocol === 'string' && info.protocol.trim()) {
-                const normalized = info.protocol.trim().toLowerCase();
-                if (normalized.startsWith('https')) return 'https';
-                if (normalized.startsWith('http')) return 'http';
-            }
-            if (info.secure === true) return 'https';
-            if (info.urlTemplate) {
-                if (info.urlTemplate.startsWith('https://')) return 'https';
-                if (info.urlTemplate.startsWith('http://')) return 'http';
-            }
-            if (info.url) {
-                if (info.url.startsWith('https://')) return 'https';
-                if (info.url.startsWith('http://')) return 'http';
-            }
-            return null;
-        })();
-        if (info.urlTemplate) {
-            return info.urlTemplate
-                .replace(/<IP_DU_NOEUD>/g, host)
-                .replace(/<IP_EXTERNE>/g, host)
-                .replace(/<NODE_PORT>/g, port);
-        }
-        if (info.url && !info.url.includes('<')) {
-            return info.url;
-        }
-        const protocol = preferredScheme === 'http' ? 'http:' : 'https:';
-        return `${protocol}//${host}:${port}/`;
-    }
-
-    async function ensureNovncDetails(deploymentId) {
-        const current = novncEndpoints.get(deploymentId);
-        if (!current || !current.namespace) {
-            throw new Error('Namespace inconnu pour ce déploiement');
-        }
-        const response = await fetch(`${API_V1}/k8s/deployments/${current.namespace}/${deploymentId}/details`);
-        if (!response.ok) {
-            throw new Error('Impossible de récupérer les détails du déploiement');
-        }
-        const details = await response.json();
-        const extracted = extractNovncInfoFromDetails(details);
-        registerNovncEndpoint(deploymentId, current.namespace, extracted);
-        return novncEndpoints.get(deploymentId);
-    }
-
-    async function resolveNovncUrl(deploymentId) {
-        let info = novncEndpoints.get(deploymentId);
-        if (!info) {
-            throw new Error('Informations NoVNC indisponibles');
-        }
-        if (!info.nodePort || (info.url && info.url.includes('<'))) {
-            info = await ensureNovncDetails(deploymentId);
-        }
-        if (!info || !info.nodePort) {
-            throw new Error('NodePort NoVNC introuvable');
-        }
-        let finalUrl = info.url;
-        if (!finalUrl || finalUrl.includes('<')) {
-            finalUrl = buildNovncUrl(info);
-            if (finalUrl) {
-                registerNovncEndpoint(deploymentId, info.namespace, { url: finalUrl });
-                info = novncEndpoints.get(deploymentId);
-            }
-        }
-        if (!finalUrl) {
-            throw new Error('Impossible de construire l’URL NoVNC');
-        }
-        return { url: finalUrl, info };
-    }
-
-    function updateNovncButtonsAvailability(deploymentId) {
-        const info = novncEndpoints.get(deploymentId);
-        const buttons = document.querySelectorAll(`.embed-novnc-btn[data-novnc-target="${deploymentId}"]`);
-        const hasNodePort = !!(info && info.nodePort);
-        const hasUrl = !!(info && info.url && !info.url.includes('<'));
-
-        buttons.forEach(btn => {
-            if (!btn) return;
-            if (hasNodePort || hasUrl) {
-                btn.disabled = false;
-                btn.classList.remove('disabled');
-                btn.innerHTML = '<i class="fas fa-desktop"></i> Ouvrir dans la page';
-            } else {
-                btn.disabled = true;
-                btn.classList.add('disabled');
-                btn.innerHTML = '<i class="fas fa-desktop"></i> En attente NoVNC...';
-            }
-        });
-
-        if (lastLaunchedDeployment && lastLaunchedDeployment.id === deploymentId) {
-            const hint = document.getElementById('inline-novnc-hint');
-            if (hint) {
-                if (hasUrl) {
-                    hint.textContent = 'Cliquez pour ouvrir la session NetBeans dans la fenêtre intégrée.';
-                } else if (hasNodePort) {
-                    hint.textContent = 'Le service est presque prêt. Cliquez pour ouvrir la session dès que possible.';
-                } else {
-                    hint.textContent = 'Configuration du service NoVNC en cours...';
-                }
-            }
-        }
-    }
-
-    function prepareNovncModal(deploymentId) {
-        if (!novncModal) return;
-        if (novncModalTitle) {
-            novncModalTitle.innerHTML = `<i class="fas fa-desktop"></i> ${deploymentId} - NoVNC`;
-        }
-        if (novncStatusBanner) {
-            novncStatusBanner.classList.remove('error');
-            novncStatusBanner.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Préparation de la session NoVNC...';
-        }
-        if (novncCredentialsBox) {
-            novncCredentialsBox.classList.remove('show');
-            novncCredentialsBox.innerHTML = '';
-        }
-        if (novncFrame) {
-            try { novncFrame.src = 'about:blank'; } catch (err) {}
-        }
-        novncModal.classList.add('show');
-    }
-
-    async function openNovncModalFor(deploymentId) {
-        const { url, info } = await resolveNovncUrl(deploymentId);
-        if (novncStatusBanner) {
-            novncStatusBanner.classList.remove('error');
-            novncStatusBanner.innerHTML = `<i class="fas fa-check-circle"></i> Connexion à ${escapeHtml(url)}`;
-        }
-        if (novncCredentialsBox) {
-            if (info?.credentials?.username || info?.credentials?.password) {
-                novncCredentialsBox.classList.add('show');
-                novncCredentialsBox.innerHTML = `
-                    <strong>Identifiants par défaut</strong><br>
-                    Utilisateur : <code>${escapeHtml(info.credentials.username || '')}</code><br>
-                    Mot de passe : <code>${escapeHtml(info.credentials.password || '')}</code>
-                `;
-            } else {
-                novncCredentialsBox.classList.remove('show');
-                novncCredentialsBox.innerHTML = '';
-            }
-        }
-        if (novncFrame) {
-            novncFrame.src = url;
-        }
-    }
-
-    function bindNovncButtons(scope = document) {
-        const buttons = scope.querySelectorAll('.embed-novnc-btn');
-        buttons.forEach(btn => {
-            if (!btn || btn.dataset.novncBound === '1') return;
-            btn.dataset.novncBound = '1';
-            btn.addEventListener('click', async (event) => {
-                event.preventDefault();
-                if (btn.disabled || btn.classList.contains('disabled')) return;
-                const deploymentId = btn.getAttribute('data-novnc-target');
-                const namespace = btn.getAttribute('data-namespace');
-                if (!deploymentId) return;
-                if (namespace) {
-                    registerNovncEndpoint(deploymentId, namespace, {});
-                }
-                prepareNovncModal(deploymentId);
-                try {
-                    await openNovncModalFor(deploymentId);
-                } catch (error) {
-                    console.error('Erreur NoVNC:', error);
-                    if (novncStatusBanner) {
-                        novncStatusBanner.classList.add('error');
-                        novncStatusBanner.innerHTML = `<i class=\"fas fa-exclamation-triangle\"></i> ${escapeHtml(error.message || 'Impossible d’ouvrir NoVNC')}`;
-                    }
-                }
-            });
-        });
-    }
-
-    function resetNovncModal() {
-        if (novncFrame) {
-            try { novncFrame.src = 'about:blank'; } catch (err) {}
-        }
-        if (novncStatusBanner) {
-            novncStatusBanner.classList.remove('error');
-            novncStatusBanner.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Préparation de la session NoVNC...';
-        }
-        if (novncCredentialsBox) {
-            novncCredentialsBox.classList.remove('show');
-            novncCredentialsBox.innerHTML = '';
-        }
-    }
-
-    // --- Rendu des namespaces (admin/teacher) ---
-    async function fetchAndRenderNamespaces() {
-        const listEl = document.getElementById('namespaces-list');
-        if (!listEl) return;
-        try {
-            const resp = await fetch(`${API_V1}/k8s/namespaces`);
-            if (!resp.ok) throw new Error('Erreur lors de la récupération des namespaces');
-            const data = await resp.json();
-            const namespaces = (data.namespaces || []).filter(ns => ns.startsWith('labondemand-') || ns === 'default');
-            if (namespaces.length === 0) {
-                listEl.innerHTML = '<div class="no-items-message">Aucun namespace trouvé</div>';
-                return;
-            }
-            const html = `
-                <div class="list-group">
-                    ${namespaces.map(ns => {
-                        let icon = 'fa-project-diagram';
-                        let badge = '';
-                        if (ns.includes('jupyter')) { icon = 'fa-brands fa-python'; badge = '<span class="namespace-type jupyter">Jupyter</span>'; }
-                        else if (ns.includes('vscode')) { icon = 'fa-solid fa-code'; badge = '<span class="namespace-type vscode">VSCode</span>'; }
-                        else if (ns.includes('custom')) { icon = 'fa-solid fa-cube'; badge = '<span class="namespace-type custom">Custom</span>'; }
-                        return `<div class="list-group-item"><i class="fas ${icon}"></i> ${ns} ${badge}</div>`;
-                    }).join('')}
-                </div>`;
-            listEl.innerHTML = html;
-        } catch (e) {
-            console.error(e);
-            listEl.innerHTML = '<div class="error-message">Erreur lors du chargement des namespaces</div>';
-        }
-    }
-
-    // --- Fonctions de Rendu des listes K8s ---
-
-    async function fetchAndRenderPods() {
-        const podsListEl = document.getElementById('pods-list');
-        
-        try {
-            const response = await fetch(`${API_V1}/k8s/pods`);
-            if (!response.ok) throw new Error('Erreur lors de la récupération des pods');
-            
-            const data = await response.json();
-            const lifecycle = data.lifecycle || {};
-            const lifecycleState = (lifecycle.state || 'unknown').toLowerCase();
-            const isPaused = lifecycleState === 'paused';
-            const lifecycleLabelMap = {
-                paused: 'En pause',
-                running: 'Actif',
-                mixed: 'Redémarrage',
-                starting: 'Initialisation',
-                unknown: 'Inconnu'
-            };
-            const lifecycleLabel = lifecycleLabelMap[lifecycleState] || lifecycleLabelMap.unknown;
-            const pauseAction = isPaused ? 'resume' : 'pause';
-            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
-            const pausedSince = lifecycle.paused_at ? new Date(lifecycle.paused_at).toLocaleString('fr-FR', { hour12: false }) : null;
-            const pausedBy = lifecycle.paused_by || null;
-            const pods = data.pods || [];
-            
-            // Filtre pour n'afficher que les pods dans les namespaces LabOnDemand
-            const labPods = pods.filter(pod => 
-                pod.namespace.startsWith('labondemand-') || 
-                pod.namespace === 'default'
-            );
-            
-            if (labPods.length === 0) {
-                podsListEl.innerHTML = '<div class="no-items-message">Aucun pod trouvé</div>';
-                return;
-            }
-            
-            podsListEl.innerHTML = `
-                <table class="k8s-table">
-                    <thead>
-                        <tr>
-                            <th>Nom</th>
-                            <th>Namespace</th>
-                            <th>IP</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${labPods.map(pod => `
-                            <tr>
-                                <td><i class="fas fa-cube"></i> ${pod.name}</td>
-                                <td>${pod.namespace}</td>
-                                <td>${pod.ip || 'N/A'}</td>
-                                <td class="action-cell">
-                                    <button class="btn btn-danger btn-delete-pod" 
-                                            data-name="${pod.name}" 
-                                            data-namespace="${pod.namespace}">
-                                        <i class="fas fa-trash-alt"></i>
-                                    </button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
-            
-            // Ajouter des écouteurs pour les boutons de suppression
-            document.querySelectorAll('.btn-delete-pod').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const name = e.currentTarget.getAttribute('data-name');
-                    const namespace = e.currentTarget.getAttribute('data-namespace');
-                    
-                    if (confirm(`Êtes-vous sûr de vouloir supprimer le pod ${name} ?`)) {
-                        try {
-                            const response = await fetch(`${API_V1}/k8s/pods/${namespace}/${name}`, {
-                                method: 'DELETE'
-                            });
-                            
-                            if (response.ok) {
-                                alert(`Pod ${name} supprimé avec succès`);
-                                fetchAndRenderPods(); // Rafraîchir la liste
-                            } else {
-                                const error = await response.json();
-                                alert(`Erreur: ${error.detail || 'Échec de la suppression'}`);
-                            }
-                        } catch (error) {
-                            console.error('Erreur:', error);
-                            alert('Erreur réseau lors de la suppression du pod');
-                        }
-                    }
-                });
-            });
-        } catch (error) {
-            console.error('Erreur:', error);
-            podsListEl.innerHTML = '<div class="error-message">Erreur lors du chargement des pods</div>';
-        }
-    }
-
-    function formatLifecycleBadge(lifecycle) {
-        if (!lifecycle) {
-            return '<span class="lifecycle-badge unknown"><i class="fas fa-question-circle"></i> Inconnu</span>';
-        }
-        const state = (lifecycle.state || 'unknown').toLowerCase();
-        const mapping = {
-            paused: { label: 'En pause', icon: 'fa-circle-pause', css: 'paused' },
-            running: { label: 'Actif', icon: 'fa-circle-check', css: 'running' },
-            mixed: { label: 'Relance en cours', icon: 'fa-rotate', css: 'starting' },
-            starting: { label: 'Initialisation', icon: 'fa-rotate', css: 'starting' },
-            unknown: { label: 'Inconnu', icon: 'fa-question-circle', css: 'unknown' },
-        };
-        const meta = mapping[state] || mapping.unknown;
-        return `<span class="lifecycle-badge ${meta.css}"><i class="fas ${meta.icon}"></i> ${meta.label}</span>`;
-    }
-
-    function pushLifecycleFeedback(message, tone = 'info') {
-        const feedbackEl = document.getElementById('pause-feedback');
-        if (!feedbackEl) {
-            console.info('pause-mode:', message);
-            return;
-        }
-        feedbackEl.textContent = message;
-        feedbackEl.dataset.tone = tone;
-    }
-
-    async function toggleDeploymentLifecycleRequest(namespace, name, action) {
-        const endpoint = `${API_V1}/k8s/deployments/${namespace}/${name}/${action}`;
-        const response = await fetch(endpoint, { method: 'POST' });
-        let payload = {};
-        try {
-            payload = await response.json();
-        } catch (error) {
-            payload = {};
-        }
-        if (!response.ok) {
-            throw new Error(payload.detail || payload.message || 'Impossible d\'appliquer cette action.');
-        }
-        return payload;
-    }
-
-    async function refreshDeploymentLifecycle(namespace, name, options = {}) {
-        const { silent = false } = options;
-        try {
-            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
-            if (!response.ok) {
-                throw new Error('Impossible d\'obtenir l\'état actuel');
-            }
-            const data = await response.json();
-            if (data.lifecycle) {
-                applyLifecycleStateToLabCard(name, data.lifecycle);
-            }
-            return data.lifecycle;
-        } catch (error) {
-            if (!silent) {
-                console.warn('refreshDeploymentLifecycle', error);
-            }
-            return null;
-        }
-    }
-
-    function bindPauseButtons(root = document) {
-        const scope = root || document;
-        scope.querySelectorAll('.btn-toggle-pause').forEach(btn => {
-            if (btn.dataset.bound === 'true') {
-                return;
-            }
-            btn.dataset.bound = 'true';
-            btn.addEventListener('click', onTogglePauseClick);
-        });
-    }
-
-    async function onTogglePauseClick(event) {
-        const btn = event.currentTarget;
-        const namespace = btn.getAttribute('data-namespace');
-        const name = btn.getAttribute('data-name');
-        const action = btn.getAttribute('data-action');
-        if (!namespace || !name || !action) {
-            return;
-        }
-
-        if (action === 'pause') {
-            const confirmed = confirm(`Mettre l'application "${name}" en pause ? Cela libèrera les pods mais conservera vos données.`);
-            if (!confirmed) {
-                return;
-            }
-        }
-
-        btn.disabled = true;
-        btn.classList.add('loading');
-
-        try {
-            const payload = await toggleDeploymentLifecycleRequest(namespace, name, action);
-            pushLifecycleFeedback(payload.message || (action === 'pause' ? 'Application mise en pause.' : 'Application relancée.'), 'success');
-            await fetchAndRenderDeployments();
-            const lifecycle = await refreshDeploymentLifecycle(namespace, name, { silent: true });
-            if (action === 'resume') {
-                checkDeploymentReadiness(namespace, name);
-            }
-            return lifecycle;
-        } catch (error) {
-            console.error('pause/resume error', error);
-            pushLifecycleFeedback(error.message || 'Action impossible.', 'error');
-            alert(`Erreur: ${error.message}`);
-        } finally {
-            btn.disabled = false;
-            btn.classList.remove('loading');
-        }
-    }
-
-    async function fetchAndRenderDeployments() {
-        const deploymentsListEl = document.getElementById('deployments-list');
-        
-        try {
-            // 1) Récupérer les métriques d’usage par application (facultatif)
-            let usageIndex = {};
-            try {
-                const usageResp = await fetch(`${API_V1}/k8s/usage/my-apps`);
-                if (usageResp.ok) {
-                    const usageData = await usageResp.json();
-                    (usageData.items || []).forEach(it => {
-                        const key = `$${it.namespace}::$${it.name}`;
-                        usageIndex[key] = it;
-                    });
-                }
-            } catch (e) {
-                // Ne pas bloquer si indisponible
-            }
-            window.__myAppsUsageIndex = usageIndex;
-
-            // Utiliser l'endpoint spécialisé qui ne récupère que les déploiements LabOnDemand
-            const response = await fetch(`${API_V1}/k8s/deployments/labondemand`);
-            if (!response.ok) throw new Error('Erreur lors de la récupération des déploiements');
-            
-            const data = await response.json();
-            const deployments = data.deployments || [];
-            
-            if (deployments.length === 0) {
-                deploymentsListEl.innerHTML = '<div class="no-items-message">Aucun déploiement trouvé</div>';
-                return;
-            }
-            
-            deploymentsListEl.innerHTML = `
-                <table class="k8s-table">
-                    <thead>
-                        <tr>
-                            <th>Nom</th>
-                            <th>Namespace</th>
-                            <th>Type</th>
-                            <th>État</th>
-                            <th>CPU</th>
-                            <th>Mémoire</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${deployments.map(dep => {
-                            // Définir une icône basée sur le type de déploiement
-                            let icon = "fa-layer-group";
-                            let typeBadge = "";
-                            
-                            switch (dep.type) {
-                                case "jupyter":
-                                    icon = "fa-brands fa-python";
-                                    typeBadge = '<span class="type-badge jupyter">Jupyter</span>';
-                                    break;
-                                case "vscode":
-                                    icon = "fa-solid fa-code";
-                                    typeBadge = '<span class="type-badge vscode">VSCode</span>';
-                                    break;
-                                case "custom":
-                                    icon = "fa-solid fa-cube";
-                                    typeBadge = '<span class="type-badge custom">Custom</span>';
-                                    break;
-                            }
-                            
-                            // Chercher les métriques d’usage pour cette app
-                            const u = (window.__myAppsUsageIndex || {})[`$${dep.namespace}::$${dep.name}`] || null;
-                            const cpuDisplay = u ? `${u.cpu_m} m` : 'N/A';
-                            const memDisplay = u ? `${u.mem_mi} Mi` : 'N/A';
-                            const srcBadge = u ? `<span class="usage-source ${u.source === 'live' ? 'live' : 'requests'}" title="${u.source === 'live' ? 'Mesures live (metrics-server)' : 'Estimation par requests'}">${u.source === 'live' ? 'Live' : 'Req'}</span>` : '';
-                            const lifecycle = dep.lifecycle || dep.lifecycle_summary || null;
-                            const lifecycleBadge = formatLifecycleBadge(lifecycle);
-                            const isPaused = lifecycle?.state === 'paused' || lifecycle?.paused;
-                            const pauseAction = isPaused ? 'resume' : 'pause';
-                            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
-
-                            return `
-                                <tr>
-                                    <td><i class="fas ${icon}"></i> ${dep.name}</td>
-                                    <td>${dep.namespace}</td>
-                                    <td>${typeBadge}</td>
-                                    <td>${lifecycleBadge}</td>
-                                    <td>${cpuDisplay} ${srcBadge}</td>
-                                    <td>${memDisplay}</td>
-                                    <td class="action-cell">
-                                        <button class="btn btn-secondary btn-view-deployment" 
-                                                data-name="${dep.name}" 
-                                                data-namespace="${dep.namespace}">
-                                            <i class="fas fa-eye"></i>
-                                        </button>
-                                        <button class="btn btn-warning btn-toggle-pause" 
-                                                data-name="${dep.name}" 
-                                                data-namespace="${dep.namespace}"
-                                            data-action="${pauseAction}"
-                                            data-variant="icon"
-                                                title="${isPaused ? 'Relancer cette application' : 'Mettre temporairement en pause'}">
-                                            <i class="fas ${pauseIcon}"></i>
-                                        </button>
-                                        <button class="btn btn-danger btn-delete-deployment" 
-                                                data-name="${dep.name}" 
-                                                data-namespace="${dep.namespace}">
-                                            <i class="fas fa-trash-alt"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            `;
-            
-            // Écouteurs pour voir les détails d'un déploiement
-            document.querySelectorAll('.btn-view-deployment').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const name = e.currentTarget.getAttribute('data-name');
-                    const namespace = e.currentTarget.getAttribute('data-namespace');
-                    showDeploymentDetails(namespace, name);
-                });
-            });
-            
-            // Écouteurs pour supprimer un déploiement
-            document.querySelectorAll('.btn-delete-deployment').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    const name = e.currentTarget.getAttribute('data-name');
-                    const namespace = e.currentTarget.getAttribute('data-namespace');
-                    
-                    if (confirm(`Êtes-vous sûr de vouloir supprimer le déploiement ${name} ?`)) {
-                        try {
-                            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}?delete_service=true`, {
-                                method: 'DELETE'
-                            });
-                            
-                            if (response.ok) {
-                                alert(`Déploiement ${name} supprimé avec succès`);
-                                fetchAndRenderDeployments(); // Rafraîchir la liste
-                                // Également mettre à jour les lab cards qui pourraient correspondre
-                                refreshActiveLabs();
-                            } else {
-                                const error = await response.json();
-                                alert(`Erreur: ${error.detail || 'Échec de la suppression'}`);
-                            }
-                        } catch (error) {
-                            console.error('Erreur:', error);
-                            alert('Erreur réseau lors de la suppression du déploiement');
-                        }
-                    }
-                });
-            });
-
-            bindPauseButtons(deploymentsListEl);
-        } catch (error) {
-            console.error('Erreur:', error);
-            deploymentsListEl.innerHTML = '<div class="error-message">Erreur lors du chargement des déploiements</div>';
-        }
-    }
-
-    // Fonction pour montrer les détails d'un déploiement
-    async function showDeploymentDetails(namespace, name) {
-        const modal = document.getElementById('deployment-details-modal');
-        const modalContent = document.getElementById('deployment-details-content');
-        
-        // Afficher le modal et son spinner de chargement
-        modal.classList.add('show');
-        modalContent.innerHTML = `
-            <div class="loading-spinner">
-                <i class="fas fa-spinner fa-spin"></i>
-                <p>Chargement des détails...</p>
-            </div>
-        `;
-        
-        try {
-            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
-            
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Erreur lors de la récupération des détails');
-            }
-            
-            const data = await response.json();
-
-            const lifecycle = data.lifecycle || {};
-            const lifecycleState = (lifecycle.state || 'unknown').toLowerCase();
-            const lifecycleLabelMap = {
-                paused: 'En pause',
-                running: 'Actif',
-                mixed: 'Redémarrage',
-                starting: 'Initialisation',
-                unknown: 'Inconnu',
-            };
-            const lifecycleLabel = lifecycleLabelMap[lifecycleState] || lifecycleLabelMap.unknown;
-            const isPaused = lifecycleState === 'paused' || lifecycle.paused === true;
-            const pauseAction = isPaused ? 'resume' : 'pause';
-            const pauseIcon = isPaused ? 'fa-circle-play' : 'fa-circle-pause';
-            const pausedSince = lifecycle.paused_at
-                ? new Date(lifecycle.paused_at).toLocaleString('fr-FR', { hour12: false })
-                : null;
-            const pausedBy = lifecycle.paused_by || null;
-
-            // Formater les données pour l'affichage
-            let accessUrlsHtml = '';
-            if (data.access_urls && data.access_urls.length > 0) {
-                accessUrlsHtml = `
-                    <h4>Accès à l'application</h4>
-                    <ul class="access-urls-list">
-                        ${data.access_urls.map(url => `
-                            <li>
-                                <a href="${url.url}" target="_blank">
-                                    <i class="fas fa-external-link-alt"></i> ${url.label ? `${url.label} – ` : ''}${url.url}
-                                </a> (exposé par: ${url.service}, NodePort: ${url.node_port})
-                            </li>
-                        `).join('')}
-                    </ul>
-                `;
-            } else {
-                accessUrlsHtml = `<p>Aucune URL d'accès disponible pour ce déploiement.</p>`;
-            }
-            
-            // Construire le HTML des détails du déploiement avec un onglet Options
-            modalContent.innerHTML = `
-                <h3>Application: ${data.deployment.name}</h3>
-                <div class="deployment-details">
-                    <div class="deployment-info">
-                        <div class="details-tabs">
-                            <button class="tab-btn active" data-tab="infos"><i class="fas fa-info-circle"></i> Infos</button>
-                            <button class="tab-btn" data-tab="options"><i class="fas fa-sliders-h"></i> Options</button>
-                        </div>
-                        <div class="tab-content" id="tab-infos">
-                        <h4>Informations générales</h4>
-                        <ul>
-                            <li><strong>Namespace:</strong> ${data.deployment.namespace}</li>
-                            <li><strong>Image:</strong> ${data.deployment.image || 'N/A'}</li>
-                            <li><strong>État:</strong> ${lifecycleLabel}${isPaused && pausedSince ? ` – en pause depuis ${pausedSince}` : ''}</li>
-                            <li>
-                                <strong>Réplicas:</strong> ${data.deployment.replicas} 
-                                <span class="replica-status ${data.deployment.available_replicas > 0 ? 'ready' : 'pending'}">
-                                    (${data.deployment.available_replicas || 0} disponible(s))
-                                </span>
-                            </li>
-                        </ul>
-                        
-                        ${isPaused ? `
-                            <div class="app-availability paused">
-                                <i class="fas fa-circle-pause app-availability-icon"></i>
-                                <span class="app-availability-text">Application en pause. Vos volumes et secrets sont conservés.</span>
-                            </div>
-                        ` : data.deployment.available_replicas > 0 ? `
-                            <div class="app-availability ready">
-                                <i class="fas fa-check-circle app-availability-icon"></i>
-                                <span class="app-availability-text">L'application est prête à être utilisée</span>
-                            </div>
-                        ` : `
-                            <div class="app-availability pending">
-                                <i class="fas fa-hourglass-half app-availability-icon"></i>
-                                <span class="app-availability-text">L'application est en cours d'initialisation</span>
-                            </div>
-                        `}
-                        </div>
-                        <div class="tab-content" id="tab-options" style="display:none;">
-                            <div class="options-panel">
-                                <h4><i class="fas fa-key"></i> Identifiants & paramètres</h4>
-                                <p class="muted">Retrouvez ici les identifiants générés pour votre application. Ne partagez pas ces informations.</p>
-                                <div id="credentials-container" class="credentials-container">
-                                    <button class="btn btn-secondary" id="load-credentials">
-                                        <i class="fas fa-unlock"></i> Afficher les identifiants
-                                    </button>
-                                    <div id="credentials-content" class="credentials-content" style="display:none;"></div>
-                                </div>
-                                <div class="energy-panel">
-                                    <h4><i class="fas fa-leaf"></i> Mode économie de ressources</h4>
-                                    <p class="muted">Mettez votre application en pause pour libérer immédiatement CPU et mémoire tout en conservant vos données persistantes.</p>
-                                    <ul class="pause-benefits">
-                                        <li><i class="fas fa-clock"></i> Reprise en quelques secondes</li>
-                                        <li><i class="fas fa-shield-alt"></i> Volumes et secrets intacts</li>
-                                    </ul>
-                                    <div class="pause-actions">
-                                        <button class="btn btn-warning btn-toggle-pause" data-name="${name}" data-namespace="${namespace}" data-action="${pauseAction}" data-variant="text">
-                                            <i class="fas ${pauseIcon}"></i> ${isPaused ? 'Reprendre l\'application' : 'Mettre en pause'}
-                                        </button>
-                                        <a class="btn btn-ghost" href="documentation/README.md#mode-pause" target="_blank">
-                                            <i class="fas fa-book-open"></i> Comprendre cette fonctionnalité
-                                        </a>
-                                    </div>
-                                    <p class="pause-note">${isPaused ? `En pause${pausedSince ? ` depuis ${pausedSince}` : ''}${pausedBy ? ` (initiée par ${pausedBy})` : ''}.` : 'Conseil : mettez vos TP en veille au lieu de les supprimer lorsque vous faites une pause.'}</p>
-                                </div>
-                                <hr>
-                                <h4><i class="fas fa-terminal"></i> Console intégrée (beta)</h4>
-                                <p class="muted">Terminal web directement dans votre pod (sans SSH). Accès limité à vos ressources LabOnDemand.</p>
-                                <div class="terminal-controls">
-                                   <label>Sélection du pod:
-                                        <select id="terminal-pod-select"></select>
-                                   </label>
-                                   <button class="btn btn-secondary" id="open-terminal"><i class="fas fa-terminal"></i> Ouvrir</button>
-                                   <button class="btn" id="close-terminal" style="display:none;"><i class="fas fa-times"></i> Fermer</button>
-                                </div>
-                                <div id="terminal-wrapper" style="display:none; border:1px solid var(--border-color); border-radius:8px; margin-top:10px;">
-                                   <div id="xterm" style="height:320px; width:100%; background:#111;"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="access-section">
-                        ${accessUrlsHtml}
-                    </div>
-                    
-                    <div class="pods-section">
-                        <h4>Pods (${data.pods.length})</h4>
-                        ${data.pods.length > 0 ? `
-                            <table class="k8s-table">
-                                <thead>
-                                    <tr>
-                                        <th>Nom</th>
-                                        <th>Node</th>
-                                        <th>IP</th>
-                                        <th>Statut</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${data.pods.map(pod => `
-                                        <tr>
-                                            <td>${pod.name}</td>
-                                            <td>${pod.node_name || 'N/A'}</td>
-                                            <td>${pod.pod_ip || 'N/A'}</td>
-                                            <td>${pod.status || 'N/A'}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        ` : `<p>Aucun pod trouvé pour ce déploiement.</p>`}
-                    </div>
-                    
-                    <div class="services-section">
-                        <h4>Points d'exposition (${data.services.length})</h4>
-                        ${data.services.length > 0 ? `
-                            <table class="k8s-table">
-                                <thead>
-                                    <tr>
-                                        <th>Nom</th>
-                                        <th>Type</th>
-                                        <th>Cluster IP</th>
-                                        <th>Ports</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${data.services.map(svc => `
-                                        <tr>
-                                            <td>${svc.name}</td>
-                                            <td>${svc.type}</td>
-                                            <td>${svc.cluster_ip || 'N/A'}</td>
-                                            <td>
-                                                ${svc.ports.map(port => {
-                                                    let portInfo = `${port.port} → ${port.target_port}`;
-                                                    if (port.node_port) {
-                                                        portInfo += ` (NodePort: ${port.node_port})`;
-                                                    }
-                                                    return portInfo;
-                                                }).join('<br>')}
-                                            </td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        ` : `<p>Aucun point d'exposition (Service Kubernetes) trouvé pour ce déploiement.</p>`}
-                    </div>
-                </div>
-            `;
-
-            bindPauseButtons(modalContent);
-
-            // Gestion des tabs
-            const tabBtns = modalContent.querySelectorAll('.tab-btn');
-            const tabInfos = modalContent.querySelector('#tab-infos');
-            const tabOptions = modalContent.querySelector('#tab-options');
-            tabBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    tabBtns.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    const t = btn.dataset.tab;
-                    tabInfos.style.display = (t === 'infos') ? 'block' : 'none';
-                    tabOptions.style.display = (t === 'options') ? 'block' : 'none';
-                });
-            });
-
-            // Bouton pour charger les credentials
-            const loadBtn = modalContent.querySelector('#load-credentials');
-            const credContent = modalContent.querySelector('#credentials-content');
-            const podSelect = modalContent.querySelector('#terminal-pod-select');
-            const openTermBtn = modalContent.querySelector('#open-terminal');
-            const closeTermBtn = modalContent.querySelector('#close-terminal');
-            const termWrapper = modalContent.querySelector('#terminal-wrapper');
-            let term = null, fitAddon = null, ws = null;
-
-            // Pré-remplir la liste des pods dans le select
-            try {
-                const r = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
-                if (r.ok) {
-                    const d = await r.json();
-                    const pods = d.pods || [];
-                    if (podSelect) {
-                        podSelect.innerHTML = pods.map(p => `<option value="${p.name}">${p.name} (${p.status})</option>`).join('');
-                    }
-                }
-            } catch {}
-            if (loadBtn) {
-                loadBtn.addEventListener('click', async () => {
-                    loadBtn.disabled = true;
-                    loadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Chargement...';
+        function bindDashboardActions() {
+            if (refreshQuotasBtn && !refreshQuotasBtn.dataset.bound) {
+                refreshQuotasBtn.dataset.bound = '1';
+                refreshQuotasBtn.addEventListener('click', async () => {
+                    refreshQuotasBtn.disabled = true;
                     try {
-                        const r = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/credentials`);
-                        if (!r.ok) {
-                            const err = await r.json().catch(() => ({}));
-                            throw new Error(err.detail || 'Impossible de récupérer les identifiants');
-                        }
-                        const creds = await r.json();
-                        credContent.style.display = 'block';
-                        credContent.innerHTML = renderCredentials(creds);
-                        // Bind boutons copier
-                        credContent.querySelectorAll('.copy-btn').forEach(btn => {
-                            btn.addEventListener('click', () => {
-                                const target = btn.getAttribute('data-target');
-                                const el = credContent.querySelector(`#${target}`);
-                                if (el) {
-                                    navigator.clipboard.writeText(el.textContent || '').then(() => {
-                                        btn.classList.add('copied');
-                                        setTimeout(() => btn.classList.remove('copied'), 1000);
-                                    });
-                                }
-                            });
-                        });
-                    } catch (e) {
-                        credContent.style.display = 'block';
-                        credContent.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-triangle"></i> ${e.message}</div>`;
+                        await refreshQuotas();
+                    } catch (error) {
+                        console.error('Erreur lors du rafraîchissement des quotas', error);
                     } finally {
-                        loadBtn.disabled = false;
-                        loadBtn.innerHTML = '<i class="fas fa-unlock"></i> Afficher les identifiants';
+                        refreshQuotasBtn.disabled = false;
                     }
                 });
             }
 
-            function ensureTerminal() {
-                if (!term) {
-                    // Utiliser la classe globale fournie par le CDN (window.Terminal)
-                    const TerminalCtor = (typeof window !== 'undefined' && window.Terminal) ? window.Terminal : null;
-                    if (!TerminalCtor) {
-                        alert('Le composant terminal n\'est pas chargé. Rechargez la page (Ctrl+F5).');
-                        throw new Error('xterm.js non chargé');
-                    }
-                    term = new TerminalCtor({
-                        cursorBlink: true,
-                        convertEol: true,
-                        fontFamily: 'Consolas, Menlo, monospace',
-                        fontSize: 13,
-                        theme: { background: '#111111' },
-                        rendererType: 'webgl' // préférer WebGL si dispo
-                    });
-                    // Fit addon (UMD): peut être exposé comme window.FitAddon.FitAddon ou window.FitAddon
-                    const FitCtor = (typeof window !== 'undefined' && window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon))
-                        ? (window.FitAddon.FitAddon || window.FitAddon)
-                        : null;
-                    if (FitCtor) {
-                        fitAddon = new FitCtor();
-                        term.loadAddon(fitAddon);
-                    }
-                    // Activer WebGL si dispo
+            if (refreshPvcsBtn && !refreshPvcsBtn.dataset.bound) {
+                refreshPvcsBtn.dataset.bound = '1';
+                refreshPvcsBtn.addEventListener('click', async () => {
+                    refreshPvcsBtn.disabled = true;
                     try {
-                        const WebglCtor = (window.WebglAddon && (window.WebglAddon.WebglAddon || window.WebglAddon)) ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
-                        if (WebglCtor) {
-                            const webglAddon = new WebglCtor();
-                            term.loadAddon(webglAddon);
-                        }
-                    } catch {}
-                    term.open(modalContent.querySelector('#xterm'));
-                    setTimeout(() => { try { fitAddon && fitAddon.fit(); } catch {} }, 50);
+                        await refreshPvcs({ render: true, force: true });
+                    } catch (error) {
+                        console.error('Erreur lors du rafraîchissement des PVC', error);
+                    } finally {
+                        refreshPvcsBtn.disabled = false;
+                    }
+                });
+            }
+
+            if (refreshAdminPvcsBtn && !refreshAdminPvcsBtn.dataset.bound) {
+                refreshAdminPvcsBtn.dataset.bound = '1';
+                refreshAdminPvcsBtn.addEventListener('click', async () => {
+                    refreshAdminPvcsBtn.disabled = true;
+                    try {
+                        await refreshAdminPvcs({ force: true });
+                    } catch (error) {
+                        console.error('Erreur lors du rafraîchissement des PVC administrateur', error);
+                    } finally {
+                        refreshAdminPvcsBtn.disabled = false;
+                    }
+                });
+            }
+
+            if (refreshDashboardBtn && !refreshDashboardBtn.dataset.bound) {
+                refreshDashboardBtn.dataset.bound = '1';
+                refreshDashboardBtn.addEventListener('click', async () => {
+                    refreshDashboardBtn.disabled = true;
+                    refreshDashboardBtn.setAttribute('aria-busy', 'true');
+                    try {
+                        await refreshDashboardData();
+                    } finally {
+                        refreshDashboardBtn.disabled = false;
+                        refreshDashboardBtn.removeAttribute('aria-busy');
+                    }
+                });
+            }
+
+            if (showPvcPanelBtn && !showPvcPanelBtn.dataset.bound) {
+                showPvcPanelBtn.dataset.bound = '1';
+                showPvcPanelBtn.addEventListener('click', () => {
+                    if (pvcSectionToggle && pvcResources) {
+                        pvcSectionToggle.classList.add('active');
+                        pvcResources.classList.add('active');
+                        pvcResources.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+            }
+
+            bindCollapsibleToggle(pvcSectionToggle, pvcResources);
+            bindCollapsibleToggle(k8sSectionToggle, k8sResources);
+        }
+
+        function initUserInfo() {
+            const displayName = escapeHtml(authManager.getUserDisplayName() || 'Utilisateur');
+            const role = authManager.getUserRole();
+            const roleLabels = { admin: 'Administrateur', teacher: 'Enseignant', student: 'Étudiant' };
+            if (userGreeting) {
+                const roleLabel = roleLabels[role] ? ` · ${roleLabels[role]}` : '';
+                userGreeting.innerHTML = `Bonjour, ${displayName}${roleLabel}`;
+            }
+            if (logoutBtn && !logoutBtn.dataset.bound) {
+                logoutBtn.dataset.bound = '1';
+                logoutBtn.addEventListener('click', async () => {
+                    await authManager.logout();
+                });
+            }
+        }
+
+        async function checkApiStatus() {
+            if (apiStatusEl) {
+                apiStatusEl.textContent = 'Vérification...';
+                apiStatusEl.dataset.status = 'loading';
+            }
+            const status = { api: false, k8s: false };
+            try {
+                const apiResp = await fetch(`${API_V1}/status`, { credentials: 'include' });
+                status.api = apiResp.ok;
+            } catch (error) {
+                status.api = false;
+            }
+            try {
+                const k8sResp = await fetch(`${API_V1}/k8s/deployments/labondemand`, { credentials: 'include' });
+                status.k8s = k8sResp.ok;
+            } catch (error) {
+                status.k8s = false;
+            }
+            if (apiStatusEl) {
+                if (status.api && status.k8s) {
+                    apiStatusEl.textContent = 'API et Kubernetes opérationnels';
+                    apiStatusEl.dataset.status = 'ok';
+                } else if (status.api) {
+                    apiStatusEl.textContent = 'API OK – Kubernetes indisponible';
+                    apiStatusEl.dataset.status = 'partial';
+                } else {
+                    apiStatusEl.textContent = 'API indisponible';
+                    apiStatusEl.dataset.status = 'error';
                 }
-                return term;
             }
-
-            function closeTerminal() {
-                if (ws) { try { ws.close(); } catch {} ws = null; }
-                if (term) { try { term.dispose(); } catch {} term = null; }
-                termWrapper.style.display = 'none';
-                openTermBtn.style.display = '';
-                closeTermBtn.style.display = 'none';
-            }
-
-            // Charge dynamiquement xterm.js si nécessaire
-            function loadXtermIfNeeded() {
-                return new Promise((resolve, reject) => {
-                    if (typeof window !== 'undefined' && window.Terminal) return resolve();
-                    // Charger xterm puis l'addon fit
-                    const sources = [
-                        // Priorité: URLs sans version (conseillées par vous)
-                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.min.js', attach: 'https://cdn.jsdelivr.net/npm/xterm-addon-attach/lib/xterm-addon-attach.min.js', webgl: 'https://cdn.jsdelivr.net/npm/xterm-addon-webgl/lib/xterm-addon-webgl.min.js' },
-                        { xterm: 'https://unpkg.com/xterm/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit/lib/xterm-addon-fit.min.js', attach: 'https://unpkg.com/xterm-addon-attach/lib/xterm-addon-attach.min.js', webgl: 'https://unpkg.com/xterm-addon-webgl/lib/xterm-addon-webgl.min.js' },
-                        // Fallbacks versionnés
-                        { xterm: 'https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.min.js', fit: 'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js', attach: 'https://cdn.jsdelivr.net/npm/xterm-addon-attach@0.7.0/lib/xterm-addon-attach.min.js', webgl: 'https://cdn.jsdelivr.net/npm/xterm-addon-webgl@0.15.0/lib/xterm-addon-webgl.min.js' },
-                        { xterm: 'https://unpkg.com/xterm@5.5.0/lib/xterm.min.js', fit: 'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js', attach: 'https://unpkg.com/xterm-addon-attach@0.7.0/lib/xterm-addon-attach.min.js', webgl: 'https://unpkg.com/xterm-addon-webgl@0.15.0/lib/xterm-addon-webgl.min.js' }
-                    ];
-
-                    function loadScript(src) {
-                        return new Promise((res, rej) => {
-                            const s = document.createElement('script');
-                            s.src = src;
-                            s.async = true;
-                            s.onload = () => res();
-                            s.onerror = () => rej(new Error('Failed to load ' + src));
-                            document.head.appendChild(s);
-                        });
-                    }
-
-                    (async () => {
-                        let lastErr = null;
-                        for (const cdn of sources) {
-                            try {
-                                await loadScript(cdn.xterm);
-                                // xterm peut mettre un petit délai à init le global
-                                await new Promise(r => setTimeout(r, 30));
-                                if (!window.Terminal) throw new Error('Terminal global missing');
-                                try { await loadScript(cdn.fit); } catch {}
-                                try { await loadScript(cdn.attach); } catch {}
-                                try { await loadScript(cdn.webgl); } catch {}
-                                return resolve();
-                            } catch (e) {
-                                lastErr = e;
-                                continue;
-                            }
-                        }
-                        reject(lastErr || new Error('Impossible de charger xterm.js'));
-                    })();
-                });
-            }
-
-            if (openTermBtn) {
-                openTermBtn.addEventListener('click', async () => {
-                    try {
-                        await loadXtermIfNeeded();
-                    } catch (e) {
-                        alert("Impossible de charger le composant terminal (xterm.js).\nVérifiez votre connexion réseau puis réessayez.");
-                        return;
-                    }
-                    const podName = podSelect?.value;
-                    if (!podName) { alert('Aucun pod disponible'); return; }
-                    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-                    const base = `${proto}://${window.location.host}`;
-                    const wsUrl = `${base}/api/v1/k8s/terminal/${encodeURIComponent(namespace)}/${encodeURIComponent(podName)}`;
-                    // Ouvrir socket
-                    try { closeTerminal(); } catch {}
-                    ensureTerminal();
-                    termWrapper.style.display = 'block';
-                    openTermBtn.style.display = 'none';
-                    closeTermBtn.style.display = '';
-                    ws = new WebSocket(wsUrl);
-                    ws.binaryType = 'arraybuffer';
-                    ws.onopen = () => {
-                        try { fitAddon && fitAddon.fit(); } catch {}
-                        // Envoyer immédiatement les dimensions pour un prompt correct
-                        const cols = term.cols || 80, rows = term.rows || 24;
-                        try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {}
-                        // Keepalive
-                        ws.__kalive = setInterval(() => { try { ws.send('\u0000'); } catch {} }, 25000);
-                        // Utiliser AttachAddon pour un écho sans perte
-                        try {
-                            const AttachCtor = (window.AttachAddon && (window.AttachAddon.AttachAddon || window.AttachAddon)) ? (window.AttachAddon.AttachAddon || window.AttachAddon) : null;
-                            if (AttachCtor) {
-                                const attach = new AttachCtor(ws, { bidirectional: true, useUtf8: true });
-                                term.loadAddon(attach);
-                            } else {
-                                // Fallback manuel
-                                ws.onmessage = (ev) => { term.write(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data)); };
-                                term.onData((data) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(data); });
-                            }
-                        } catch {}
-                    };
-                    ws.onclose = () => {
-                        term.write('\r\n[connexion fermée]\r\n');
-                        if (ws.__kalive) try { clearInterval(ws.__kalive); } catch {}
-                        closeTermBtn.style.display = 'none';
-                        openTermBtn.style.display = '';
-                    };
-                    ws.onerror = () => {
-                        term.write('\r\n[erreur websocket]\r\n');
-                    };
-                    // term.onData est géré par AttachAddon si dispo (fallback ci-dessus)
-                    // Ajuster la taille du TTY côté pod
-                    function sendResize() {
-                        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-                        const cols = term.cols || 80, rows = term.rows || 24;
-                        try { ws.send(JSON.stringify({ type: 'resize', cols, rows })); } catch {}
-                    }
-                    setTimeout(sendResize, 150);
-                    window.addEventListener('resize', () => { try { fitAddon && fitAddon.fit(); sendResize(); } catch {} });
-                });
-            }
-            if (closeTermBtn) {
-                closeTermBtn.addEventListener('click', closeTerminal);
-            }
-        } catch (error) {
-            console.error('Erreur:', error);
-            modalContent.innerHTML = `
-                <div class="error-message">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <p>Erreur lors du chargement des détails: ${error.message}</p>
-                </div>
-            `;
+            return status;
         }
-    }
 
-    // Rendu HTML des credentials
-    function renderCredentials(creds) {
-        if (!creds) return '<p class="muted">Aucun identifiant disponible.</p>';
-        if (creds.type === 'wordpress') {
-            return `
-                <div class="credentials-grid">
-                    <div class="cred-card">
-                        <h5><i class="fab fa-wordpress"></i> Admin WordPress</h5>
-                        <div class="cred-row"><span>Utilisateur</span><code id="wp-user">${creds.wordpress?.username || ''}</code><button class="copy-btn" data-target="wp-user"><i class="fas fa-copy"></i></button></div>
-                        <div class="cred-row"><span>Mot de passe</span><code id="wp-pass">${creds.wordpress?.password || ''}</code><button class="copy-btn" data-target="wp-pass"><i class="fas fa-copy"></i></button></div>
-                        ${creds.wordpress?.email ? `<div class="cred-row"><span>Email</span><code id="wp-mail">${creds.wordpress.email}</code><button class="copy-btn" data-target="wp-mail"><i class="fas fa-copy"></i></button></div>` : ''}
-                    </div>
-                    <div class="cred-card">
-                        <h5><i class="fas fa-database"></i> Base de données</h5>
-                        <div class="cred-row"><span>Hôte</span><code id="db-host">${creds.database?.host || ''}</code><button class="copy-btn" data-target="db-host"><i class="fas fa-copy"></i></button></div>
-                        <div class="cred-row"><span>Port</span><code id="db-port">${creds.database?.port || ''}</code><button class="copy-btn" data-target="db-port"><i class="fas fa-copy"></i></button></div>
-                        <div class="cred-row"><span>Utilisateur</span><code id="db-user">${creds.database?.username || ''}</code><button class="copy-btn" data-target="db-user"><i class="fas fa-copy"></i></button></div>
-                        <div class="cred-row"><span>Mot de passe</span><code id="db-pass">${creds.database?.password || ''}</code><button class="copy-btn" data-target="db-pass"><i class="fas fa-copy"></i></button></div>
-                        <div class="cred-row"><span>Base</span><code id="db-name">${creds.database?.database || ''}</code><button class="copy-btn" data-target="db-name"><i class="fas fa-copy"></i></button></div>
-                    </div>
-                </div>
-            `;
-        }
-        // Générique
-        const entries = Object.entries(creds.secrets || {});
-        if (!entries.length) return '<p class="muted">Aucun identifiant trouvé.</p>';
-        return `
-            <div class="credentials-grid">
-                ${entries.map(([k,v],i)=>`
-                    <div class="cred-card">
-                        <h5><i class="fas fa-key"></i> ${k}</h5>
-                        <div class="cred-row"><span>Valeur</span><code id="gen-${i}">${v || ''}</code><button class="copy-btn" data-target="gen-${i}"><i class="fas fa-copy"></i></button></div>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    }
+        bindDashboardActions();
 
     // --- Navigation ---
     function showView(viewId) {
@@ -2080,6 +323,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // --- Service Selection (dynamique) ---
+    function updateServiceGuidance(deploymentType) {
+        if (!serviceGuidanceBox) {
+            return;
+        }
+        const guidanceMap = {
+            jupyter: {
+                title: 'Jupyter Notebook',
+                icon: 'fa-brands fa-python',
+                description: 'Idéal pour les TP data science. Le volume persistant apparaît dans /home/jovyan.',
+                tips: [
+                    'Sélectionnez les datasets voulus avant le lancement.',
+                    'Conservez le token affiché dans le panneau de statut.',
+                ],
+            },
+            vscode: {
+                title: 'VS Code Browser',
+                icon: 'fa-solid fa-code',
+                description: 'Bureau VS Code prêt à l’emploi avec extensions essentielles.',
+                tips: [
+                    'Réutilisez vos volumes existants pour retrouver vos projets.',
+                    'Le mode pause libère les ressources sans perdre vos fichiers.',
+                ],
+            },
+            netbeans: {
+                title: 'NetBeans via NoVNC',
+                icon: 'fa-solid fa-desktop',
+                description: 'NetBeans complet accessible dans le navigateur (flux NoVNC).',
+                tips: [
+                    'Le bouton "Bureau intégré" apparaît quand le service est prêt.',
+                    'Utilisez pause/reprise pour conserver vos réglages.',
+                ],
+            },
+            custom: {
+                title: 'Déploiement personnalisé',
+                icon: 'fa-solid fa-cube',
+                description: 'Spécifiez votre image Docker et les ports à exposer.',
+                tips: [
+                    'Vérifiez que vos ports cibles correspondent au service Kubernetes.',
+                    'Ajoutez un PVC si votre conteneur doit persister des données.',
+                ],
+            },
+        };
+        const info = guidanceMap[deploymentType];
+        if (!info) {
+            serviceGuidanceBox.classList.remove('active');
+            serviceGuidanceBox.innerHTML = '';
+            return;
+        }
+        const tipsHtml = info.tips.map(tip => `<li><i class="fas fa-check"></i> ${tip}</li>`).join('');
+        serviceGuidanceBox.innerHTML = `
+            <h4><i class="fas ${info.icon}"></i> ${info.title}</h4>
+            <p>${info.description}</p>
+            <ul>${tipsHtml}</ul>
+        `;
+        serviceGuidanceBox.classList.add('active');
+    }
+
     function bindServiceCard(card) {
         card.addEventListener('click', async () => {
             const serviceName = card.getAttribute('data-service');
@@ -2474,7 +774,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // Afficher la vue de statut avec chargement
             showView('status-view');
-            currentStatusDeployment = null;
+            state.currentStatusDeployment = null;
             statusContent.innerHTML = `
                 <i class="fas fa-spinner fa-spin status-icon loading"></i>
                 <h2>Lancement de l'application ${serviceName} en cours...</h2>
@@ -2548,14 +848,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const connectionHints = data.connection_hints || null;
 
                 // Construire les infos du lab à ajouter au dashboard
-                labCounter++;
+                state.labCounter++;
                 const labId = deploymentName;
                 const effectiveNamespace = data.namespace || 'labondemand-user';
 
                 if (deploymentType === 'netbeans') {
-                    lastLaunchedDeployment = { id: labId, namespace: effectiveNamespace };
+                    state.lastLaunchedDeployment = { id: labId, namespace: effectiveNamespace };
                 } else {
-                    lastLaunchedDeployment = null;
+                    state.lastLaunchedDeployment = null;
                 }
 
                 // Extraire l'URL d'accès des infos de retour (ou générer une URL factice en attendant de récupérer l'URL réelle)
@@ -2702,7 +1002,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     </div>
                 ` : '';
 
-                currentStatusDeployment = {
+                state.currentStatusDeployment = {
                     id: labId,
                     namespace: effectiveNamespace,
                     serviceName,
@@ -2725,546 +1025,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="error-message">${error.message}</div>
                 `;
                 statusActions.style.display = 'block'; // Afficher le bouton "Terminé" même en cas d'erreur
-                currentStatusDeployment = null;
+                state.currentStatusDeployment = null;
             }
         });
     }
 
-    // --- Manage Active Labs ---
-    async function refreshActiveLabs() {
-        try {
-            // Récupérer la liste des déploiements LabOnDemand uniquement
-            const response = await fetch(`${API_V1}/k8s/deployments/labondemand`);
-            if (!response.ok) throw new Error('Erreur lors de la récupération des déploiements');
-            
-            const data = await response.json();
-            const deployments = data.deployments || [];
-            
-            // Plus besoin de filtrer puisque l'endpoint ne retourne que les déploiements LabOnDemand
-            const filteredDeployments = deployments;
-            
-            // Supprimer les labCards pour les déploiements qui n'existent plus
-            const labCards = document.querySelectorAll('.lab-card');
-            labCards.forEach(card => {
-                const deploymentId = card.id;
-                const deploymentNamespace = card.dataset.namespace;
-                
-                // Vérifier si le déploiement existe encore
-                const deploymentExists = filteredDeployments.some(d => 
-                    d.name === deploymentId && d.namespace === deploymentNamespace
-                );
-                
-                if (!deploymentExists) {
-                    console.log(`Suppression de la carte obsolète: ${deploymentId} (namespace: ${deploymentNamespace})`);
-                    
-                    // Arrêter les timers de vérification s'ils existent
-                    const timerKey = `${deploymentNamespace}-${deploymentId}`;
-                    if (deploymentCheckTimers.has(timerKey)) {
-                        clearTimeout(deploymentCheckTimers.get(timerKey));
-                        deploymentCheckTimers.delete(timerKey);
-                        console.log(`Timer de vérification arrêté pour ${deploymentId}`);
-                    }
-                    
-                    card.remove();
-                }
-            });
-            
-            // Vérifier si la liste est vide
-            const noLabsMessage = document.querySelector('.no-labs-message');
-            if (activeLabsList.children.length === 0 || 
-                (activeLabsList.children.length === 1 && activeLabsList.children[0].classList.contains('no-labs-message'))) {
-                if (noLabsMessage) noLabsMessage.style.display = 'block';
-            } else {
-                if (noLabsMessage) noLabsMessage.style.display = 'none';
-            }
-            
-        } catch (error) {
-            console.error('Erreur lors du rafraîchissement des labs actifs:', error);
-        }
-    }
-
-    function applyLifecycleStateToLabCard(deploymentId, lifecycle) {
-        const card = document.getElementById(deploymentId);
-        if (!card) {
-            return;
-        }
-        const state = (lifecycle && lifecycle.state) || 'unknown';
-        card.dataset.lifecycleState = state;
-        const statusIndicator = card.querySelector('.status-indicator');
-        const availabilityBlock = document.getElementById(`app-status-${deploymentId}`);
-        const accessBtn = document.getElementById(`access-btn-${deploymentId}`);
-        const pauseBtn = card.querySelector(`.btn-toggle-pause[data-name="${deploymentId}"]`);
-
-        if (state === 'paused') {
-            card.classList.add('lab-paused');
-            card.classList.remove('lab-ready', 'lab-pending', 'lab-error');
-            if (statusIndicator) {
-                statusIndicator.className = 'status-indicator paused';
-                statusIndicator.innerHTML = '<i class="fas fa-circle-pause"></i> En pause';
-            }
-            if (availabilityBlock) {
-                availabilityBlock.className = 'app-availability paused';
-                availabilityBlock.innerHTML = `
-                    <i class="fas fa-circle-pause app-availability-icon"></i>
-                    <span class="app-availability-text">Application en pause. Cliquez sur "Reprendre" pour la relancer.</span>
-                `;
-            }
-            if (accessBtn) {
-                accessBtn.classList.add('disabled');
-                accessBtn.innerHTML = '<i class="fas fa-circle-pause"></i> En pause';
-            }
-            if (pauseBtn) {
-                pauseBtn.setAttribute('data-action', 'resume');
-                if (pauseBtn.dataset.variant === 'text') {
-                    pauseBtn.innerHTML = '<i class="fas fa-circle-play"></i> Reprendre';
-                } else {
-                    pauseBtn.innerHTML = '<i class="fas fa-circle-play"></i>';
-                }
-            }
-        } else {
-            card.classList.remove('lab-paused');
-            if (statusIndicator && statusIndicator.classList.contains('paused')) {
-                statusIndicator.className = 'status-indicator pending';
-                statusIndicator.innerHTML = '<i class="fas fa-spinner fa-spin"></i> En préparation...';
-            }
-            if (availabilityBlock && availabilityBlock.classList.contains('paused')) {
-                availabilityBlock.className = 'app-availability pending';
-                availabilityBlock.innerHTML = `
-                    <i class="fas fa-hourglass-half app-availability-icon"></i>
-                    <span class="app-availability-text">L'application redémarre...</span>
-                `;
-            }
-            if (accessBtn && accessBtn.classList.contains('disabled')) {
-                accessBtn.classList.remove('disabled');
-                accessBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Accéder';
-            }
-            if (pauseBtn) {
-                pauseBtn.setAttribute('data-action', 'pause');
-                if (pauseBtn.dataset.variant === 'text') {
-                    pauseBtn.innerHTML = '<i class="fas fa-circle-pause"></i> Pause';
-                } else {
-                    pauseBtn.innerHTML = '<i class="fas fa-circle-pause"></i>';
-                }
-            }
-        }
-    }
-
-    function addLabCard(labDetails) {
-         if (noLabsMessage) {
-             noLabsMessage.style.display = 'none'; // Hide "no labs" message
-         }
-
-        const card = document.createElement('div');
-        card.classList.add('card', 'lab-card');
-        const lifecycleState = (labDetails.lifecycle && labDetails.lifecycle.state) || null;
-        const isPaused = lifecycleState === 'paused' || labDetails.isPaused;
-        if (isPaused) {
-            card.classList.add('lab-paused');
-        } else {
-            card.classList.add(labDetails.ready ? 'lab-ready' : 'lab-pending');
-        }
-        card.id = labDetails.id;
-        card.dataset.namespace = labDetails.namespace;
-        card.dataset.deploymentType = labDetails.deploymentType || '';
-        card.dataset.serviceName = labDetails.name || labDetails.id;
-
-        let datasetsHtml = '';
-        if (labDetails.datasets && labDetails.datasets.length > 0) {
-            datasetsHtml = `<div class="lab-datasets"><i class="fas fa-database"></i><span>Datasets: ${labDetails.datasets.join(', ')}</span></div>`;
-        }
-
-        const isNetbeans = labDetails.deploymentType === 'netbeans';
-        const embedButtonHtml = isNetbeans ? `
-                <button type="button" class="btn btn-secondary embed-novnc-btn ${labDetails.ready ? '' : 'disabled'}" data-novnc-target="${labDetails.id}" data-namespace="${labDetails.namespace}" ${labDetails.ready ? '' : 'disabled'}>
-                    <i class="fas fa-desktop"></i> ${labDetails.ready ? 'Ouvrir dans la page' : 'En attente NoVNC...'}
-                </button>
-        ` : '';
-
-        // Déterminer l'indicateur d'état à afficher
-        let statusIndicator = '<span class="status-indicator pending"><i class="fas fa-spinner fa-spin"></i> En préparation...</span>';
-        if (isPaused) {
-            statusIndicator = '<span class="status-indicator paused"><i class="fas fa-circle-pause"></i> En pause</span>';
-        } else if (labDetails.ready) {
-            statusIndicator = '<span class="status-indicator ready"><i class="fas fa-check-circle"></i> Prêt</span>';
-        }
-
-        const availabilityHtml = isPaused ? `
-            <div class="app-availability paused" id="app-status-${labDetails.id}">
-                <i class="fas fa-circle-pause app-availability-icon"></i>
-                <span class="app-availability-text">L'application est en pause, aucune ressource n'est consommée.</span>
-            </div>
-        ` : labDetails.ready ? `
-            <div class="app-availability ready" id="app-status-${labDetails.id}">
-                <i class="fas fa-check-circle app-availability-icon"></i>
-                <span class="app-availability-text">L'application est prête à être utilisée</span>
-            </div>
-        ` : `
-            <div class="app-availability pending" id="app-status-${labDetails.id}">
-                <i class="fas fa-hourglass-half app-availability-icon"></i>
-                <span class="app-availability-text">L'application est en cours d'initialisation</span>
-            </div>
-        `;
-
-        const pauseButtonHtml = `
-            <button class="btn btn-warning btn-toggle-pause" data-name="${labDetails.id}" data-namespace="${labDetails.namespace}" data-action="${isPaused ? 'resume' : 'pause'}" data-variant="text">
-                <i class="fas ${isPaused ? 'fa-circle-play' : 'fa-circle-pause'}"></i> ${isPaused ? 'Reprendre' : 'Pause'}
-            </button>
-        `;
-
-        card.innerHTML = `
-            <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
-            <div class="lab-subtitle">
-                <span class="id-badge"><i class="fas fa-tag"></i>${labDetails.id}</span>
-            </div>
-            <div class="lab-meta">
-                <span class="meta-item"><i class="fas fa-microchip"></i>${labDetails.cpu}</span>
-                <span class="sep">•</span>
-                <span class="meta-item"><i class="fas fa-memory"></i>${labDetails.ram}</span>
-            </div>
-            ${datasetsHtml}
-            ${availabilityHtml}
-            <div class="lab-actions">
-                <a href="${labDetails.link}" target="_blank" class="btn btn-primary ${labDetails.ready ? '' : 'disabled'}" id="access-btn-${labDetails.id}">
-                    <i class="fas fa-external-link-alt"></i> ${labDetails.ready ? 'Accéder' : 'En préparation...'}
-                </a>
-                ${embedButtonHtml}
-                <button class="btn btn-secondary btn-details" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
-                    <i class="fas fa-info-circle"></i> Détails
-                </button>
-                ${pauseButtonHtml}
-                <button class="btn btn-danger stop-lab-btn" data-id="${labDetails.id}" data-namespace="${labDetails.namespace}">
-                    <i class="fas fa-stop-circle"></i> Arrêter
-                </button>
-            </div>
-        `;
-
-        activeLabsList.appendChild(card);
-        bindPauseButtons(card);
-
-        if (isNetbeans) {
-            registerNovncEndpoint(labDetails.id, labDetails.namespace, {
-                nodePort: labDetails.nodePort,
-                urlTemplate: labDetails.urlTemplate,
-                url: labDetails.link && !labDetails.link.includes('IP_DU_NOEUD') && !labDetails.link.includes('NODE_PORT') ? labDetails.link : undefined,
-                protocol: labDetails.protocol,
-                secure: labDetails.secure,
-                credentials: labDetails.credentials,
-            });
-        }
-
-        bindNovncButtons(card);
-        if (isNetbeans) {
-            updateNovncButtonsAvailability(labDetails.id);
-        }
-
-        if (labDetails.lifecycle) {
-            applyLifecycleStateToLabCard(labDetails.id, labDetails.lifecycle);
-        } else if (isPaused) {
-            applyLifecycleStateToLabCard(labDetails.id, { state: 'paused' });
-        }
-
-        // Ajouter l'écouteur pour le bouton détails
-        card.querySelector('.btn-details').addEventListener('click', (e) => {
-            const id = e.currentTarget.getAttribute('data-id');
-            const namespace = e.currentTarget.getAttribute('data-namespace');
-            showDeploymentDetails(namespace, id);
-        });
-
-        // Ajouter l'écouteur pour le bouton d'arrêt
-        card.querySelector('.stop-lab-btn').addEventListener('click', (e) => {
-            const id = e.currentTarget.getAttribute('data-id');
-            const namespace = e.currentTarget.getAttribute('data-namespace');
-            stopLab(id, namespace);
-        });
-        
-        // Si l'URL est incomplète/générique, on essaie de récupérer les détails pour avoir une URL réelle
-        if (labDetails.link.includes('<IP_DU_NOEUD>') || labDetails.link.includes('<IP_EXTERNE>')) {
-            fetchDeploymentAccessUrl(labDetails.namespace, labDetails.id);
-        }
-        
-        // Si le déploiement n'est pas prêt, démarrer les vérifications périodiques
-        if (!labDetails.ready && !isPaused) {
-            checkDeploymentReadiness(labDetails.namespace, labDetails.id);
-        }
-    }
-    
-    // Fonction pour récupérer et mettre à jour l'URL d'accès à un déploiement
-    async function fetchDeploymentAccessUrl(namespace, name) {
-        try {
-            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
-            
-            if (!response.ok) {
-                throw new Error('Impossible de récupérer les détails du déploiement');
-            }
-            
-            const data = await response.json();
-            if (data.access_urls && data.access_urls.length > 0) {
-                const accessUrl = data.access_urls[0].url;
-                const accessBtn = document.getElementById(`access-btn-${name}`);
-                if (accessBtn) {
-                    accessBtn.href = accessUrl;
-                    console.log(`URL d'accès récupérée pour ${name}: ${accessUrl}`);
-                }
-                if (currentStatusDeployment && currentStatusDeployment.id === name) {
-                    const state = currentStatusDeployment.state || 'pending';
-                    updateStatusViewForDeployment(name, state, { accessUrl });
-                }
-            } else {
-                console.warn(`Aucune URL d'accès disponible pour ${name}`);
-            }
-        } catch (error) {
-            console.error(`Erreur lors de la récupération de l'URL d'accès pour ${name}:`, error);
-        }
-    }
-    
-    // Map pour stocker les timers de vérification des déploiements
-    const deploymentCheckTimers = new Map();
-    
-    // Fonction pour vérifier périodiquement si un déploiement est prêt
-    async function checkDeploymentReadiness(namespace, name, attempts = 0) {
-        // Limiter à 60 tentatives (5 minutes si intervalle = 5s)
-        const maxAttempts = 60;
-        
-        try {
-            // Récupérer les détails du déploiement
-            const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${name}/details`);
-            
-            // Si le déploiement n'existe pas (404), arrêter les vérifications et supprimer la carte
-            if (response.status === 404) {
-                console.warn(`Déploiement ${name} non trouvé (404). Suppression de la carte et arrêt des vérifications.`);
-
-                const timerKey = `${namespace}-${name}`;
-                clearTimeout(deploymentCheckTimers.get(timerKey));
-                deploymentCheckTimers.delete(timerKey);
-
-                const card = document.getElementById(name);
-                const serviceName = card?.dataset?.serviceName || name;
-                updateStatusViewForDeployment(name, 'deleted', { serviceName });
-
-                if (card) {
-                    card.remove();
-                    console.log(`Carte d'application ${name} supprimée car le déploiement n'existe plus.`);
-                }
-
-                const noLabsMessage = document.querySelector('.no-labs-message');
-                if (activeLabsList.children.length === 0) {
-                    if (noLabsMessage) noLabsMessage.style.display = 'block';
-                }
-
-                return;
-            }
-            
-            // Si erreur 500, arrêter aussi les vérifications après quelques tentatives
-            if (response.status === 500) {
-                console.error(`Erreur serveur 500 pour le déploiement ${name}. Tentative ${attempts+1}/${maxAttempts}`);
-                
-                if (attempts >= 5) { // Arrêter après 5 tentatives pour les erreurs 500
-                    console.error(`Arrêt des vérifications pour ${name} après erreurs 500 répétées`);
-                    clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
-                    deploymentCheckTimers.delete(`${namespace}-${name}`);
-                    updateLabCardStatus(name, false, null, true);
-                    return;
-                }
-            }
-            
-            if (!response.ok) {
-                throw new Error(`Erreur ${response.status}: ${response.statusText}`);
-            }
-            
-            const data = await response.json();
-            if (data.lifecycle) {
-                applyLifecycleStateToLabCard(name, data.lifecycle);
-                if (data.lifecycle.state === 'paused') {
-                    const pausedKey = `${namespace}-${name}`;
-                    if (deploymentCheckTimers.has(pausedKey)) {
-                        clearTimeout(deploymentCheckTimers.get(pausedKey));
-                        deploymentCheckTimers.delete(pausedKey);
-                    }
-                    return;
-                }
-            }
-            const available = (data.deployment && (data.deployment.available_replicas || 0) > 0);
-            // Ne pas considérer "pods prêts" si la liste est vide (every([]) === true -> piège)
-            const podsReady = Array.isArray(data.pods) && data.pods.length > 0 && data.pods.every(pod => pod.status === 'Running');
-            
-            console.log(`Vérification déploiement ${name}: available=${available}, podsReady=${podsReady}, tentative=${attempts+1}/${maxAttempts}`);
-            
-            // Si le déploiement est disponible et au moins un pod est prêt
-            if (available && podsReady) {
-                console.log(`Déploiement ${name} prêt !`);
-                updateLabCardStatus(name, true, data);
-                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
-                deploymentCheckTimers.delete(`${namespace}-${name}`);
-                return;
-            }
-            
-            // Continuer à vérifier sauf si max atteint
-            if (attempts < maxAttempts) {
-                const timerId = setTimeout(() => {
-                    checkDeploymentReadiness(namespace, name, attempts + 1);
-                }, 5000); // Vérifier toutes les 5 secondes
-                
-                deploymentCheckTimers.set(`${namespace}-${name}`, timerId);
-            } else {
-                console.log(`Nombre maximal de tentatives atteint pour ${name}`);
-                // Informer l'utilisateur qu'il pourrait y avoir un problème
-                updateLabCardStatus(name, false, data, true);
-                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
-                deploymentCheckTimers.delete(`${namespace}-${name}`);
-            }
-        } catch (error) {
-            console.error(`Erreur lors de la vérification du déploiement ${name}:`, error);
-            // Continuer à vérifier sauf si max atteint ET si ce n'est pas une erreur 404
-            if (attempts < maxAttempts && !error.message.includes('404')) {
-                const timerId = setTimeout(() => {
-                    checkDeploymentReadiness(namespace, name, attempts + 1);
-                }, 5000);
-                deploymentCheckTimers.set(`${namespace}-${name}`, timerId);
-            } else {
-                // Arrêter les vérifications en cas d'erreur persistante
-                console.error(`Arrêt des vérifications pour ${name} après ${attempts} tentatives`);
-                clearTimeout(deploymentCheckTimers.get(`${namespace}-${name}`));
-                deploymentCheckTimers.delete(`${namespace}-${name}`);
-            }
-        }
-    }
-      // Fonction pour mettre à jour l'affichage d'un lab card en fonction de son état
-    function updateLabCardStatus(deploymentId, isReady, deploymentData, timeout = false) {
-        const card = document.getElementById(deploymentId);
-        if (!card) return;
-
-        if (card.dataset.lifecycleState === 'paused' && !isReady && !timeout) {
-            return;
-        }
-
-        const serviceName = card.dataset.serviceName || deploymentId;
-        let resolvedAccessUrl = '';
-
-        if (isReady) {
-            card.classList.remove('lab-pending');
-            card.classList.add('lab-ready');
-            card.classList.add('status-changed');
-            setTimeout(() => card.classList.remove('status-changed'), 2000);
-        } else if (timeout) {
-            card.classList.remove('lab-pending');
-            card.classList.add('lab-error');
-        }
-
-        const statusIndicator = card.querySelector('.status-indicator');
-        if (statusIndicator) {
-            if (isReady) {
-                statusIndicator.className = 'status-indicator ready';
-                statusIndicator.innerHTML = '<i class="fas fa-check-circle"></i> Prêt';
-            } else if (timeout) {
-                statusIndicator.className = 'status-indicator error';
-                statusIndicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Problème de démarrage';
-            }
-        }
-
-        const appStatus = document.getElementById(`app-status-${deploymentId}`);
-        if (appStatus) {
-            if (isReady) {
-                appStatus.className = 'app-availability ready';
-                appStatus.innerHTML = `
-                    <i class="fas fa-check-circle app-availability-icon"></i>
-                    <span class="app-availability-text">L'application est prête à être utilisée</span>
-                `;
-            } else if (timeout) {
-                appStatus.className = 'app-availability error';
-                appStatus.innerHTML = `
-                    <i class="fas fa-exclamation-triangle app-availability-icon"></i>
-                    <span class="app-availability-text">Problème de démarrage de l'application</span>
-                `;
-            }
-        }
-
-        const accessBtn = document.getElementById(`access-btn-${deploymentId}`);
-        if (accessBtn) {
-            if (isReady) {
-                accessBtn.classList.remove('disabled');
-                accessBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Accéder';
-
-                if (deploymentData && Array.isArray(deploymentData.access_urls) && deploymentData.access_urls.length > 0) {
-                    const accessUrl = deploymentData.access_urls[0].url;
-                    accessBtn.href = accessUrl;
-                    resolvedAccessUrl = accessUrl;
-                    console.log(`URL d'accès mise à jour pour ${deploymentId}: ${accessUrl}`);
-                } else {
-                    console.warn(`Aucune URL d'accès trouvée pour ${deploymentId}`);
-                    if (accessBtn.href) {
-                        resolvedAccessUrl = accessBtn.href;
-                    }
-                }
-            } else if (timeout) {
-                accessBtn.innerHTML = '<i class="fas fa-exclamation-circle"></i> Vérifier les détails';
-            }
-        }
-
-        if (card.dataset.deploymentType === 'netbeans') {
-            if (isReady && deploymentData) {
-                const novncInfo = extractNovncInfoFromDetails(deploymentData);
-                registerNovncEndpoint(deploymentId, card.dataset.namespace, {
-                    nodePort: novncInfo.nodePort,
-                    url: novncInfo.url,
-                    hostname: novncInfo.hostname,
-                    protocol: novncInfo.protocol,
-                    secure: novncInfo.secure,
-                });
-            }
-            updateNovncButtonsAvailability(deploymentId);
-        }
-
-        if (isReady) {
-            const overrides = { serviceName };
-            if (resolvedAccessUrl) {
-                overrides.accessUrl = resolvedAccessUrl;
-            }
-            updateStatusViewForDeployment(deploymentId, 'ready', overrides);
-        } else if (timeout) {
-            updateStatusViewForDeployment(deploymentId, 'timeout', { serviceName });
-        }
-    }
-
-    async function stopLab(labId, namespace) {
-         // Demander confirmation
-    if (confirm(`Êtes-vous sûr de vouloir arrêter l'application "${labId}" ?`)) {
-            try {
-                // Appel API pour supprimer le déploiement
-                const response = await fetch(`${API_V1}/k8s/deployments/${namespace}/${labId}?delete_service=true`, {
-                    method: 'DELETE'
-                });
-                
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.detail || 'Erreur lors de la suppression du déploiement');
-                }
-                
-                // Supprimer la carte du tableau de bord
-                const labCard = document.getElementById(labId);
-                if (labCard) {
-                    labCard.remove();
-                    console.log(`Lab ${labId} arrêté avec succès.`);
-                    
-                    // Mettre à jour la liste des déploiements
-                    fetchAndRenderDeployments();
-                    try {
-                        await refreshPvcs({ render: true, force: true });
-                        populatePvcSelect(deploymentTypeInput.value);
-                    } catch (error) {
-                        console.warn('Impossible de rafraîchir les PVC après arrêt:', error);
-                    }
-                    
-                    // Afficher le message "aucun lab" si nécessaire
-                    if (activeLabsList.children.length === 0 || (activeLabsList.children.length === 1 && activeLabsList.children[0].classList.contains('no-labs-message'))) {
-                        if (noLabsMessage) noLabsMessage.style.display = 'block';
-                    }
-                }
-            } catch (error) {
-                console.error('Erreur:', error);
-                alert(`Erreur lors de l'arrêt de l'application: ${error.message}`);
-            }
-        }
-    }
 
     // --- Modal Management ---
     document.querySelectorAll('.close-modal, .close-modal-btn').forEach(btn => {
@@ -3289,16 +1054,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 novncModal.classList.remove('show');
             }
         });
-    }
-
-    // --- Fonction pour nettoyer tous les timers ---
-    function clearAllDeploymentTimers() {
-        console.log('Nettoyage de tous les timers de vérification des déploiements');
-        for (const [key, timerId] of deploymentCheckTimers.entries()) {
-            clearTimeout(timerId);
-            console.log(`Timer nettoyé pour: ${key}`);
-        }
-        deploymentCheckTimers.clear();
     }
 
     // --- Initialisation ---
@@ -3508,11 +1263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Nettoyer les timers lors du déchargement de la page
     window.addEventListener('beforeunload', () => {
         console.log('Nettoyage des timers de vérification...');
-        deploymentCheckTimers.forEach((timerId, key) => {
-            clearTimeout(timerId);
-            console.log(`Timer nettoyé pour ${key}`);
-        });
-        deploymentCheckTimers.clear();
+        clearAllDeploymentTimers();
     });
 
     // Initialiser l'application
