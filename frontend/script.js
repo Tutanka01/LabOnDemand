@@ -1678,7 +1678,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         <button class="btn btn-warning btn-toggle-pause" data-name="${name}" data-namespace="${namespace}" data-action="${pauseAction}" data-variant="text">
                                             <i class="fas ${pauseIcon}"></i> ${isPaused ? 'Reprendre l\'application' : 'Mettre en pause'}
                                         </button>
-                                        <a class="btn btn-ghost" href="documentation/QUICKSTART.md#mode-pause" target="_blank">
+                                        <a class="btn btn-ghost" href="documentation/README.md#mode-pause" target="_blank">
                                             <i class="fas fa-book-open"></i> Comprendre cette fonctionnalité
                                         </a>
                                     </div>
