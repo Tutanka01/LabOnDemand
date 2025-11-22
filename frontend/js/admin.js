@@ -347,10 +347,46 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedUserId = userId;
         const user = users.find(u => u.id == userId);
 
+        if (!user) {
+            showError('Utilisateur introuvable');
+            return;
+        }
+
         modalTitle.innerHTML = '<i class="fas fa-user-edit"></i> Modifier l\'utilisateur';
-        if (modalErrorMessage) modalErrorMessage.style.display = 'none'; // Clear error
+        if (modalErrorMessage) modalErrorMessage.style.display = 'none';
+
         document.getElementById('user-id').value = user.id;
-        // ... (rest of the function)
+        document.getElementById('modal-username').value = user.username;
+        document.getElementById('modal-email').value = user.email;
+        document.getElementById('modal-full-name').value = user.full_name || '';
+        document.getElementById('modal-role').value = user.role;
+        document.getElementById('modal-is-active').checked = !!user.is_active;
+
+        const passwordInput = document.getElementById('modal-password');
+        const passwordHintElement = document.getElementById('password-hint');
+        passwordInput.value = '';
+        passwordInput.removeAttribute('required');
+        if (passwordHintElement) {
+            passwordHintElement.textContent = 'Laissez vide pour conserver le mot de passe existant';
+        }
+
+        userModal.classList.add('show');
+    }
+
+    function openDeleteModal(userId) {
+        selectedUserId = userId;
+        const user = users.find(u => u.id == userId);
+        if (!user) {
+            showError('Utilisateur introuvable');
+            return;
+        }
+
+        const deleteUserName = document.getElementById('delete-user-name');
+        if (deleteUserName) {
+            deleteUserName.textContent = user.username;
+        }
+
+        deleteModal.classList.add('show');
     }
 
     // Afficher un message d'erreur dans le modal

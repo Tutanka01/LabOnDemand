@@ -7,66 +7,67 @@ import { createResourceModule } from './js/dashboard/resources.js';
 import { createDeploymentsModule } from './js/dashboard/deployments.js';
 import { escapeHtml } from './js/dashboard/utils.js';
 
-document.addEventListener('DOMContentLoaded', async () => {
-    // Vérifier l'authentification avant de continuer
-    const isAuthenticated = await authManager.init();
-    if (!isAuthenticated) return; // L'utilisateur sera redirigé vers la page de connexion
-    
-    // --- Éléments DOM et variables globales ---
-    const views = document.querySelectorAll('.view');
-    const showLaunchViewBtn = document.getElementById('show-launch-view-btn');
-    const serviceCatalog = document.getElementById('service-catalog');
-    const backBtns = document.querySelectorAll('.back-btn');
-    const configForm = document.getElementById('config-form');
-    const activeLabsList = document.getElementById('active-labs-list');
-    const noLabsMessage = document.querySelector('.no-labs-message');
-    const configServiceName = document.getElementById('config-service-name');
-    const serviceTypeInput = document.getElementById('service-type');
-    const serviceIconInput = document.getElementById('service-icon-class');
-    const deploymentTypeInput = document.getElementById('deployment-type');
-    const serviceGuidanceBox = document.getElementById('service-guidance');
-    const jupyterOptions = document.getElementById('jupyter-options');
-    const customDeploymentOptions = document.getElementById('custom-deployment-options');
-    const statusContent = document.getElementById('status-content');
-    const statusActions = document.querySelector('.status-actions');
-    const refreshPodsBtn = document.getElementById('refresh-pods');
-    const refreshDeploymentsBtn = document.getElementById('refresh-deployments');
-    const apiStatusEl = document.getElementById('api-status');
-    const k8sSectionToggle = document.getElementById('k8s-section-toggle');
-    const k8sResources = document.getElementById('k8s-resources');
-    const userGreeting = document.getElementById('user-greeting');
-    const logoutBtn = document.getElementById('logout-btn');
-    const catalogSearch = document.getElementById('catalog-search');
-    const tagFiltersEl = document.getElementById('tag-filters');
-    const quotasContent = document.getElementById('quotas-content');
-    const refreshQuotasBtn = document.getElementById('refresh-quotas');
-    const novncModal = document.getElementById('novnc-modal');
-    const novncModalTitle = document.getElementById('novnc-modal-title');
-    const novncFrame = document.getElementById('novnc-frame');
-    const novncStatusBanner = document.getElementById('novnc-status');
-    const novncCredentialsBox = document.getElementById('novnc-credentials');
-    const pvcListContainer = document.getElementById('pvc-list');
-    const refreshPvcsBtn = document.getElementById('refresh-pvcs');
-    const pvcSelectGroup = document.getElementById('persistent-volume-group');
-    const existingPvcSelect = document.getElementById('existing-pvc-select');
-    const refreshDashboardBtn = document.getElementById('refresh-dashboard');
-    const statActiveAppsEl = document.getElementById('stat-active-apps');
-    const statReadyAppsEl = document.getElementById('stat-ready-apps');
-    const statPvcsEl = document.getElementById('stat-persistent-volumes');
-    const statQuotaAppsEl = document.getElementById('stat-quota-apps');
-    const adminPvcsPanel = document.getElementById('admin-pvc-panel');
-    const adminPvcsList = document.getElementById('admin-pvcs-list');
-    const refreshAdminPvcsBtn = document.getElementById('refresh-admin-pvcs');
-    const pvcSectionToggle = document.getElementById('pvc-section-toggle');
-    const pvcResources = document.getElementById('pvc-resources');
-    const showPvcPanelBtn = document.getElementById('show-pvc-panel-btn');
-    const pvcStatTotal = document.getElementById('pvc-stat-total');
-    const pvcStatBound = document.getElementById('pvc-stat-bound');
-    const deploymentDetailsModal = document.getElementById('deployment-details-modal');
-    const deploymentDetailsContent = document.getElementById('deployment-details-content');
-        const API_V1 = '/api/v1';
+function createDashboardApp() {
+    const API_V1 = '/api/v1';
+    const state = createDashboardState();
 
-        const state = createDashboardState();
+    async function init() {
+        // Vérifier l'authentification avant de continuer
+        const isAuthenticated = await authManager.init();
+        if (!isAuthenticated) return; // L'utilisateur sera redirigé vers la page de connexion
+        
+        // --- Éléments DOM et variables globales ---
+        const views = document.querySelectorAll('.view');
+        const showLaunchViewBtn = document.getElementById('show-launch-view-btn');
+        const serviceCatalog = document.getElementById('service-catalog');
+        const backBtns = document.querySelectorAll('.back-btn');
+        const configForm = document.getElementById('config-form');
+        const activeLabsList = document.getElementById('active-labs-list');
+        const noLabsMessage = document.querySelector('.no-labs-message');
+        const configServiceName = document.getElementById('config-service-name');
+        const serviceTypeInput = document.getElementById('service-type');
+        const serviceIconInput = document.getElementById('service-icon-class');
+        const deploymentTypeInput = document.getElementById('deployment-type');
+        const serviceGuidanceBox = document.getElementById('service-guidance');
+        const jupyterOptions = document.getElementById('jupyter-options');
+        const customDeploymentOptions = document.getElementById('custom-deployment-options');
+        const statusContent = document.getElementById('status-content');
+        const statusActions = document.querySelector('.status-actions');
+        const refreshPodsBtn = document.getElementById('refresh-pods');
+        const refreshDeploymentsBtn = document.getElementById('refresh-deployments');
+        const apiStatusEl = document.getElementById('api-status');
+        const k8sSectionToggle = document.getElementById('k8s-section-toggle');
+        const k8sResources = document.getElementById('k8s-resources');
+        const userGreeting = document.getElementById('user-greeting');
+        const logoutBtn = document.getElementById('logout-btn');
+        const catalogSearch = document.getElementById('catalog-search');
+        const tagFiltersEl = document.getElementById('tag-filters');
+        const quotasContent = document.getElementById('quotas-content');
+        const refreshQuotasBtn = document.getElementById('refresh-quotas');
+        const novncModal = document.getElementById('novnc-modal');
+        const novncModalTitle = document.getElementById('novnc-modal-title');
+        const novncFrame = document.getElementById('novnc-frame');
+        const novncStatusBanner = document.getElementById('novnc-status');
+        const novncCredentialsBox = document.getElementById('novnc-credentials');
+        const pvcListContainer = document.getElementById('pvc-list');
+        const refreshPvcsBtn = document.getElementById('refresh-pvcs');
+        const pvcSelectGroup = document.getElementById('persistent-volume-group');
+        const existingPvcSelect = document.getElementById('existing-pvc-select');
+        const refreshDashboardBtn = document.getElementById('refresh-dashboard');
+        const statActiveAppsEl = document.getElementById('stat-active-apps');
+        const statReadyAppsEl = document.getElementById('stat-ready-apps');
+        const statPvcsEl = document.getElementById('stat-persistent-volumes');
+        const statQuotaAppsEl = document.getElementById('stat-quota-apps');
+        const adminPvcsPanel = document.getElementById('admin-pvc-panel');
+        const adminPvcsList = document.getElementById('admin-pvcs-list');
+        const refreshAdminPvcsBtn = document.getElementById('refresh-admin-pvcs');
+        const pvcSectionToggle = document.getElementById('pvc-section-toggle');
+        const pvcResources = document.getElementById('pvc-resources');
+        const showPvcPanelBtn = document.getElementById('show-pvc-panel-btn');
+        const pvcStatTotal = document.getElementById('pvc-stat-total');
+        const pvcStatBound = document.getElementById('pvc-stat-bound');
+        const deploymentDetailsModal = document.getElementById('deployment-details-modal');
+        const deploymentDetailsContent = document.getElementById('deployment-details-content');
 
         const novncModule = createNovncModule({
             API_V1,
@@ -1260,15 +1261,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Nettoyer les timers lors du déchargement de la page
-    window.addEventListener('beforeunload', () => {
-        console.log('Nettoyage des timers de vérification...');
-        clearAllDeploymentTimers();
+        // Nettoyer les timers lors du déchargement de la page
+        window.addEventListener('beforeunload', () => {
+            console.log('Nettoyage des timers de vérification...');
+            clearAllDeploymentTimers();
+        });
+
+        // Initialiser l'application
+        init();
+
+        // Afficher la vue dashboard au démarrage
+        showView('dashboard-view');
+    }
+
+    return { init };
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const app = createDashboardApp();
+    app.init().catch(error => {
+        console.error('Erreur lors de l\'initialisation du dashboard', error);
     });
-
-    // Initialiser l'application
-    init();
-
-    // Afficher la vue dashboard au démarrage
-    showView('dashboard-view');
 });
