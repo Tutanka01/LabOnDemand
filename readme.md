@@ -35,18 +35,21 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   Persistance « best-effort » : montages PVC pour VS Code, Jupyter et le web LAMP (fallback en emptyDir si StorageClass indisponible). MariaDB/WordPress DB en PVC 1Gi par défaut.
 
 Voir aussi:
+- Hub & quickstart: documentation/README.md
+- Plateforme k3s + Ingress: documentation/platform-setup.md
+- Authentification: documentation/authentication.md
+- Stockage persistant: documentation/storage.md
 - Documentation LAMP: documentation/lamp.md
 - Terminal web: documentation/terminal.md
 - WordPress: documentation/wordpress.md
 - Logging: documentation/logging.md
-- Ingress sur K3s: documentation/ingress-k3s.md
 
 ## Ingress + MetalLB (aperçu rapide)
 
 1. Installer K3s sans Traefik (`--disable traefik`) puis déployer `ingress-nginx` (Helm).
 2. Option avancée : activer MetalLB, définir une plage IP, réinstaller `ingress-nginx` avec `service.type=LoadBalancer` pour exposer directement 80/443.
 3. Pointer le wildcard DNS `*.apps.labondemand.univ-pau.fr` vers l'IP (NodePort ou LoadBalancer) et renseigner les variables `.env` `INGRESS_*`.
-4. Suivre le guide détaillé : documentation/ingress-k3s.md.
+4. Suivre le guide détaillé : documentation/platform-setup.md.
 
 ## Quotas pour les étudiants (valeurs et justification)
 
@@ -469,11 +472,11 @@ Pour vous aider dans votre utilisation et développement avec LabOnDemand, voici
 * **[Documentation Kubernetes Officielle](https://kubernetes.io/fr/docs/home/)** - Référence complète pour l'utilisation de Kubernetes
 * **[FastAPI Documentation](https://fastapi.tiangolo.com/)** - Documentation de FastAPI, utilisé pour le backend de l'application
 * **Docs du projet**
-    * `documentation/QUICKSTART.md` — Démarrage rapide (Docker Compose, kubeconfig)
-    * `documentation/auth-flow.md` — Détails d’authentification et sécurité des sessions
-    * `documentation/wordpress.md` — Stack WordPress (web + mariadb), notes de suppression
-    * `documentation/auth-summary.md` — Résumé des rôles et autorisations
-    * `documentation/pvc-mise-en-place.md` — Stockage persistant
+    * `documentation/README.md` — Hub & démarrage rapide (Docker Compose, kubeconfig)
+    * `documentation/platform-setup.md` — Préparation k3s, ingress-nginx, MetalLB, DNS/TLS
+    * `documentation/authentication.md` — Parcours utilisateurs, API `/api/v1/auth/*`, diagramme de flux
+    * `documentation/storage.md` — Stockage persistant (StorageClass, PVC, intégration UI)
+    * `documentation/wordpress.md` — Stack WordPress (web + MariaDB), secrets et suppression
 
 ## 📝 Licence
 
