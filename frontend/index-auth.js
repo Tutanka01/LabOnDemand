@@ -60,12 +60,15 @@ function initAuthUI() {
     }
     
     // Ajuster l'interface selon le rôle
-    if (!authManager.isAdmin() && !authManager.isTeacher()) {
-        // Masquer la section Kubernetes pour les étudiants
-        const k8sSection = document.querySelector('.collapsible-section');
-        if (k8sSection) {
-            k8sSection.style.display = 'none';
-        }
+    const adminSections = document.querySelectorAll('.k8s-admin-only');
+    if (authManager.isAdmin() || authManager.isTeacher()) {
+        adminSections.forEach(section => {
+            section.style.removeProperty('display');
+        });
+    } else {
+        adminSections.forEach(section => {
+            section.style.display = 'none';
+        });
     }
 }
 
