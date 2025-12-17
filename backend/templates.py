@@ -153,19 +153,20 @@ class DeploymentConfig:
         "image": "tutanka01/k8s:vscode",
         "target_port": 8080,
         "service_type": "NodePort",
-        "min_cpu_request": "150m",
+        # Overcommit: request bas (bin-packing), limit confortable
+        "min_cpu_request": "100m",
         "min_memory_request": "256Mi",
-        "min_cpu_limit": "500m",
-        "min_memory_limit": "512Mi"
+        "min_cpu_limit": "1000m",
+        "min_memory_limit": "1Gi"
     }
     
     JUPYTER_CONFIG = {
         "image": "tutanka01/k8s:jupyter",
         "target_port": 8888,
         "service_type": "NodePort",
-        "min_cpu_request": "250m",
+        "min_cpu_request": "100m",
         "min_memory_request": "512Mi",
-        "min_cpu_limit": "500m",
+        "min_cpu_limit": "1000m",
         "min_memory_limit": "1Gi"
     }
     
@@ -175,7 +176,7 @@ class DeploymentConfig:
         "target_port": 8080,  # service externe cible 8080 (NodePort), targetPort=80 dans le pod pma
         "service_type": "NodePort",
         # Minimums pour l’UI générique (peu utilisés car stack spécifique)
-        "min_cpu_request": "150m",
+        "min_cpu_request": "100m",
         "min_memory_request": "128Mi",
         "min_cpu_limit": "300m",
         "min_memory_limit": "256Mi"
@@ -196,7 +197,7 @@ class DeploymentConfig:
         "image": "tutanka01/labondemand:netbeansjava",
         "target_port": 6901,
         "service_type": "NodePort",
-        "min_cpu_request": "500m",
+        "min_cpu_request": "250m",
         "min_memory_request": "1Gi",
         "min_cpu_limit": "1000m",
         "min_memory_limit": "2Gi"

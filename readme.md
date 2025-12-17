@@ -1,4 +1,4 @@
-# LabOnDemand ✨
+# LabOnDemand
 
 <div align="center">
     <h2 align="center"><a href="https://makhal.fr"><img alt="pangolin" src="Diagrammes/Images/banner-projet.jpeg" width="400" /></a></h2>

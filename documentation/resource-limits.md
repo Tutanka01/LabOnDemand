@@ -26,9 +26,9 @@ Source : [`backend/k8s_utils.py`](../backend/k8s_utils.py) > `ensure_namespace_b
 ### 2.2 LimitRange "baseline-limits"
 | Rôle     | defaultRequest CPU | defaultRequest RAM | default CPU | default RAM |
 |----------|--------------------|--------------------|-------------|-------------|
-| student  | 100m               | 128Mi              | 500m        | 512Mi       |
-| teacher  | 250m               | 256Mi              | 1000m       | 1Gi         |
-| admin    | 500m               | 512Mi              | 2000m       | 2Gi         |
+| student  | 100m               | 128Mi              | 1000m       | 512Mi       |
+| teacher  | 250m               | 256Mi              | 2000m       | 1Gi         |
+| admin    | 500m               | 512Mi              | 4000m       | 2Gi         |
 
 - Ces valeurs définissent les `requests` et `limits` par défaut pour tout conteneur créé dans le namespace lorsque les manifests n'en fournissent pas.
 - Pour modifier ces valeurs, ajustez `lr_request` et `lr_default` dans `ensure_namespace_baseline`.
@@ -79,26 +79,26 @@ Sources : [`backend/templates.py`](../backend/templates.py) et [`backend/main.py
 ### 4.1 Minima appliqués par template (`DeploymentConfig`)
 | Template | Image par défaut             | target_port | min_cpu_request | min_cpu_limit | min_mem_request | min_mem_limit |
 |----------|------------------------------|-------------|----------------:|--------------:|----------------:|--------------:|
-| vscode   | tutanka01/k8s:vscode         | 8080        | 150m            | 500m          | 256Mi           | 512Mi         |
-| jupyter  | tutanka01/k8s:jupyter        | 8888        | 250m            | 500m          | 512Mi           | 1Gi           |
-| mysql    | phpmyadmin:latest (UI)       | 8080        | 150m            | 300m          | 128Mi           | 256Mi         |
+| vscode   | tutanka01/k8s:vscode         | 8080        | 100m            | 1000m         | 256Mi           | 1Gi           |
+| jupyter  | tutanka01/k8s:jupyter        | 8888        | 100m            | 1000m         | 512Mi           | 1Gi           |
+| mysql    | phpmyadmin:latest (UI)       | 8080        | 100m            | 300m          | 128Mi           | 256Mi         |
 | lamp     | php:8.2-apache               | 8080        | 250m            | 500m          | 256Mi           | 512Mi         |
-| netbeans | tutanka01/labondemand:netbeansjava | 6901   | 500m            | 1000m         | 1Gi             | 2Gi           |
+| netbeans | tutanka01/labondemand:netbeansjava | 6901   | 250m            | 1000m         | 1Gi             | 2Gi           |
 
 - Ces minima sont appliqués même si l'utilisateur fournit des valeurs plus faibles.
 - Le fichier `backend/main.py` réplique ces valeurs lors du seed des `RuntimeConfig` (création initiale de la base).
 
-### 4.2 Exemple : augmenter le CPU minimum VS Code
+### 4.2 Exemple : ajuster le CPU minimum VS Code
 ```python
 # backend/templates.py
 VSCODE_CONFIG = {
-    "min_cpu_request": "250m",
-    "min_cpu_limit": "500m",
+    "min_cpu_request": "100m",  # overcommit par défaut
+    "min_cpu_limit": "1000m",
     # ...
 }
 
 # backend/main.py (seed RuntimeConfig)
-min_cpu_request="250m",
+min_cpu_request="100m",
 ```
 Après modification, mettre à jour la configuration en base soit via un `UPDATE runtime_configs`, soit en purgeant la table avant de relancer l'app (le seed ne réécrit pas une entrée déjà existante).
 

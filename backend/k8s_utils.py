@@ -152,7 +152,8 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
                 "count/persistentvolumeclaims": "2",
                 "requests.storage": "2Gi",
             }
-            lr_default = {"cpu": "500m", "memory": "512Mi"}
+            # Overcommit CPU: requests bas (via defaultRequest) + limits confortables (via default)
+            lr_default = {"cpu": "1000m", "memory": "512Mi"}
             lr_request = {"cpu": "100m", "memory": "128Mi"}
         elif role == "teacher":
             rq_hard = {
@@ -164,7 +165,7 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
                 "count/deployments.apps": "20",
                 "count/services": "25",
             }
-            lr_default = {"cpu": "1000m", "memory": "1Gi"}
+            lr_default = {"cpu": "2000m", "memory": "1Gi"}
             lr_request = {"cpu": "250m", "memory": "256Mi"}
         else:
             # Espace admin: valeurs très élevées pour ne pas limiter les tests de charge
@@ -179,7 +180,7 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
                 "count/persistentvolumeclaims": "100",
                 "requests.storage": "2Ti",
             }
-            lr_default = {"cpu": "2000m", "memory": "2Gi"}
+            lr_default = {"cpu": "4000m", "memory": "2Gi"}
             lr_request = {"cpu": "500m", "memory": "512Mi"}
 
         # ResourceQuota (créer ou mettre à jour pour matcher les valeurs désirées)
@@ -306,34 +307,136 @@ def get_role_limits(role: str) -> Dict[str, Any]:
             "max_pods": 100,
         }
 
-async def ensure_namespace_exists(namespace_name: str) -> bool:
-    """
-    Vérifie qu'un namespace existe et le crée si nécessaire
-    """
+def _build_namespace_labels(namespace_type: str, owner_id: Optional[str]) -> Dict[str, str]:
+    labels = {
+        "managed-by": "labondemand",
+        "namespace-type": namespace_type or "student",
+        "labondemand.io/network-segmentation": namespace_type or "student",
+    }
+    if owner_id:
+        labels["labondemand.io/owner-id"] = str(owner_id)
+    return labels
+
+
+def _ensure_network_policy(api: client.NetworkingV1Api, namespace: str, manifest: Dict[str, Any]) -> None:
+    name = manifest["metadata"]["name"]
+    try:
+        api.read_namespaced_network_policy(name=name, namespace=namespace)
+    except client.exceptions.ApiException as e:
+        if e.status == 404:
+            api.create_namespaced_network_policy(namespace=namespace, body=manifest)
+        elif e.status == 403:
+            # Pas les droits nécessaires, on log + exit silencieux pour ne pas bloquer la création
+            print(f"[network-policy] Accès refusé pour {name} dans {namespace}")
+        else:
+            raise
+
+
+def ensure_namespace_network_baseline(namespace_name: str) -> None:
+    """Garantit la présence des NetworkPolicies baseline (deny-all + DNS)."""
+    try:
+        api = client.NetworkingV1Api()
+    except Exception as exc:
+        print(f"[network-policy] Impossible d'initialiser l'API: {exc}")
+        return
+
+    deny_all_manifest = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "np-deny-all",
+            "labels": {
+                "managed-by": "labondemand",
+                "security.labondemand.io/policy": "baseline",
+            },
+        },
+        "spec": {
+            "podSelector": {},
+            "policyTypes": ["Ingress", "Egress"],
+        },
+    }
+
+    allow_dns_manifest = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {
+            "name": "np-allow-dns",
+            "labels": {
+                "managed-by": "labondemand",
+                "security.labondemand.io/policy": "baseline",
+            },
+        },
+        "spec": {
+            "podSelector": {},
+            "policyTypes": ["Egress"],
+            "egress": [
+                {
+                    "to": [
+                        {
+                            "namespaceSelector": {
+                                "matchLabels": {"kubernetes.io/metadata.name": "kube-system"},
+                            },
+                            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                        }
+                    ],
+                    "ports": [
+                        {"protocol": "UDP", "port": 53},
+                        {"protocol": "TCP", "port": 53},
+                    ],
+                }
+            ],
+        },
+    }
+
+    for manifest in (deny_all_manifest, allow_dns_manifest):
+        try:
+            _ensure_network_policy(api, namespace_name, manifest)
+        except Exception as exc:
+            print(f"[network-policy] Erreur sur {manifest['metadata']['name']} ({namespace_name}): {exc}")
+
+
+async def ensure_namespace_exists(
+    namespace_name: str,
+    namespace_type: str = "student",
+    owner_id: Optional[str] = None,
+) -> bool:
+    """Vérifie qu'un namespace existe, applique les labels obligatoires et les policies baseline."""
+    desired_labels = _build_namespace_labels(namespace_type=namespace_type, owner_id=owner_id)
     try:
         v1 = client.CoreV1Api()
         try:
-            v1.read_namespace(namespace_name)
-            return True
+            existing = v1.read_namespace(namespace_name)
+            labels = dict(getattr(getattr(existing, "metadata", None), "labels", {}) or {})
+            should_patch = False
+            for key, value in desired_labels.items():
+                if labels.get(key) != value:
+                    labels[key] = value
+                    should_patch = True
+            if "created-at" not in labels:
+                labels["created-at"] = datetime.datetime.now().strftime("%Y-%m-%d")
+                should_patch = True
+            if should_patch:
+                v1.patch_namespace(name=namespace_name, body={"metadata": {"labels": labels}})
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                # Créer le namespace
                 namespace_manifest = {
                     "apiVersion": "v1",
                     "kind": "Namespace",
                     "metadata": {
                         "name": namespace_name,
                         "labels": {
-                            "managed-by": "labondemand",
-                            "created-at": datetime.datetime.now().strftime("%Y-%m-%d")
-                        }
-                    }
+                            **desired_labels,
+                            "created-at": datetime.datetime.now().strftime("%Y-%m-%d"),
+                        },
+                    },
                 }
-                v1.create_namespace(namespace_manifest)
+                v1.create_namespace(body=namespace_manifest)
                 print(f"Namespace {namespace_name} créé avec succès")
-                return True
             else:
-                raise e
+                raise
+
+        ensure_namespace_network_baseline(namespace_name)
+        return True
     except Exception as e:
         print(f"Erreur lors de la gestion du namespace {namespace_name}: {e}")
         return False
@@ -407,4 +510,47 @@ def clamp_resources_for_role(role: str, cpu_request: str, cpu_limit: str, memory
         "memory_request": memory_request,
         "memory_limit": memory_limit,
         "replicas": replicas,
+    }
+
+
+def apply_intelligent_overcommit(role: str, deployment_type: str, cpu_request: str, cpu_limit: str) -> Dict[str, str]:
+    """Réduit certaines *grosses* CPU requests pour améliorer le bin-packing.
+
+    Objectif: pour les étudiants, éviter les defaults trop élevés (ex: 500m) tout en gardant
+    des CPU limits confortables. On ne touche pas aux requests déjà raisonnables.
+    """
+    try:
+        role_val = str(getattr(role, "value", role))
+    except Exception:
+        role_val = str(role)
+
+    # Normaliser en millicores pour comparer ("1" => 1000m)
+    try:
+        req_m = float(parse_cpu_to_millicores(str(cpu_request)))
+    except Exception:
+        req_m = 0.0
+    try:
+        lim_m = float(parse_cpu_to_millicores(str(cpu_limit)))
+    except Exception:
+        lim_m = 0.0
+
+    # Stratégie simple & sûre:
+    # - étudiants: si request >= 500m (typiquement un défaut surdimensionné), on descend à 100m.
+    # - ne jamais dépasser la limit (K8s l'exige).
+    tuned_request = cpu_request
+    if role_val == "student" and req_m >= 500:
+        tuned_request = "100m"
+
+    # S'assurer request <= limit si les deux sont parseables
+    try:
+        tuned_req_m = float(parse_cpu_to_millicores(str(tuned_request)))
+        if lim_m > 0 and tuned_req_m > lim_m:
+            tuned_request = cpu_limit
+    except Exception:
+        pass
+
+    return {
+        "cpu_request": tuned_request,
+        "cpu_limit": cpu_limit,
+        "deployment_type": deployment_type,
     }

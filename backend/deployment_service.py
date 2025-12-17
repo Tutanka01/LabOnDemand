@@ -21,6 +21,7 @@ from .k8s_utils import (
     ensure_namespace_baseline,
     max_resource,
     clamp_resources_for_role,
+    apply_intelligent_overcommit,
     parse_cpu_to_millicores,
     parse_memory_to_mi,
     get_role_limits,
@@ -1139,8 +1140,19 @@ class DeploymentService:
         # Politique d'isolation: namespace par utilisateur, aucun choix client
         effective_namespace = build_user_namespace(current_user)
 
-        # S'assurer que le namespace existe (idempotent)
-        ns_ok = await ensure_namespace_exists(effective_namespace)
+        # S'assurer que le namespace existe (idempotent) + labels/policies
+        role_val = getattr(getattr(current_user, "role", None), "value", getattr(current_user, "role", "student"))
+        namespace_type = {
+            "student": "student",
+            "teacher": "faculty",
+            "admin": "ops",
+        }.get(str(role_val).lower(), "student")
+        owner_id = getattr(current_user, "id", None)
+        ns_ok = await ensure_namespace_exists(
+            effective_namespace,
+            namespace_type=namespace_type,
+            owner_id=str(owner_id) if owner_id is not None else None,
+        )
         if not ns_ok:
             logger.error(
                 "namespace_unavailable",
@@ -1162,7 +1174,6 @@ class DeploymentService:
             )
         # Appliquer des garde-fous de base (idempotent, best-effort)
         try:
-            role_val = getattr(current_user.role, "value", str(current_user.role))
             ensure_namespace_baseline(effective_namespace, str(role_val))
         except Exception:
             pass
@@ -1349,8 +1360,18 @@ class DeploymentService:
         if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter", "netbeans"}:
             service_port = config["service_target_port"]
 
-        # Plafonner selon le rôle (sécurité)
+        # Overcommit CPU intelligent: réduire certaines requests trop élevées (surtout étudiant)
         role_val = getattr(current_user.role, "value", str(current_user.role))
+        tuned = apply_intelligent_overcommit(
+            str(role_val),
+            deployment_type,
+            config["cpu_request"],
+            config["cpu_limit"],
+        )
+        config["cpu_request"] = tuned.get("cpu_request", config["cpu_request"])
+        config["cpu_limit"] = tuned.get("cpu_limit", config["cpu_limit"])
+
+        # Plafonner selon le rôle (sécurité)
         clamped = clamp_resources_for_role(
             str(role_val),
             config["cpu_request"],

@@ -329,10 +329,10 @@ def ensure_admin_exists():
                     target_port=8080,
                     default_service_type="NodePort",
                     allowed_for_students=True,
-                    min_cpu_request="150m",
+                    min_cpu_request="100m",
                     min_memory_request="256Mi",
-                    min_cpu_limit="500m",
-                    min_memory_limit="512Mi",
+                    min_cpu_limit="1000m",
+                    min_memory_limit="1Gi",
                     active=True,
                 ))
                 db.add(RuntimeConfig(
@@ -341,9 +341,9 @@ def ensure_admin_exists():
                     target_port=8888,
                     default_service_type="NodePort",
                     allowed_for_students=True,
-                    min_cpu_request="250m",
+                    min_cpu_request="100m",
                     min_memory_request="512Mi",
-                    min_cpu_limit="500m",
+                    min_cpu_limit="1000m",
                     min_memory_limit="1Gi",
                     active=True,
                 ))
@@ -369,7 +369,7 @@ def ensure_admin_exists():
                     target_port=6901,
                     default_service_type="NodePort",
                     allowed_for_students=True,
-                    min_cpu_request="500m",
+                    min_cpu_request="250m",
                     min_memory_request="1Gi",
                     min_cpu_limit="1000m",
                     min_memory_limit="2Gi",
@@ -378,6 +378,34 @@ def ensure_admin_exists():
                 db.commit()
             else:
                 # S'assurer que WordPress et MySQL existent et sont autorisés aux étudiants
+                # Migration douce des anciens defaults (sans écraser des valeurs potentiellement custom)
+                vscode_rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == "vscode").first()
+                if vscode_rc:
+                    changed = False
+                    if getattr(vscode_rc, "min_cpu_request", None) in (None, "150m"):
+                        vscode_rc.min_cpu_request = "100m"
+                        changed = True
+                    if getattr(vscode_rc, "min_cpu_limit", None) in (None, "500m"):
+                        vscode_rc.min_cpu_limit = "1000m"
+                        changed = True
+                    if getattr(vscode_rc, "min_memory_limit", None) in (None, "512Mi"):
+                        vscode_rc.min_memory_limit = "1Gi"
+                        changed = True
+                    if changed:
+                        db.commit()
+
+                jupyter_rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == "jupyter").first()
+                if jupyter_rc:
+                    changed = False
+                    if getattr(jupyter_rc, "min_cpu_request", None) in (None, "250m"):
+                        jupyter_rc.min_cpu_request = "100m"
+                        changed = True
+                    if getattr(jupyter_rc, "min_cpu_limit", None) in (None, "500m"):
+                        jupyter_rc.min_cpu_limit = "1000m"
+                        changed = True
+                    if changed:
+                        db.commit()
+
                 wp = db.query(RuntimeConfig).filter(RuntimeConfig.key == "wordpress").first()
                 if not wp:
                     db.add(RuntimeConfig(
@@ -422,13 +450,20 @@ def ensure_admin_exists():
                         target_port=6901,
                         default_service_type="NodePort",
                         allowed_for_students=True,
-                        min_cpu_request="500m",
+                        min_cpu_request="250m",
                         min_memory_request="1Gi",
                         min_cpu_limit="1000m",
                         min_memory_limit="2Gi",
                         active=True,
                     ))
                     db.commit()
+                else:
+                    changed = False
+                    if getattr(netbeans_rc, "min_cpu_request", None) in (None, "500m"):
+                        netbeans_rc.min_cpu_request = "250m"
+                        changed = True
+                    if changed:
+                        db.commit()
     except Exception as exc:
         # On ne casse pas le démarrage pour éviter l'indisponibilité totale
         logger.exception(
