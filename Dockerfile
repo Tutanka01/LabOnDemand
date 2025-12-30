@@ -8,15 +8,9 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Installation de kubectl
+# Installation de kubectl (via dépôts Debian pour éviter les downloads externes)
 RUN apt-get update && \
-    apt-get install -y curl && \
-    curl -LO "https://dl.k8s.io/release/stable.txt" && \
-    KUBECTL_VERSION=$(cat stable.txt) && \
-    curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" && \
-    chmod +x kubectl && \
-    mv kubectl /usr/local/bin/ && \
-    rm stable.txt && \
+    apt-get install -y --no-install-recommends ca-certificates kubernetes-client && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
