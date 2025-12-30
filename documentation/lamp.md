@@ -40,7 +40,7 @@ Les secrets sont idempotents: s’ils existent déjà, ils sont réutilisés et 
 
 ## Fichiers et contenu par défaut
 
-Le pod web initialise un fichier index.php par défaut (style UPPA) via un initContainer si le volume est vide. Vous pouvez ensuite modifier les fichiers sous /var/www/html via le terminal web ou en déployant vos sources.
+Le pod web initialise un fichier index.php par défaut (style by makhal) via un initContainer si le volume est vide. Vous pouvez ensuite modifier les fichiers sous /var/www/html via le terminal web ou en déployant vos sources.
 
 ## Persistance
 

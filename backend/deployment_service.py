@@ -2451,7 +2451,7 @@ echo '<!doctype html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>LAMP – UPPA LabOnDemand</title>
+    <title>LAMP – LabOnDemand</title>
     </head>
 <body style="background:#0b1220;color:#e6edf3;font-family:Arial,Helvetica,sans-serif;padding:32px">
 
@@ -2459,13 +2459,14 @@ echo '<!doctype html>
                             padding:24px;max-width:820px;box-shadow:0 2px 8px rgba(0,0,0,0.3)">
 
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-            <img src="https://upload.wikimedia.org/wikipedia/fr/4/41/Logo_UPPA.svg" 
-                     alt="UPPA Logo" style="height:64px;background:#fff;padding:6px;border-radius:8px">
+            <div style="width:64px;height:64px;border-radius:8px;background:#0ea5e9;display:flex;align-items:center;justify-content:center;color:#0b1220;font-weight:700;font-size:18px;">
+                LOD
+            </div>
             <h2 style="margin:0;color:#A6BE0B"> Ça marche ! – Stack LAMP</h2>
         </div>
 
         <p style="opacity:.85;font-size:15px">
-            Page par défaut générée automatiquement pour <b>Université de Pau et des Pays de l’Adour</b>.
+            Page par défaut générée automatiquement pour <b>LabOnDemand</b> (by makhal).
         </p>
 
         <p style="margin-top:12px;font-size:14px;line-height:1.5">
@@ -2475,7 +2476,7 @@ echo '<!doctype html>
         <hr style="margin:24px 0;border:0;border-top:1px solid #243244">
 
         <footer style="font-size:13px;color:#9ca3af">
-            UPPA – Université de Pau et des Pays de l’Adour - by makhal
+            LabOnDemand - by makhal
         </footer>
 
     </div>

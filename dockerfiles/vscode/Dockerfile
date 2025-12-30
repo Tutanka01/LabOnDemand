@@ -1,10 +1,10 @@
 FROM codercom/code-server:latest
 
 # Proxy pour build et runtime
-ENV HTTP_PROXY="http://cache.univ-pau.fr:3128" \
-    HTTPS_PROXY="http://cache.univ-pau.fr:3128" \
-    http_proxy="http://cache.univ-pau.fr:3128" \
-    https_proxy="http://cache.univ-pau.fr:3128"
+ENV HTTP_PROXY="http://proxy.makhal:3128" \
+    HTTPS_PROXY="http://proxy.makhal:3128" \
+    http_proxy="http://proxy.makhal:3128" \
+    https_proxy="http://proxy.makhal:3128"
 
 USER root
 

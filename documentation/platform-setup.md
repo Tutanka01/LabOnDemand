@@ -84,18 +84,18 @@ Pour exposer directement 80/443 sans NodePort :
    ```
 4. Récupérer l'IP externe : `kubectl get svc ingress-nginx-controller -n ingress-nginx -o wide`.
 
-## 4. DNS wildcard `*.apps.labondemand.univ-pau.fr`
+## 4. DNS wildcard `*.apps.labondemand.makhal`
 
 | Option | Description | Mise en œuvre rapide |
 | --- | --- | --- |
 | DNS institutionnel | Entrée wildcard pointant vers l'IP NodePort/LoadBalancer | Recommandé en production |
-| `dnsmasq` local | Redirige `*.apps.labondemand.univ-pau.fr` vers l'IP du nœud sur chaque poste | `/etc/dnsmasq.d/labondemand.conf` puis `systemctl restart dnsmasq` |
+| `dnsmasq` local | Redirige `*.apps.labondemand.makhal` vers l'IP du nœud sur chaque poste | `/etc/dnsmasq.d/labondemand.conf` puis `systemctl restart dnsmasq` |
 | `/etc/hosts` | Dépannage uniquement, pas de wildcard | Entrées manuelles pour chaque sous-domaine |
 
 Exemple `dnsmasq` :
 ```bash
 sudo bash -c 'cat > /etc/dnsmasq.d/labondemand.conf <<"EOF"
-address=/apps.labondemand.univ-pau.fr/192.168.56.10
+address=/apps.labondemand.makhal/192.168.56.10
 EOF'
 sudo systemctl restart dnsmasq
 ```
@@ -105,10 +105,10 @@ sudo systemctl restart dnsmasq
 1. **mkcert** pour les environnements de test :
    ```bash
    mkcert -install
-   mkcert "*.apps.labondemand.univ-pau.fr"
+   mkcert "*.apps.labondemand.makhal"
    kubectl create secret tls labondemand-wildcard \
-     --cert="_wildcard.apps.labondemand.univ-pau.fr.pem" \
-     --key="_wildcard.apps.labondemand.univ-pau.fr-key.pem" \
+   --cert="_wildcard.apps.labondemand.makhal.pem" \
+   --key="_wildcard.apps.labondemand.makhal-key.pem" \
      -n labondemand-backend
    ```
 2. **cert-manager + DNS-01** en production : installer cert-manager, créer un `ClusterIssuer` et attacher l'annotation `cert-manager.io/cluster-issuer` à l'Ingress généré par LabOnDemand.
@@ -119,7 +119,7 @@ Sans TLS, les cookies `Secure` ne sont pas envoyés : pensez à ajuster `SECURE_
 
 ```ini
 INGRESS_ENABLED=true
-INGRESS_BASE_DOMAIN=apps.labondemand.univ-pau.fr
+INGRESS_BASE_DOMAIN=apps.labondemand.makhal
 INGRESS_CLASS_NAME=nginx
 INGRESS_TLS_SECRET=labondemand-wildcard
 INGRESS_DEFAULT_PATH=/
@@ -138,7 +138,7 @@ INGRESS_EXCLUDED_TYPES=netbeans
 1. Déployer une stack (ex: VS Code) depuis LabOnDemand.
 2. Vérifier que le service est passé en `ClusterIP` (`kubectl get svc -n <namespace>`).
 3. Contrôler l'Ingress généré (`kubectl describe ingress <name>`).
-4. Tester l'URL : `curl -I https://<app>-u42.apps.labondemand.univ-pau.fr`.
+4. Tester l'URL : `curl -I https://<app>-u42.apps.labondemand.makhal`.
 
 Les détails de déploiement (`GET /deployments/{ns}/{name}/details`) doivent faire remonter `ingresses[]` et `access_urls[]`.
 

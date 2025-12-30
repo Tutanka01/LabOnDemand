@@ -3,7 +3,7 @@ ARG BASE_IMAGE="ubuntu:24.04"
 FROM $BASE_IMAGE AS base_layer
 
 # Arguments de construction pour la personnalisation
-ARG BG_IMG=bg_uppa.png
+ARG BG_IMG=bg_labondemand.png
 
 # Variables d'environnement
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -11,15 +11,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANGUAGE='fr_FR:fr' \
     LC_ALL='fr_FR.UTF-8' \
     TZ='Europe/Paris' \
-    HOME=/home/uppa-user \
+    HOME=/home/lod-user \
     STARTUPDIR=/dockerstartup \
     INST_SCRIPTS=/dockerstartup/install
 
 # Création de l'utilisateur
-RUN groupmod -n uppa-user $(getent group 1000 | cut -d: -f1) && \
-    usermod -l uppa-user -d /home/uppa-user -m $(getent passwd 1000 | cut -d: -f1) && \
+RUN groupmod -n lod-user $(getent group 1000 | cut -d: -f1) && \
+    usermod -l lod-user -d /home/lod-user -m $(getent passwd 1000 | cut -d: -f1) && \
     mkdir -p ${HOME}/Desktop && \
-    chown -R uppa-user:uppa-user ${HOME}
+    chown -R lod-user:lod-user ${HOME}
 
 WORKDIR $HOME
 
@@ -38,14 +38,14 @@ RUN bash $INST_SCRIPTS/vnc/install_vnc.sh && rm -rf $INST_SCRIPTS/vnc/
 
 # Configuration du bureau et des icônes
 COPY src/common/resources/config/ $HOME/.config/
-RUN chown -R uppa-user:uppa-user $HOME/.config
+RUN chown -R lod-user:lod-user $HOME/.config
 ADD src/common/resources/images/$BG_IMG /usr/share/backgrounds/bg_default.png
-ADD src/common/resources/images/icon_uppa.png /usr/share/icons/icon_default.png
+ADD src/common/resources/images/icon_labondemand.png /usr/share/icons/icon_default.png
 
 # Configuration des scripts de démarrage
 COPY src/common/startup_scripts/ $STARTUPDIR/
 RUN chmod +x -R $STARTUPDIR && \
-    chown -R uppa-user:uppa-user $STARTUPDIR
+    chown -R lod-user:lod-user $STARTUPDIR
 
 # Script de nettoyage final
 COPY src/ubuntu/install/cleanup/ $INST_SCRIPTS/cleanup/
@@ -57,12 +57,12 @@ FROM scratch
 COPY --from=base_layer / /
 
 # Labels de l'image
-LABEL org.opencontainers.image.authors="univ-pau.fr" \
-      org.opencontainers.image.title="Desktop UPPA" \
-      org.opencontainers.image.description="Environnement de bureau distant pour l'Université de Pau."
+LABEL org.opencontainers.image.authors="makhal" \
+    org.opencontainers.image.title="Desktop LabOnDemand" \
+    org.opencontainers.image.description="Environnement de bureau distant by makhal."
 
 # Variables d'environnement pour l'exécution
-ENV HOME=/home/uppa-user \
+ENV HOME=/home/lod-user \
     VNC_PW=password \
     VNC_RESOLUTION=1600x900 \
     LANG='fr_FR.UTF-8' \
@@ -70,7 +70,7 @@ ENV HOME=/home/uppa-user \
 
 EXPOSE 6901
 
-USER uppa-user
+USER lod-user
 WORKDIR $HOME
 
 ENTRYPOINT [ "/dockerstartup/startup.sh" ]

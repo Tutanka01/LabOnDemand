@@ -30,7 +30,7 @@ Regardez notre vidéo de présentation qui explique les principales fonctionnali
 *   Accès Simplifié : exposition via NodePort (par défaut), configurable.
 *   Templates Dynamiques : templates en base (icône/desc/tags) + runtime-configs pour piloter l’affichage aux étudiants.
 *   Terminal Web intégré (sans SSH) : terminal in-browser vers un pod, avec Xterm.js (fit/attach/webgl), resize dynamique, keepalive, faible latence. Accès DB pods restreint pour les étudiants.
-*   Stack LAMP clé en main : Apache+PHP, MySQL, phpMyAdmin avec plusieurs URLs dans les détails de déploiement; index.php par défaut stylé UPPA; web non-root et capacités minimales.
+*   Stack LAMP clé en main : Apache+PHP, MySQL, phpMyAdmin avec plusieurs URLs dans les détails de déploiement; index.php par défaut signé by makhal; web non-root et capacités minimales.
 *   Volumes persistants gérés par l’utilisateur : création automatique lors du premier lancement VS Code/Jupyter, réutilisation et suppression directe depuis le dashboard, labels de propriété stricts pour sécuriser les réutilisations.
 *   Persistance « best-effort » : montages PVC pour VS Code, Jupyter et le web LAMP (fallback en emptyDir si StorageClass indisponible). MariaDB/WordPress DB en PVC 1Gi par défaut.
 
@@ -48,7 +48,7 @@ Voir aussi:
 
 1. Installer K3s sans Traefik (`--disable traefik`) puis déployer `ingress-nginx` (Helm).
 2. Option avancée : activer MetalLB, définir une plage IP, réinstaller `ingress-nginx` avec `service.type=LoadBalancer` pour exposer directement 80/443.
-3. Pointer le wildcard DNS `*.apps.labondemand.univ-pau.fr` vers l'IP (NodePort ou LoadBalancer) et renseigner les variables `.env` `INGRESS_*`.
+3. Pointer le wildcard DNS `*.apps.labondemand.makhal` vers l'IP (NodePort ou LoadBalancer) et renseigner les variables `.env` `INGRESS_*`.
 4. Suivre le guide détaillé : documentation/platform-setup.md.
 
 ## Quotas pour les étudiants (valeurs et justification)
