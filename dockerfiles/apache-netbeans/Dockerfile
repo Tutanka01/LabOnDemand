@@ -76,7 +76,7 @@ RUN touch "$HOME/Desktop/hello.txt"
 #RUN chown 1000:0 $HOME && $STARTUPDIR/set_user_permission.sh $HOME
 
 # Passer à l'utilisateur final
-ENV HOME=/home/uppa-user
+ENV HOME=/home/lod-user
 WORKDIR $HOME
 RUN mkdir -p $HOME && chown -R 1000:0 $HOME
 
