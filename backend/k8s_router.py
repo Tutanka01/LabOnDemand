@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import WebSocket, WebSocketDisconnect
 from kubernetes import client
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 import urllib3
 
 from .security import get_current_user, is_admin, is_teacher_or_admin
@@ -951,40 +952,97 @@ async def get_deployment_details(
         else:
             services = core_v1.list_namespaced_service(namespace, label_selector=f"app={name}")
         
-        # Récupérer l'IP externe du cluster
+        # Helper pour récupérer l'IP d'un node spécifique
+        def get_node_external_ip(node_name: str) -> Optional[str]:
+            """
+            Récupère l'IP externe ou interne d'un node spécifique.
+            Priorité: ExternalIP > InternalIP
+            """
+            if not node_name:
+                return None
+            try:
+                node = core_v1.read_node(node_name)
+                if node.status and node.status.addresses:
+                    external_ip = None
+                    internal_ip = None
+                    for address in node.status.addresses:
+                        if address.type == "ExternalIP" and address.address:
+                            external_ip = address.address
+                        elif address.type == "InternalIP" and address.address:
+                            internal_ip = address.address
+                    # Préférer ExternalIP, sinon InternalIP
+                    return external_ip or internal_ip
+            except Exception as e:
+                logger.warning(
+                    "node_ip_resolution_failed",
+                    extra={
+                        "extra_fields": {
+                            "node_name": node_name,
+                            "error": str(e),
+                        }
+                    },
+                )
+            return None
+
+        # Construire un mapping node_name -> IP pour tous les nodes du cluster
+        node_ip_cache: Dict[str, str] = {}
+        try:
+            nodes = core_v1.list_node()
+            for node in nodes.items:
+                node_name = node.metadata.name
+                if node.status and node.status.addresses:
+                    external_ip = None
+                    internal_ip = None
+                    for address in node.status.addresses:
+                        if address.type == "ExternalIP" and address.address:
+                            external_ip = address.address
+                        elif address.type == "InternalIP" and address.address:
+                            internal_ip = address.address
+                    # Préférer ExternalIP, sinon InternalIP
+                    if external_ip or internal_ip:
+                        node_ip_cache[node_name] = external_ip or internal_ip
+        except Exception as e:
+            logger.warning(
+                "node_list_failed",
+                extra={
+                    "extra_fields": {
+                        "error": str(e),
+                    }
+                },
+            )
+
+        # Récupérer l'IP du cluster comme fallback (ancienne logique simplifiée)
         def get_cluster_external_ip():
             try:
                 # Utiliser la configuration si définie
                 if settings.CLUSTER_EXTERNAL_IP:
                     return settings.CLUSTER_EXTERNAL_IP
+
+                def _fallback_from_kubeconfig_host() -> Optional[str]:
+                    """Fallback: déduire un hostname/IP atteignable depuis l'URL du serveur API."""
+                    try:
+                        cfg = client.Configuration.get_default_copy()
+                        host = getattr(cfg, "host", None)
+                        if not host:
+                            return None
+                        parsed = urlparse(host) if "://" in host else urlparse(f"https://{host}")
+                        hostname = parsed.hostname
+                        if not hostname:
+                            return None
+                        if hostname in {"localhost", "127.0.0.1", "0.0.0.0"}:
+                            return None
+                        return hostname
+                    except Exception:
+                        return None
                 
-                # Essayer de récupérer l'IP externe via les nœuds
-                nodes = core_v1.list_node()
-                internal_ip = None
+                # Utiliser la première IP du cache de nodes si disponible
+                if node_ip_cache:
+                    return list(node_ip_cache.values())[0]
                 
-                for node in nodes.items:
-                    if node.status.addresses:
-                        for address in node.status.addresses:
-                            if address.type == "ExternalIP" and address.address:
-                                return address.address
-                            elif address.type == "InternalIP" and address.address:
-                                # Sauvegarder l'IP interne comme fallback
-                                internal_ip = address.address
-                
-                # Si pas d'IP externe trouvée, essayer de récupérer via les services LoadBalancer
-                lb_services = core_v1.list_service_for_all_namespaces()
-                for svc in lb_services.items:
-                    if svc.spec.type == "LoadBalancer" and svc.status.load_balancer:
-                        if svc.status.load_balancer.ingress:
-                            for ingress in svc.status.load_balancer.ingress:
-                                if ingress.ip:
-                                    return ingress.ip
-                                elif ingress.hostname:
-                                    return ingress.hostname
-                
-                # Fallback sur l'IP interne du premier nœud
-                if internal_ip:
-                    return internal_ip
+                # Fallback sur l'endpoint du kubeconfig
+                kube_host = _fallback_from_kubeconfig_host()
+                if kube_host:
+                    return kube_host
                     
                 # Dernière option : localhost (pour développement local)
                 return "localhost"
@@ -1002,6 +1060,78 @@ async def get_deployment_details(
                 return "localhost"
 
         cluster_ip = get_cluster_external_ip()
+
+        # Construire un mapping service -> node_name basé sur les pods
+        # Pour savoir sur quel node le pod du service tourne
+        def get_node_for_service(service_name: str) -> Optional[str]:
+            """
+            Trouve le node sur lequel tourne un pod associé à un service.
+            Retourne le node_name du premier pod Ready trouvé.
+            """
+            svc_labels = None
+            for svc in services.items:
+                if svc.metadata.name == service_name:
+                    svc_labels = svc.spec.selector
+                    break
+            
+            if not svc_labels:
+                return None
+            
+            # Chercher un pod qui correspond au selector du service
+            for pod in pods.items:
+                pod_labels = pod.metadata.labels or {}
+                # Vérifier que tous les labels du selector sont présents dans le pod
+                matches = all(pod_labels.get(k) == v for k, v in (svc_labels or {}).items())
+                if matches and pod.spec.node_name:
+                    # Préférer un pod Ready
+                    pod_phase = pod.status.phase if pod.status else None
+                    if pod_phase == "Running":
+                        return pod.spec.node_name
+            
+            # Si aucun pod Running, retourner le premier avec un node_name
+            for pod in pods.items:
+                pod_labels = pod.metadata.labels or {}
+                matches = all(pod_labels.get(k) == v for k, v in (svc_labels or {}).items())
+                if matches and pod.spec.node_name:
+                    return pod.spec.node_name
+            
+            return None
+
+        # Fonction pour obtenir la meilleure IP pour un service NodePort
+        def get_nodeport_ip(service_name: str) -> str:
+            """
+            Retourne l'IP à utiliser pour accéder à un service NodePort.
+            Si NODEPORT_USE_POD_NODE_IP est activé (défaut):
+                1. IP du node où le pod tourne (pour être sûr que le pod est accessible)
+                2. IP du cluster (fallback)
+            Sinon:
+                - Utilise CLUSTER_EXTERNAL_IP ou l'IP générique du cluster
+            """
+            # Si la config demande d'utiliser l'IP du node où le pod tourne
+            if settings.NODEPORT_USE_POD_NODE_IP:
+                node_name = get_node_for_service(service_name)
+                if node_name and node_name in node_ip_cache:
+                    logger.debug(
+                        "nodeport_using_pod_node_ip",
+                        extra={
+                            "extra_fields": {
+                                "service": service_name,
+                                "node_name": node_name,
+                                "node_ip": node_ip_cache[node_name],
+                            }
+                        },
+                    )
+                    return node_ip_cache[node_name]
+                
+                # Fallback: tenter de récupérer l'IP du node directement
+                if node_name:
+                    node_ip = get_node_external_ip(node_name)
+                    if node_ip:
+                        return node_ip
+            
+            # Fallback: IP du cluster (ou config CLUSTER_EXTERNAL_IP)
+            return cluster_ip
+
         logger.debug(
             "cluster_ip_detected",
             extra={
@@ -1009,6 +1139,8 @@ async def get_deployment_details(
                     "namespace": namespace,
                     "deployment": name,
                     "cluster_ip": cluster_ip,
+                    "nodeport_use_pod_node_ip": settings.NODEPORT_USE_POD_NODE_IP,
+                    "node_ip_cache_size": len(node_ip_cache),
                 }
             },
         )
@@ -1120,11 +1252,20 @@ async def get_deployment_details(
                         port_name = (port.name or "").lower()
                         is_novnc = port_name == "novnc" or port.port == 6901
                         scheme = "http"
+                        
+                        # Utiliser l'IP du node où le pod tourne pour le NodePort
+                        nodeport_ip = get_nodeport_ip(svc.metadata.name)
+                        
+                        # Trouver le node_name pour ce service (pour info)
+                        node_name_for_svc = get_node_for_service(svc.metadata.name)
+                        
                         access_urls.append({
-                            "url": f"{scheme}://{cluster_ip}:{port.node_port}",
+                            "url": f"{scheme}://{nodeport_ip}:{port.node_port}",
                             "service": svc.metadata.name,
                             "node_port": port.node_port,
-                            "cluster_ip": cluster_ip,
+                            "node_ip": nodeport_ip,
+                            "node_name": node_name_for_svc,
+                            "cluster_ip": cluster_ip,  # Gardé pour compatibilité
                             "label": label or None,
                             "protocol": scheme,
                             "secure": False,
