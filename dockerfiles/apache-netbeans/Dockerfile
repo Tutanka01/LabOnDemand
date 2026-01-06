@@ -11,8 +11,8 @@ ENV HOME=/home/kasm-default-profile \
 WORKDIR $HOME
 
 # Paramètres d'installation NetBeans (le paquet inclut un JDK mais nous installerons Oracle JDK 25 séparément)
-ARG NB_VERSION=27-1
-ARG NB_DEB_URL=https://github.com/Friends-of-Apache-NetBeans/netbeans-installers/releases/download/v27-build1/apache-netbeans_27-1_amd64.deb
+ARG NB_VERSION=28-1
+ARG NB_DEB_URL=https://github.com/Friends-of-Apache-NetBeans/netbeans-installers/releases/download/v28-build1/apache-netbeans_28-1_amd64.deb
 ARG NB_DEB_SHA256=""
 
 # Paramètres d'installation Oracle JDK 25
@@ -29,11 +29,14 @@ RUN set -euxo pipefail; \
 
 # Installer NetBeans (le JDK fourni par le .deb sera utilisé par défaut)
 RUN set -euxo pipefail; \
+    apt-get update; \
     tmp_deb="/tmp/netbeans_${NB_VERSION}.deb"; \
     wget -q "${NB_DEB_URL}" -O "$tmp_deb"; \
     if [ -n "${NB_DEB_SHA256}" ]; then echo "${NB_DEB_SHA256}  $tmp_deb" | sha256sum -c -; fi; \
-    apt-get install -y --no-install-recommends "$tmp_deb"; \
+    # Installe les dépendances éventuelles et réessaie si dpkg échoue
+    dpkg -i "$tmp_deb" || { apt-get -f install -y; dpkg -i "$tmp_deb"; }; \
     rm -f "$tmp_deb"; \
+    apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
 # Installer Oracle JDK 25
