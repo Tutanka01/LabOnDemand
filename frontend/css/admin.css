@@ -197,6 +197,36 @@ nav ul li.active a::after {
     box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
 }
 
+/* Badges provider (Local / SSO) */
+.provider-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+
+.provider-badge.local {
+    background: #F1F5F9;
+    color: #475569;
+    border-color: #CBD5E1;
+}
+
+.provider-badge.sso {
+    background: linear-gradient(135deg, #EDE9FE 0%, #DDD6FE 100%);
+    color: #5B21B6;
+    border-color: rgba(139, 92, 246, 0.3);
+}
+
+#modal-username[readonly] {
+    background-color: #F8FAFC;
+    color: #64748B;
+    cursor: not-allowed;
+}
+
 .btn-logout {
     background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(220, 38, 38, 0.06) 100%);
     border: 1.5px solid rgba(239, 68, 68, 0.2);
