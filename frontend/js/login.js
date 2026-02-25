@@ -5,7 +5,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('login-form');
     const errorMessage = document.getElementById('error-message');
     const errorText = document.getElementById('error-text');
-    const ssoSection = document.getElementById('sso-section');
     const ssoLoginBtn = document.getElementById('sso-login-btn');
     const loginInfo = document.getElementById('login-info');
     
@@ -92,15 +91,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function initAuthMode() {
+        const ssoSection = document.getElementById('sso-section');
+        const loginDivider = document.getElementById('login-divider');
         const ssoEnabled = await checkSsoStatus();
         if (ssoEnabled) {
-            if (loginForm) loginForm.style.display = 'none';
-            if (ssoSection) ssoSection.style.display = 'block';
-            if (loginInfo) loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> Authentification via SSO (OIDC)';
-            if (ssoLoginBtn) ssoLoginBtn.focus();
+            // Afficher les deux : formulaire local (pour l'admin) + SSO (pour les utilisateurs)
+            if (loginForm) loginForm.style.display = 'flex';
+            if (ssoSection) ssoSection.classList.remove('hidden');
+            if (loginDivider) loginDivider.classList.remove('hidden');
+            if (loginInfo) loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> Connectez-vous avec votre compte ou via SSO';
         } else {
             if (loginForm) loginForm.style.display = 'flex';
-            if (ssoSection) ssoSection.style.display = 'none';
+            if (ssoSection) ssoSection.classList.add('hidden');
+            if (loginDivider) loginDivider.classList.add('hidden');
         }
     }
 
