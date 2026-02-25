@@ -5,12 +5,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('login-form');
     const errorMessage = document.getElementById('error-message');
     const errorText = document.getElementById('error-text');
+    const ssoSection = document.getElementById('sso-section');
+    const ssoLoginBtn = document.getElementById('sso-login-btn');
+    const loginInfo = document.getElementById('login-info');
     
     // Vérifier si l'utilisateur est déjà connecté
     checkAuthStatus();
+    initAuthMode();
     
-    loginForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
+    if (loginForm) {
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
         
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
@@ -66,7 +71,8 @@ document.addEventListener('DOMContentLoaded', () => {
             errorMessage.style.display = 'block';
             console.error('Erreur de connexion:', error);
         }
-    });
+        });
+    }
     
     // Vérifier si l'utilisateur est déjà connecté
     async function checkAuthStatus() {
@@ -83,5 +89,44 @@ document.addEventListener('DOMContentLoaded', () => {
             // Ignorer les erreurs, l'utilisateur n'est simplement pas connecté
             console.log('Aucune session active');
         }
+    }
+
+    async function initAuthMode() {
+        try {
+            const response = await fetch('/api/v1/auth/sso/status');
+            if (!response.ok) {
+                return;
+            }
+            const data = await response.json();
+            if (data.sso_enabled) {
+                if (loginForm) {
+                    loginForm.style.display = 'none';
+                }
+                if (ssoSection) {
+                    ssoSection.style.display = 'block';
+                }
+                if (loginInfo) {
+                    loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> Authentification via SSO (OIDC)';
+                }
+                if (ssoLoginBtn) {
+                    ssoLoginBtn.focus();
+                }
+            } else {
+                if (loginForm) {
+                    loginForm.style.display = 'flex';
+                }
+                if (ssoSection) {
+                    ssoSection.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            console.error('Erreur lors du chargement du mode SSO:', error);
+        }
+    }
+
+    if (ssoLoginBtn) {
+        ssoLoginBtn.addEventListener('click', () => {
+            window.location.href = '/api/v1/auth/sso/login';
+        });
     }
 });

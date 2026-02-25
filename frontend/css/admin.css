@@ -348,6 +348,12 @@ main {
     border-color: rgba(16, 185, 129, 0.3);
 }
 
+.notification.info {
+    background: linear-gradient(135deg, #E0F2FE 0%, #BAE6FD 100%);
+    color: #075985;
+    border-color: rgba(14, 165, 233, 0.3);
+}
+
 /* Filtrage et recherche - Interface améliorée */
 .filter-container {
     display: flex;

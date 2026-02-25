@@ -1,9 +1,11 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
-from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
-from typing import List, Optional
 import os
+import secrets
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
 
 from .logging_config import shorten_token
 
@@ -11,11 +13,19 @@ from .database import get_db
 from .models import User, UserRole
 from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse
 from .security import (
-    authenticate_user, create_session, get_password_hash, 
+    authenticate_user, create_session, get_password_hash,
     get_current_user, delete_session, is_admin, is_teacher_or_admin,
     limiter, validate_password_strength
 )
 from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
+from .config import settings
+from .sso import (
+    get_authorization_url,
+    exchange_code,
+    get_userinfo,
+    map_role,
+    sanitize_username,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -33,6 +43,11 @@ def login(
     """
     Connecte un utilisateur et crée une session
     """
+    if settings.SSO_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Connexion locale désactivée (SSO activé)",
+        )
     client = request.client or None
     logger.info(
         "login_attempt",
@@ -105,6 +120,191 @@ def login(
     
     return resp
 
+
+def _get_redirect_uri(request: Request) -> str:
+    """Construit l'URL de callback OIDC."""
+    if settings.OIDC_REDIRECT_URI:
+        return settings.OIDC_REDIRECT_URI
+    # Dérivé automatiquement depuis l'URL de la requête
+    base = f"{request.url.scheme}://{request.url.netloc}"
+    return f"{base}/api/v1/auth/sso/callback"
+
+
+@router.get("/sso/status")
+def sso_status():
+    """Expose l'état du SSO."""
+    return {"sso_enabled": settings.SSO_ENABLED}
+
+
+@router.get("/sso/login")
+def sso_login(request: Request, response: Response):
+    """Démarre l'authentification OIDC — redirige vers l'IdP."""
+    if not settings.SSO_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO désactivé")
+    if not settings.OIDC_CLIENT_ID or not settings.OIDC_ISSUER:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Configuration OIDC incomplète (OIDC_CLIENT_ID ou OIDC_ISSUER manquant)",
+        )
+
+    state = secrets.token_urlsafe(32)
+    redirect_uri = _get_redirect_uri(request)
+    auth_url = get_authorization_url(redirect_uri=redirect_uri, state=state)
+
+    resp = RedirectResponse(url=auth_url)
+    # Stocke le state dans un cookie HttpOnly pour vérification CSRF au retour
+    resp.set_cookie(
+        key="oidc_state",
+        value=state,
+        httponly=True,
+        secure=SECURE_COOKIES,
+        samesite="lax",
+        max_age=600,  # 10 minutes
+        path="/",
+    )
+    return resp
+
+
+@router.get("/sso/callback")
+def sso_callback(request: Request, db: Session = Depends(get_db)):
+    """Callback OIDC : échange le code, récupère l'utilisateur, crée la session."""
+    if not settings.SSO_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO désactivé")
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error = request.query_params.get("error")
+
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"SSO refusé par l'IdP: {error}",
+        )
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Code OIDC manquant")
+
+    # Vérification CSRF via le state
+    expected_state = request.cookies.get("oidc_state")
+    if not expected_state or expected_state != state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State OIDC invalide (possible attaque CSRF)",
+        )
+
+    redirect_uri = _get_redirect_uri(request)
+    tokens = exchange_code(code=code, redirect_uri=redirect_uri)
+    access_token = tokens.get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token d'accès OIDC manquant",
+        )
+
+    claims = get_userinfo(access_token)
+
+    # Extraction des informations utilisateur depuis les claims OIDC
+    sub = claims.get("sub") or ""
+    email = claims.get("email") or ""
+    full_name = claims.get("name") or claims.get("displayName") or ""
+    username_raw = (
+        claims.get("preferred_username")
+        or claims.get("uid")
+        or email.split("@")[0]
+        or sub
+    )
+    username = sanitize_username(username_raw)
+
+    if not email:
+        email = f"{username}@{settings.OIDC_EMAIL_FALLBACK_DOMAIN}"
+
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSO: identifiant unique (sub) manquant dans les claims",
+        )
+
+    role = map_role(claims)
+
+    def ensure_unique_username(base_name: str, user_id: Optional[int]) -> str:
+        candidate = base_name
+        counter = 1
+        while True:
+            query = db.query(User).filter(User.username == candidate)
+            if user_id is not None:
+                query = query.filter(User.id != user_id)
+            if not query.first():
+                return candidate
+            counter += 1
+            candidate = f"{base_name}-{counter}"
+
+    def ensure_unique_email(base_email: str, user_id: Optional[int]) -> str:
+        candidate = base_email
+        counter = 1
+        while True:
+            query = db.query(User).filter(User.email == candidate)
+            if user_id is not None:
+                query = query.filter(User.id != user_id)
+            if not query.first():
+                return candidate
+            counter += 1
+            local, domain = base_email.split("@", 1)
+            candidate = f"{local}+{counter}@{domain}"
+
+    # Recherche ou création de l'utilisateur
+    user = db.query(User).filter(User.external_id == sub).first()
+    if not user and email:
+        user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        username = ensure_unique_username(username, None)
+        email = ensure_unique_email(email, None)
+        user = User(
+            username=username,
+            email=email,
+            full_name=full_name or None,
+            hashed_password=get_password_hash(os.urandom(24).hex()),
+            role=UserRole[role],
+            is_active=True,
+            auth_provider="oidc",
+            external_id=sub,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        logger.info("oidc_user_created", extra={"extra_fields": {"username": username, "role": role}})
+    else:
+        username = ensure_unique_username(username, user.id)
+        email = ensure_unique_email(email, user.id)
+        user.username = username
+        user.email = email
+        user.full_name = full_name or user.full_name
+        user.auth_provider = "oidc"
+        user.external_id = sub
+        if user.role != UserRole.admin:
+            user.role = UserRole[role]
+        db.commit()
+        db.refresh(user)
+
+    session_id = create_session(user.id, user.username, user.role)
+    request.state.session_id = session_id
+    request.state.user = user
+
+    redirect_to = settings.FRONTEND_BASE_URL or "/"
+    response = RedirectResponse(url=redirect_to)
+    # Supprime le cookie de state OIDC
+    response.delete_cookie(key="oidc_state", path="/")
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        secure=SECURE_COOKIES,
+        samesite=SESSION_SAMESITE.lower(),
+        max_age=SESSION_EXPIRY_HOURS * 3600,
+        path="/",
+        domain=COOKIE_DOMAIN or None,
+    )
+    return response
+
 @router.post("/logout")
 def logout(response: Response, request: Request, user: User = Depends(get_current_user)):
     """
@@ -145,6 +345,11 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     """
     Enregistre un nouvel utilisateur (accessible uniquement aux admin dans une implémentation finale)
     """
+    if settings.SSO_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inscription locale désactivée (SSO activé)",
+        )
     # Vérifier si le nom d'utilisateur existe déjà
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
@@ -175,6 +380,8 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
         email=user.email,
         full_name=user.full_name,
         hashed_password=hashed_password,
+        auth_provider="local",
+        external_id=None,
         role=UserRole[user.role],
         is_active=user.is_active if user.is_active is not None else True
     )
@@ -248,6 +455,11 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
         db_user.full_name = user_update.full_name
     
     if user_update.password is not None:
+        if settings.SSO_ENABLED and db_user.auth_provider == "oidc":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mot de passe indisponible pour les comptes SSO",
+            )
         if not validate_password_strength(user_update.password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -347,6 +559,11 @@ def update_user_me(user_update: UserUpdate, current_user: User = Depends(get_cur
     
     # Mise à jour du mot de passe
     if user_update.password is not None:
+        if settings.SSO_ENABLED and current_user.auth_provider == "oidc":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mot de passe indisponible pour les comptes SSO",
+            )
         if not validate_password_strength(user_update.password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -405,6 +622,11 @@ def change_password(
     """
     from .security import verify_password
     
+    if settings.SSO_ENABLED and current_user.auth_provider == "oidc":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mot de passe indisponible pour les comptes SSO",
+        )
     # Vérifier l'ancien mot de passe
     if not verify_password(old_password, current_user.hashed_password):
         raise HTTPException(
