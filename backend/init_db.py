@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     from database import engine, Base
-    from models import User, UserRole, Lab
+    from models import User, UserRole
     from security import get_password_hash
 except ImportError as e:
     print(f"Erreur d'import: {e}")

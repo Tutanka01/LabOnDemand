@@ -42,11 +42,15 @@
             </button>
         </form>
 
-        <div class="sso-section" id="sso-section" style="display: none;">
+        <div class="login-divider hidden" id="login-divider">
+            <span>ou</span>
+        </div>
+
+        <div class="sso-section hidden" id="sso-section">
             <button type="button" class="btn-login btn-sso" id="sso-login-btn">
                 <i class="fas fa-shield-alt"></i> Continuer avec SSO
             </button>
-            <p class="sso-note" id="sso-note">Authentification via votre fournisseur SAML</p>
+            <p class="sso-note" id="sso-note">Authentification via votre fournisseur OIDC</p>
         </div>
         
         <div class="login-links">
@@ -54,11 +58,12 @@
         </div>
             
         <div class="login-footer">
-            LabOnDemand &copy; 2023-2026 | Développé avec <i class="fas fa-heart"></i>
+            LabOnDemand &copy; 2026 | Développé par @makhal_01</i>
         </div>
         </div>
     </div>
       <!-- Charger le script de login -->
+    <script src="js/api.js"></script>
     <script src="js/login.js"></script>
 </body>
 </html>

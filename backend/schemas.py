@@ -2,7 +2,7 @@
 Schémas Pydantic pour LabOnDemand
 Principe KISS : Uniquement les schémas utilisés
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
@@ -26,11 +26,19 @@ class UserCreate(BaseModel):
 
 # Schéma pour la mise à jour d'utilisateur
 class UserUpdate(BaseModel):
-    email: Optional[EmailStr] = None
+    # str au lieu de EmailStr pour accepter les domaines internes (.local, .internal, etc.)
+    email: Optional[str] = None
     full_name: Optional[str] = None
     password: Optional[str] = Field(None, min_length=8)
     role: Optional[UserRoleEnum] = None
     is_active: Optional[bool] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_loose(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and "@" not in v:
+            raise ValueError("Adresse email invalide (le caractère @ est requis)")
+        return v
 
 # Schéma pour l'authentification
 class UserLogin(BaseModel):

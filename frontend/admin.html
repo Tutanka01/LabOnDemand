@@ -48,7 +48,7 @@
             </div>
 
             <div class="notification-container">
-                <div id="sso-admin-notice" class="notification info" style="display: none;">
+                <div id="sso-admin-notice" class="notification info hidden">
                     <i class="fas fa-shield-alt"></i> Création d'utilisateurs locaux désactivée (SSO activé)
                     <button class="close-btn"><i class="fas fa-times"></i></button>
                 </div>
@@ -76,6 +76,14 @@
                         <option value="admin">Administrateurs</option>
                     </select>
                 </div>
+                <div class="filter-options">
+                    <label>Filtrer par auth:</label>
+                    <select id="provider-filter">
+                        <option value="all">Tous</option>
+                        <option value="local">Local</option>
+                        <option value="oidc">SSO</option>
+                    </select>
+                </div>
             </div>
 
             <div class="users-table-container">
@@ -86,6 +94,7 @@
                             <th>Nom d'utilisateur</th>
                             <th>Email</th>
                             <th>Nom complet</th>
+                            <th>Auth</th>
                             <th>Rôle</th>
                             <th>Statut</th>
                             <th>Date de création</th>
@@ -146,12 +155,16 @@
                 <button class="close-modal"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <div id="modal-error-message" class="notification error" style="display: none; margin-bottom: 15px;">
+                <div id="modal-error-message" class="notification error hidden" style="margin-bottom: 15px;">
                     <i class="fas fa-exclamation-circle"></i> <span id="modal-error-text"></span>
                 </div>
                 <form id="user-form">
                     <input type="hidden" id="user-id">
-                    
+
+                    <div id="modal-sso-notice" class="notification info hidden" style="margin-bottom: 15px;">
+                        <i class="fas fa-shield-alt"></i> Compte SSO — le mot de passe est géré par le fournisseur d'identité.
+                    </div>
+
                     <div class="form-group">
                         <label for="modal-username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
                         <input type="text" id="modal-username" required minlength="3" maxlength="50">
@@ -300,6 +313,7 @@
         </div>
     </div>
 
+    <script src="js/api.js"></script>
     <script src="js/admin.js"></script>
     <script src="js/templates.js"></script>
     <script src="js/runtime-configs.js"></script>

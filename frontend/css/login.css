@@ -68,6 +68,23 @@
     background-color: #4338ca;
 }
 
+.login-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 20px 0 4px;
+    color: #94a3b8;
+    font-size: 0.875rem;
+}
+
+.login-divider::before,
+.login-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background-color: #e2e8f0;
+}
+
 .sso-section {
     display: flex;
     flex-direction: column;

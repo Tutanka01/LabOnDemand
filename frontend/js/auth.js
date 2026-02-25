@@ -1,5 +1,21 @@
-/* filepath: c:\Users\zhiri\Nextcloud\mo\Projects\LabOnDemand\frontend\js\auth.js */
-// Gestionnaire d'authentification pour LabOnDemand
+/**
+ * @file auth.js
+ * @description Authentication manager for LabOnDemand.
+ *
+ * Loaded as a module by index.html (and admin.html via index-auth.js).
+ * On init(), verifies the session cookie against /api/v1/auth/me and
+ * redirects to login.html if unauthenticated.
+ *
+ * Usage:
+ *   import { authManager } from './auth.js';
+ *   await authManager.init();
+ *   const user = authManager.user;   // { id, username, role, ... }
+ */
+
+/**
+ * Manages session state for the current browser tab.
+ * Exposes `user` (the authenticated user object) and `isAuthenticated`.
+ */
 class AuthManager {
     constructor() {
         this.user = null;

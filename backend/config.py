@@ -1,6 +1,21 @@
 """
-Configuration centralisée pour l'application LabOnDemand
-Applique le principe KISS pour une configuration simple et claire
+Centralized configuration for LabOnDemand.
+
+All settings are read from environment variables (with sensible defaults).
+Group overview:
+
+- **API**: title, version, port, debug flag, logging.
+- **CORS**: allowed origins (comma-separated ``CORS_ORIGINS`` env var).
+- **Kubernetes**: cluster external IP, NodePort mode, user namespace prefix.
+- **Ingress**: toggle, base domain, IngressClass, TLS secret, per-type opt-in/out.
+- **Sessions**: Redis URL, expiry, cookie flags (SameSite, Secure, Domain).
+- **SSO / OIDC**: issuer, client credentials, redirect URI, role-claim mapping.
+- **Admin**: default admin password seeded on first boot.
+
+Usage::
+
+    from .config import settings
+    print(settings.INGRESS_BASE_DOMAIN)
 """
 import os
 from pathlib import Path

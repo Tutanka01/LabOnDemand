@@ -69,18 +69,6 @@
     modal.classList.remove('show');
   }
 
-  async function api(path, options = {}) {
-    const resp = await fetch(path, { credentials: 'include', ...options });
-    let payload = null;
-    const ct = resp.headers.get('content-type') || '';
-    if (ct.includes('application/json')) payload = await resp.json();
-    if (!resp.ok) {
-      const msg = (payload && (payload.detail || payload.message)) || `HTTP ${resp.status}`;
-      throw new Error(msg);
-    }
-    return payload;
-  }
-
   async function refreshTemplates() {
     try {
       const templates = await api('/api/v1/k8s/templates/all');

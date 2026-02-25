@@ -84,35 +84,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function initAuthMode() {
-        try {
-            const response = await fetch('/api/v1/auth/sso/status');
-            if (!response.ok) {
-                return;
-            }
-            const data = await response.json();
-            if (data.sso_enabled) {
-                if (registerForm) {
-                    registerForm.style.display = 'none';
-                }
-                if (ssoRegister) {
-                    ssoRegister.style.display = 'flex';
-                }
-                if (registerInfo) {
-                    registerInfo.innerHTML = '<i class="fas fa-user-plus"></i> Inscription désactivée (SSO activé)';
-                }
-                if (ssoRegisterBtn) {
-                    ssoRegisterBtn.focus();
-                }
-            } else {
-                if (registerForm) {
-                    registerForm.style.display = 'flex';
-                }
-                if (ssoRegister) {
-                    ssoRegister.style.display = 'none';
-                }
-            }
-        } catch (error) {
-            console.error('Erreur lors du chargement du mode SSO:', error);
+        const ssoEnabled = await checkSsoStatus();
+        if (ssoEnabled) {
+            if (registerForm) registerForm.style.display = 'none';
+            if (ssoRegister) ssoRegister.style.display = 'flex';
+            if (registerInfo) registerInfo.innerHTML = '<i class="fas fa-user-plus"></i> Inscription désactivée (SSO activé)';
+            if (ssoRegisterBtn) ssoRegisterBtn.focus();
+        } else {
+            if (registerForm) registerForm.style.display = 'flex';
+            if (ssoRegister) ssoRegister.style.display = 'none';
         }
     }
 });

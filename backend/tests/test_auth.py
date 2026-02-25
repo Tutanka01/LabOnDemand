@@ -1,249 +1,167 @@
-#!/usr/bin/env python3
-# filepath: c:\Users\zhiri\Nextcloud\mo\Projects\LabOnDemand\backend\tests\test_auth.py
-import unittest
-import requests
-import json
-import time
-from urllib.parse import urlparse
+"""Tests for authentication endpoints: login, logout, me, SSO status, password change."""
+import pytest
 
-# Configuration de test
-BASE_URL = "http://localhost:8000"
-API_V1 = f"{BASE_URL}/api/v1"
+BASE = "/api/v1/auth"
 
-class TestAuthentication(unittest.TestCase):
-    def setUp(self):
-        """Prépare les tests en créant un utilisateur de test"""
-        # Données pour l'utilisateur de test
-        self.test_user = {
-            "username": f"testuser_{int(time.time())}",
-            "email": f"test_{int(time.time())}@example.com",
-            "full_name": "Utilisateur de Test",
-            "password": "Password123!",
-            "role": "student"
-        }
 
-        self.admin_credentials = {
-            "username": "admin",
-            "password": "adminpassword"
-        }
+# ============================================================
+# Login
+# ============================================================
 
-        # Créer un utilisateur de test
-        self.admin_session = requests.Session()
-        
-        # Se connecter en tant qu'admin
-        response = self.admin_session.post(
-            f"{API_V1}/auth/login",
-            json=self.admin_credentials
-        )
-        
-        if response.status_code != 200:
-            self.fail(f"Impossible de se connecter en tant qu'admin: {response.text}")
-        
-        # Utiliser la session admin pour créer l'utilisateur de test
-        response = self.admin_session.post(
-            f"{API_V1}/auth/register",
-            json=self.test_user
-        )
-        
-        if response.status_code != 201:
-            self.fail(f"Impossible de créer l'utilisateur de test: {response.text}")
-        
-        # Récupérer l'ID du nouvel utilisateur
-        self.test_user_id = response.json()["id"]
-        
-        # Session utilisée pour les tests
-        self.session = requests.Session()
+async def test_login_success(client, admin_user):
+    r = await client.post(f"{BASE}/login", json={"username": "testadmin", "password": "TestAdmin@1234!"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["user"]["username"] == "testadmin"
+    assert body["user"]["role"] == "admin"
+    assert "session_id" in body
+    assert "session_id" in r.cookies
 
-    def tearDown(self):
-        """Nettoie l'environnement de test en supprimant l'utilisateur créé"""
-        # Supprimer l'utilisateur de test
-        response = self.admin_session.delete(f"{API_V1}/auth/users/{self.test_user_id}")
-        if response.status_code != 204:
-            print(f"Attention: Impossible de supprimer l'utilisateur de test: {response.text}")
-        
-        # Fermer les sessions
-        self.session.close()
-        self.admin_session.close()
 
-    def test_1_register_user(self):
-        """Test d'inscription d'un nouvel utilisateur"""
-        # Créer un nouvel utilisateur avec un nom différent
-        new_user = {
-            "username": f"newuser_{int(time.time())}",
-            "email": f"new_{int(time.time())}@example.com",
-            "full_name": "Nouvel Utilisateur",
-            "password": "Password123!",
-            "role": "student"
-        }
-        
-        response = self.admin_session.post(f"{API_V1}/auth/register", json=new_user)
-        self.assertEqual(response.status_code, 201)
-        
-        user_data = response.json()
-        self.assertEqual(user_data["username"], new_user["username"])
-        self.assertEqual(user_data["email"], new_user["email"])
-        self.assertEqual(user_data["role"], new_user["role"])
-        
-        # Supprimer cet utilisateur après le test
-        new_user_id = user_data["id"]
-        self.admin_session.delete(f"{API_V1}/auth/users/{new_user_id}")
+async def test_login_wrong_password(client, admin_user):
+    r = await client.post(f"{BASE}/login", json={"username": "testadmin", "password": "WrongPassword!"})
+    assert r.status_code == 401
 
-    def test_2_login_user(self):
-        """Test de connexion utilisateur"""
-        response = self.session.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": self.test_user["password"]
-            }
-        )
-        
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        
-        # Vérifier que la réponse contient les bonnes informations
-        self.assertIn("user", data)
-        self.assertEqual(data["user"]["username"], self.test_user["username"])
-        
-        # Vérifier que le cookie de session est défini
-        cookies = self.session.cookies
-        self.assertIn("session_id", cookies)
 
-    def test_3_invalid_login(self):
-        """Test d'échec de connexion avec des identifiants invalides"""
-        response = requests.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": "mauvais_mot_de_passe"
-            }
-        )
-        
-        self.assertEqual(response.status_code, 401)
+async def test_login_unknown_user(client):
+    r = await client.post(f"{BASE}/login", json={"username": "ghost", "password": "DoesNotMatter1!"})
+    assert r.status_code == 401
 
-    def test_4_get_current_user(self):
-        """Test de récupération des informations de l'utilisateur actuel"""
-        # Se connecter d'abord
-        self.session.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": self.test_user["password"]
-            }
-        )
-        
-        # Vérifier que nous pouvons obtenir les informations de l'utilisateur
-        response = self.session.get(f"{API_V1}/auth/me")
-        self.assertEqual(response.status_code, 200)
-        
-        user_data = response.json()
-        self.assertEqual(user_data["username"], self.test_user["username"])
-        self.assertEqual(user_data["email"], self.test_user["email"])
 
-    def test_5_check_role(self):
-        """Test de vérification du rôle de l'utilisateur"""
-        # Se connecter d'abord
-        self.session.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": self.test_user["password"]
-            }
-        )
-        
-        # Vérifier le rôle
-        response = self.session.get(f"{API_V1}/auth/check-role")
-        self.assertEqual(response.status_code, 200)
-        
-        role_data = response.json()
-        self.assertEqual(role_data["role"], "student")
-        self.assertFalse(role_data["can_manage_users"])
+async def test_login_inactive_user(client, inactive_user):
+    r = await client.post(f"{BASE}/login", json={"username": "inactive", "password": "StudPass@9012!"})
+    assert r.status_code == 401
 
-    def test_6_update_profile(self):
-        """Test de mise à jour du profil utilisateur"""
-        # Se connecter d'abord
-        self.session.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": self.test_user["password"]
-            }
-        )
-        
-        # Mettre à jour le profil
-        update_data = {
-            "full_name": "Nouveau Nom Complet"
-        }
-        
-        response = self.session.put(f"{API_V1}/auth/me", json=update_data)
-        self.assertEqual(response.status_code, 200)
-        
-        user_data = response.json()
-        self.assertEqual(user_data["full_name"], update_data["full_name"])
 
-    def test_7_admin_user_management(self):
-        """Test des fonctionnalités d'administration des utilisateurs"""
-        # Vérifier que l'admin peut lister tous les utilisateurs
-        response = self.admin_session.get(f"{API_V1}/auth/users")
-        self.assertEqual(response.status_code, 200)
-        
-        # Vérifier que l'admin peut obtenir un utilisateur spécifique
-        response = self.admin_session.get(f"{API_V1}/auth/users/{self.test_user_id}")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["username"], self.test_user["username"])
-        
-        # Vérifier que l'admin peut modifier un utilisateur
-        update_data = {
-            "role": "teacher"
-        }
-        
-        response = self.admin_session.put(
-            f"{API_V1}/auth/users/{self.test_user_id}", 
-            json=update_data
-        )
-        
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["role"], "teacher")
+async def test_login_oidc_user_cannot_use_local_login(client, oidc_user):
+    """SSO-only accounts must not be accessible via the local login form."""
+    r = await client.post(f"{BASE}/login", json={"username": "ssouser", "password": "anything"})
+    assert r.status_code == 401
 
-    def test_8_logout(self):
-        """Test de déconnexion d'un utilisateur"""
-        # Se connecter d'abord
-        self.session.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": self.test_user["password"]
-            }
-        )
-        
-        # Maintenant, se déconnecter
-        response = self.session.post(f"{API_V1}/auth/logout")
-        self.assertEqual(response.status_code, 200)
-        
-        # Vérifier que le cookie de session est supprimé
-        cookie_header = response.headers.get('Set-Cookie', '')
-        
-        # Après la déconnexion, nous ne devrions pas pouvoir accéder aux données de l'utilisateur
-        response = self.session.get(f"{API_V1}/auth/me")
-        self.assertEqual(response.status_code, 401)
 
-    def test_9_access_control(self):
-        """Test du contrôle d'accès basé sur les rôles"""
-        # Un étudiant ne devrait pas pouvoir accéder à la liste des utilisateurs
-        student_session = requests.Session()
-        
-        student_session.post(
-            f"{API_V1}/auth/login", 
-            json={
-                "username": self.test_user["username"],
-                "password": self.test_user["password"]
-            }
-        )
-        
-        response = student_session.get(f"{API_V1}/auth/users")
-        self.assertNotEqual(response.status_code, 200)
-        
-        student_session.close()
+# ============================================================
+# Logout
+# ============================================================
 
-if __name__ == '__main__':
-    unittest.main()
+async def test_logout(admin_client):
+    r = await admin_client.post(f"{BASE}/logout")
+    assert r.status_code == 200
+
+
+async def test_logout_clears_session(client, admin_user, admin_token):
+    """After logout, the session token must no longer authenticate."""
+    r = await client.post(f"{BASE}/logout", cookies={"session_id": admin_token})
+    assert r.status_code == 200
+    r2 = await client.get(f"{BASE}/me", cookies={"session_id": admin_token})
+    assert r2.status_code == 401
+
+
+async def test_logout_no_session(client):
+    r = await client.post(f"{BASE}/logout")
+    assert r.status_code != 500
+
+
+# ============================================================
+# GET /me
+# ============================================================
+
+async def test_get_me_authenticated(admin_client, admin_user):
+    r = await admin_client.get(f"{BASE}/me")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["username"] == "testadmin"
+    assert body["role"] == "admin"
+    assert "hashed_password" not in body
+
+
+async def test_get_me_unauthenticated(client):
+    r = await client.get(f"{BASE}/me")
+    assert r.status_code == 401
+
+
+async def test_get_me_student(student_client, student_user):
+    r = await student_client.get(f"{BASE}/me")
+    assert r.status_code == 200
+    assert r.json()["role"] == "student"
+
+
+# ============================================================
+# SSO status
+# ============================================================
+
+async def test_sso_status_disabled(client):
+    r = await client.get(f"{BASE}/sso/status")
+    assert r.status_code == 200
+    assert r.json()["sso_enabled"] is False
+
+
+# ============================================================
+# Check-role
+# ============================================================
+
+async def test_check_role_admin(admin_client):
+    r = await admin_client.get(f"{BASE}/check-role")
+    assert r.status_code == 200
+    assert r.json()["role"] == "admin"
+
+
+async def test_check_role_student(student_client):
+    r = await student_client.get(f"{BASE}/check-role")
+    assert r.status_code == 200
+    assert r.json()["role"] == "student"
+
+
+async def test_check_role_unauthenticated(client):
+    r = await client.get(f"{BASE}/check-role")
+    assert r.status_code == 401
+
+
+# ============================================================
+# Update own profile
+# ============================================================
+
+async def test_update_own_profile(student_client):
+    r = await student_client.put(f"{BASE}/me", json={"full_name": "Test Student"})
+    assert r.status_code == 200
+    assert r.json()["full_name"] == "Test Student"
+
+
+async def test_update_own_profile_unauthenticated(client):
+    r = await client.put(f"{BASE}/me", json={"full_name": "Ghost"})
+    assert r.status_code == 401
+
+
+# ============================================================
+# Change password
+# ============================================================
+
+async def test_change_password_success(admin_client):
+    r = await admin_client.post(
+        f"{BASE}/change-password",
+        params={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!"},
+    )
+    assert r.status_code == 200
+
+
+async def test_change_password_wrong_current(admin_client):
+    r = await admin_client.post(
+        f"{BASE}/change-password",
+        params={"old_password": "WrongPass!", "new_password": "NewAdmin@5678!"},
+    )
+    assert r.status_code in (400, 401, 403)
+
+
+async def test_change_password_weak_new(admin_client):
+    r = await admin_client.post(
+        f"{BASE}/change-password",
+        params={"old_password": "TestAdmin@1234!", "new_password": "weak"},
+    )
+    assert r.status_code in (400, 422)
+
+
+async def test_change_password_unauthenticated(client):
+    r = await client.post(
+        f"{BASE}/change-password",
+        params={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!"},
+    )
+    assert r.status_code == 401

@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pageInfo = document.getElementById('page-info');
     const searchInput = document.getElementById('search-input');
     const roleFilter = document.getElementById('role-filter');
+    const providerFilter = document.getElementById('provider-filter');
     const addUserBtn = document.getElementById('add-user-btn');
     const userModal = document.getElementById('user-modal');
     const deleteModal = document.getElementById('delete-modal');
@@ -25,7 +26,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorText = document.getElementById('error-text');
     const successMessage = document.getElementById('success-message');
     const successText = document.getElementById('success-text');
-    const passwordHint = document.getElementById('password-hint');
     const closeButtons = document.querySelectorAll('.close-btn');
     const closeModalButtons = document.querySelectorAll('.close-modal');
     const confirmDeleteBtn = document.getElementById('confirm-delete');
@@ -72,6 +72,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (roleFilter) {
         roleFilter.addEventListener('change', () => {
+            currentPage = 1;
+            filterUsers();
+        });
+    }
+
+    if (providerFilter) {
+        providerFilter.addEventListener('change', () => {
             currentPage = 1;
             filterUsers();
         });
@@ -227,6 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function filterUsers() {
         const searchTerm = searchInput.value.toLowerCase();
         const roleValue = roleFilter.value;
+        const providerValue = providerFilter ? providerFilter.value : 'all';
 
         filteredUsers = users.filter(user => {
             const matchesSearch =
@@ -236,7 +244,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const matchesRole = roleValue === 'all' || user.role === roleValue;
 
-            return matchesSearch && matchesRole;
+            const userProvider = user.auth_provider === 'oidc' ? 'oidc' : 'local';
+            const matchesProvider = providerValue === 'all' || userProvider === providerValue;
+
+            return matchesSearch && matchesRole && matchesProvider;
         });
 
         displayUsers();
@@ -263,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentUsers.length === 0) {
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td colspan="8" style="text-align: center; padding: 20px;">
+                <td colspan="9" style="text-align: center; padding: 20px;">
                     Aucun utilisateur trouvé
                 </td>
             `;
@@ -279,6 +290,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td>${user.username}</td>
                 <td>${user.email}</td>
                 <td>${user.full_name || '-'}</td>
+                <td>
+                    <span class="provider-badge ${user.auth_provider === 'oidc' ? 'sso' : 'local'}">
+                        ${user.auth_provider === 'oidc' ? '<i class="fas fa-shield-alt"></i> SSO' : '<i class="fas fa-user"></i> Local'}
+                    </span>
+                </td>
                 <td>
                     <span class="role-badge ${user.role}">
                         ${formatRole(user.role)}
@@ -377,10 +393,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const passwordInput = document.getElementById('modal-password');
         const passwordHintElement = document.getElementById('password-hint');
+        const passwordGroup = passwordInput ? passwordInput.closest('.form-group') : null;
+        const modalSsoNotice = document.getElementById('modal-sso-notice');
+        const usernameInput = document.getElementById('modal-username');
+        const isOidcUser = user.auth_provider === 'oidc';
+
         passwordInput.value = '';
         passwordInput.removeAttribute('required');
-        if (passwordHintElement) {
-            passwordHintElement.textContent = 'Laissez vide pour conserver le mot de passe existant';
+
+        if (isOidcUser) {
+            // Compte SSO : désactiver le champ password, afficher la notice
+            if (passwordGroup) passwordGroup.classList.add('hidden');
+            if (modalSsoNotice) modalSsoNotice.classList.remove('hidden');
+            if (usernameInput) usernameInput.setAttribute('readonly', true);
+            modalTitle.innerHTML = '<i class="fas fa-shield-alt"></i> Modifier le rôle (compte SSO)';
+        } else {
+            // Compte local : comportement normal
+            if (passwordGroup) passwordGroup.classList.remove('hidden');
+            if (modalSsoNotice) modalSsoNotice.classList.add('hidden');
+            if (usernameInput) usernameInput.removeAttribute('readonly');
+            if (passwordHintElement) {
+                passwordHintElement.textContent = 'Laissez vide pour conserver le mot de passe existant';
+            }
         }
 
         userModal.classList.add('show');
@@ -447,7 +481,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.detail || 'Erreur lors de la création de l\'utilisateur');
+                const detail = Array.isArray(error.detail)
+                    ? error.detail.map(e => e.msg).join(', ')
+                    : (error.detail || 'Erreur lors de la création de l\'utilisateur');
+                throw new Error(detail);
             }
 
             const newUser = await response.json();
@@ -501,9 +538,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 is_active: isActive
             };
 
+            const editedUser = users.find(u => u.id == userId);
             if (password) {
-                if (ssoEnabled) {
-                    showModalError('Mot de passe indisponible pour les comptes SSO.');
+                if (editedUser && editedUser.auth_provider === 'oidc') {
+                    showModalError('Impossible de définir un mot de passe sur un compte SSO.');
                     return;
                 }
                 userData.password = password;
@@ -520,7 +558,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.detail || 'Erreur lors de la mise à jour de l\'utilisateur');
+                const detail = Array.isArray(error.detail)
+                    ? error.detail.map(e => e.msg).join(', ')
+                    : (error.detail || 'Erreur lors de la mise à jour de l\'utilisateur');
+                throw new Error(detail);
             }
 
             const updatedUser = await response.json();
