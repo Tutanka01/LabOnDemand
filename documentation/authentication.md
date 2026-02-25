@@ -1,112 +1,202 @@
 # Authentification LabOnDemand
 
-L'authentification repose sur des sessions serveur conservées dans Redis. Trois rôles sont pris en charge (student, teacher, admin) avec des capacités croissantes. Cette page fusionne le résumé fonctionnel, la description technique et le diagramme de flux.
+L'authentification repose sur des sessions serveur conservées dans Redis. Trois rôles sont pris en charge (`student`, `teacher`, `admin`) avec des capacités croissantes.
+
+## Modes d'authentification
+
+LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
+
+| Mode | Condition | Description |
+| --- | --- | --- |
+| **Local** | `SSO_ENABLED=False` | Login/mot de passe via formulaire, gestion des comptes par l'admin |
+| **SSO (OIDC)** | `SSO_ENABLED=True` | Délégation à un IdP OpenID Connect (ex : CAS universitaire) |
 
 ## Parcours utilisateur
 
-1. **Inscription** (`register.html` + `register.js`) : formulaire complet avec validation côté client, relié à `POST /api/v1/auth/register`.
-2. **Connexion** (`login.html` + `login.js`) : soumission vers `POST /api/v1/auth/login`, stockage automatique du cookie HttpOnly.
-3. **Dashboard** (`index.html`) : chaque requête XHR embarque le cookie ; l'API valide la session avant de renvoyer les données.
-4. **Administration** (`admin.html` + `admin.js`) : CRUD utilisateurs, filtres/pagination, contrôle d'accès basé sur `role`.
-5. **Déconnexion** (`POST /api/v1/auth/logout`) : suppression de la session côté Redis et effacement du cookie côté client.
+### Mode SSO (OIDC)
+
+1. L'utilisateur clique sur "Se connecter via SSO" sur `login.html`.
+2. Le frontend redirige vers `GET /api/v1/auth/sso/login`.
+3. L'API génère un `state` anti-CSRF, le stocke dans un cookie `oidc_state`, puis redirige vers l'IdP.
+4. Après authentification à l'IdP, celui-ci redirige vers `GET /api/v1/auth/sso/callback?code=…&state=…`.
+5. L'API vérifie le `state`, échange le code contre des tokens, récupère les claims utilisateur.
+6. L'utilisateur est créé ou mis à jour en base, une session Redis est créée, le cookie `session_id` est posé.
+7. Redirection finale vers `FRONTEND_BASE_URL`.
+
+### Mode local
+
+1. Formulaire login (`POST /api/v1/auth/login`) → session Redis → cookie `session_id`.
+2. Les comptes sont créés par un admin via `POST /api/v1/auth/register` ou l'interface admin.
+
+> En mode SSO, la création de comptes locaux et le changement de mot de passe sont désactivés.
 
 ## Aperçu technique
 
 - **Session store** : Redis (service `redis` dans `compose.yaml`), TTL configurable (`SESSION_EXPIRY_HOURS`).
 - **Cookies** : HttpOnly, SameSite configurable (`SESSION_SAMESITE`), `SECURE_COOKIES=True` en production.
-- **Modèles** : `backend/models.py` (User + rôles), `backend/schemas.py` pour la validation Pydantic.
+- **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP).
+- **SSO** : `backend/sso.py` — découverte automatique de l'IdP via `/.well-known/openid-configuration`.
 - **Sécurité** : `backend/security.py` pour le hachage bcrypt et la vérification des mots de passe.
 - **Middleware** : `backend/session.py` accroche la session au scope FastAPI.
 - **API** : `backend/auth_router.py` expose les endpoints listés ci-dessous.
-- **Contrôle d'accès** : `lab_router.py` et `deployment_service.py` consomment `get_current_user`.
 
-## Diagramme de séquence
+## Diagramme de séquence — SSO (OIDC)
 
 ```mermaid
 sequenceDiagram
     participant U as Utilisateur
     participant F as Frontend
     participant A as API
-    participant S as Session Store
+    participant IdP as IdP OIDC
+    participant S as Redis (sessions)
     participant DB as Base de données
 
-    U->>F: Soumettre identifiants (login)
-    F->>A: POST /api/v1/auth/login
-    A->>DB: Vérifier user
-    DB-->>A: OK
-    A->>S: Créer session
-    S-->>A: SessionID
-    A-->>F: Réponse + cookie HttpOnly
+    U->>F: Cliquer "Se connecter via SSO"
+    F->>A: GET /api/v1/auth/sso/login
+    A-->>F: Redirect IdP + cookie oidc_state (HttpOnly)
+    F->>IdP: Redirect (client_id, redirect_uri, state)
+    IdP-->>U: Page d'authentification de l'IdP
+    U->>IdP: Saisit ses identifiants
+    IdP->>A: GET /api/v1/auth/sso/callback?code=…&state=…
+    A->>A: Vérifie state (anti-CSRF)
+    A->>IdP: POST token_endpoint (code, client_secret)
+    IdP-->>A: access_token + id_token
+    A->>IdP: GET userinfo_endpoint (Bearer access_token)
+    IdP-->>A: Claims (sub, email, name, …)
+    A->>DB: Créer ou mettre à jour l'utilisateur
+    A->>S: Créer session (TTL = SESSION_EXPIRY_HOURS)
+    S-->>A: session_id
+    A-->>F: Redirect FRONTEND_BASE_URL + cookie session_id (HttpOnly)
 
-    U->>F: Consulter page protégée
-    F->>A: GET /api/v1/... + cookie
+    U->>F: Consulter une page protégée
+    F->>A: GET /api/v1/... + cookie session_id
     A->>S: Vérifier session
-    S-->>A: Session valide
+    S-->>A: Session valide + user_id
     A->>DB: Charger profil/permissions
-    DB-->>A: Données
+    DB-->>A: Données utilisateur
     A-->>F: Payload autorisé
 
     U->>F: Cliquer sur logout
     F->>A: POST /api/v1/auth/logout
     A->>S: Supprimer session
-    S-->>A: OK
-    A-->>F: Cookie expiré
+    A-->>F: Cookie session_id expiré
 ```
 
-## Endpoints clés
+## Endpoints
 
 | Endpoint | Méthode | Description | Accès |
 | --- | --- | --- | --- |
-| `/api/v1/auth/register` | POST | Créer un utilisateur | Public (activable/désactivable) |
-| `/api/v1/auth/login` | POST | Authentifier et créer une session | Public |
-| `/api/v1/auth/logout` | POST | Supprimer la session active | Authentifié |
-| `/api/v1/auth/me` | GET | Renvoyer le profil courant | Authentifié |
-| `/api/v1/auth/check-role` | GET | Vérifier rôle et permissions | Authentifié |
+| `/api/v1/auth/login` | POST | Authentification locale (login + mot de passe) | Public (désactivé si SSO) |
+| `/api/v1/auth/register` | POST | Créer un compte local | Admin (désactivé si SSO) |
+| `/api/v1/auth/sso/status` | GET | Indique si le SSO est activé | Public |
+| `/api/v1/auth/sso/login` | GET | Démarre l'auth OIDC — redirige vers l'IdP | Public |
+| `/api/v1/auth/sso/callback` | GET | Callback OIDC — échange le code, crée la session | Public (appelé par l'IdP) |
+| `/api/v1/auth/logout` | POST | Supprime la session active | Authentifié |
+| `/api/v1/auth/me` | GET | Renvoie le profil courant | Authentifié |
+| `/api/v1/auth/check-role` | GET | Vérifie rôle et permissions | Authentifié |
+| `/api/v1/auth/change-password` | POST | Changer son propre mot de passe | Authentifié (désactivé si compte OIDC) |
 | `/api/v1/auth/users` | GET | Lister les utilisateurs | Admin |
 | `/api/v1/auth/users/{id}` | GET/PUT/DELETE | CRUD utilisateur | Admin |
+| `/api/v1/auth/me` | PUT | Mettre à jour son propre profil | Authentifié |
 
-### Exemple de payloads
+## Configuration SSO (OIDC)
 
-```json
-// POST /api/v1/auth/login
-{
-  "username": "student1",
-  "password": "secret"
-}
+### Variables obligatoires (si `SSO_ENABLED=True`)
+
+| Variable | Exemple | Description |
+| --- | --- | --- |
+| `OIDC_ISSUER` | `https://sso.univ-pau.fr/cas/oidc` | URL de base de l'IdP — la découverte se fait via `{ISSUER}/.well-known/openid-configuration` |
+| `OIDC_CLIENT_ID` | `labondemand` | Identifiant de l'application, fourni par la DSI |
+| `OIDC_CLIENT_SECRET` | `s3cr3t` | Secret de l'application, fourni par la DSI |
+| `OIDC_REDIRECT_URI` | `https://app.fr/api/v1/auth/sso/callback` | URL de callback (doit être enregistrée chez l'IdP) |
+
+> Si `OIDC_REDIRECT_URI` n'est pas définie, l'URL est dérivée automatiquement depuis l'URL de la requête entrante. En production, il vaut mieux la définir explicitement.
+
+### Variables optionnelles — mapping des rôles
+
+| Variable | Défaut | Description |
+| --- | --- | --- |
+| `OIDC_ROLE_CLAIM` | `eduPersonAffiliation` | Claim OIDC contenant le rôle (standard universités FR) |
+| `OIDC_TEACHER_VALUES` | `staff,employee,faculty,enseignant,teacher` | Valeurs du claim qui correspondent au rôle enseignant |
+| `OIDC_STUDENT_VALUES` | `student,etudiant` | Valeurs du claim qui correspondent au rôle étudiant |
+| `OIDC_DEFAULT_ROLE` | `student` | Rôle attribué si aucune valeur ne correspond |
+| `OIDC_EMAIL_FALLBACK_DOMAIN` | `sso.local` | Domaine email de secours si l'IdP ne fournit pas d'email |
+
+### Exemple minimal pour l'Université de Pau
+
+```env
+SSO_ENABLED=True
+FRONTEND_BASE_URL=https://labondemand.univ-pau.fr
+
+OIDC_ISSUER=https://sso.univ-pau.fr/cas/oidc
+OIDC_CLIENT_ID=<fourni par la DSI>
+OIDC_CLIENT_SECRET=<fourni par la DSI>
+OIDC_REDIRECT_URI=https://labondemand.univ-pau.fr/api/v1/auth/sso/callback
+
+# Mapping optionnel (valeurs par défaut adaptées aux universités FR)
+OIDC_ROLE_CLAIM=eduPersonAffiliation
+OIDC_TEACHER_VALUES=staff,employee,faculty,enseignant
+OIDC_STUDENT_VALUES=student,etudiant
+OIDC_DEFAULT_ROLE=student
+OIDC_EMAIL_FALLBACK_DOMAIN=univ-pau.fr
 ```
 
-```json
-// Réponse typique
-{
-  "user": {
-    "id": 1,
-    "username": "student1",
-    "email": "student1@example.com",
-    "role": "student",
-    "is_active": true
-  },
-  "session_id": "ab12cd34"
-}
-```
+### Enregistrement de l'application auprès de l'IdP
+
+Pour utiliser le SSO, l'application doit être enregistrée auprès de la DSI :
+
+1. Fournir l'**URL de callback** : `https://<votre-domaine>/api/v1/auth/sso/callback`
+2. Préciser le **scope** requis : `openid profile email`
+3. Récupérer le `client_id` et le `client_secret` fournis par la DSI
+4. Vérifier que l'IdP expose bien `/.well-known/openid-configuration`
+
+### Claims utilisateur utilisés
+
+| Claim OIDC | Utilisation |
+| --- | --- |
+| `sub` | Identifiant unique de l'utilisateur (`external_id` en base) |
+| `email` | Adresse email |
+| `name` ou `displayName` | Nom complet |
+| `preferred_username` ou `uid` | Nom d'utilisateur |
+| `eduPersonAffiliation` (configurable) | Rôle (teacher / student) |
+
+### Gestion des comptes en mode SSO
+
+- À la première connexion SSO, un compte est créé automatiquement avec le rôle déduit des claims.
+- Aux connexions suivantes, le profil (nom, email, rôle) est mis à jour depuis l'IdP.
+- Le rôle `admin` n'est **jamais** attribué automatiquement — il doit être assigné manuellement via l'interface admin.
+- Le mot de passe n'est pas utilisé pour les comptes OIDC (`auth_provider="oidc"`).
 
 ## Fonctionnalités de sécurité
 
-1. **Hachage bcrypt** des mots de passe, abstraction via `security.py`.
-2. **Cookies sécurisés** (HttpOnly, SameSite, Secure selon l'environnement).
-3. **Rotation des sessions** : TTL configurable et purge lors du logout.
-4. **Protection CSRF implicite** via SameSite et absence d'exposition du cookie côté JS.
-5. **Validation stricte** des entrées via Pydantic.
-6. **Audit** : `backend/logging_config.py` émet `login_attempt`, `login_success`, `login_failure` dans `logs/audit.log`.
+1. **Anti-CSRF** : un `state` aléatoire (`secrets.token_urlsafe(32)`) est généré au démarrage du flow OIDC, stocké dans un cookie HttpOnly de 10 minutes, et vérifié au retour du callback.
+2. **Hachage bcrypt** des mots de passe pour les comptes locaux.
+3. **Cookies sécurisés** : HttpOnly, SameSite, `Secure` selon l'environnement.
+4. **TTL de session** : configurable via `SESSION_EXPIRY_HOURS`, purge immédiate au logout.
+5. **Validation des entrées** : via Pydantic (schémas dans `backend/schemas.py`).
+6. **Rate limiting** : `POST /api/v1/auth/login` limité à 5 tentatives/minute (via `slowapi`).
+7. **Audit** : `logs/audit.log` — événements `login_success`, `login_failed`, `logout`, `user_registered`, etc.
 
 ## Comptes par défaut
 
-Le script `backend/init_db.py` crée :
-- `admin / admin123` (rôle admin)
-- Vous pouvez ajouter des comptes enseignants/étudiants via l'UI ou `init_db.py`.
+- Un compte `admin` est créé au démarrage si aucun n'existe.
+- Le mot de passe initial est défini par `ADMIN_DEFAULT_PASSWORD` (à changer en production).
+- En mode SSO, le compte admin local reste accessible pour la gestion des rôles.
+
+## Débogage rapide
+
+| Symptôme | Action |
+| --- | --- |
+| Bouton SSO redirige mais revient avec une erreur | Vérifier `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` et `OIDC_REDIRECT_URI` (doit correspondre exactement à ce qui est enregistré chez l'IdP) |
+| `503 Service Unavailable` au clic SSO | L'IdP est inaccessible — vérifier `OIDC_ISSUER` et la connectivité réseau vers l'IdP |
+| `State OIDC invalide` | Cookie `oidc_state` expiré (> 10 min) ou bloqué — vérifier `SECURE_COOKIES` et `COOKIE_DOMAIN` |
+| Utilisateur créé sans email | L'IdP ne fournit pas de claim `email` — ajuster `OIDC_EMAIL_FALLBACK_DOMAIN` |
+| Tous les utilisateurs SSO sont `student` | Vérifier `OIDC_ROLE_CLAIM` et les valeurs dans `OIDC_TEACHER_VALUES` |
+| Sessions expirées trop tôt | Vérifier `SESSION_EXPIRY_HOURS` et l'horloge Redis |
+| Cookie non envoyé | Confirmer `COOKIE_DOMAIN` et `SECURE_COOKIES` en fonction du protocole (HTTP vs HTTPS) |
+| Impossible d'ouvrir l'UI admin | Contrôler le rôle renvoyé par `GET /api/v1/auth/me` |
 
 ## Tests
-
-Les tests couvrent l'API et l'UI :
 
 ```bash
 python backend/tests/run_tests.py --backend     # endpoints FastAPI
@@ -115,23 +205,3 @@ python backend/tests/run_tests.py --all         # combinaison
 ```
 
 `backend/tests/test_auth.py` couvre les chemins critiques (login/logout/register) et `backend/tests/test_ui.py` exécute les scénarios Selenium (formulaires, redirections, CRUD admin).
-
-## Conseils d'exploitation
-
-- **Surveillance** : inspecter `logs/audit.log` pour détecter des échecs de connexion répétés.
-- **Quotas** : les tokens utilisateur alimentent les labels Kubernetes (`user-id`, `user-role`). Voir `documentation/resource-limits.md` pour la propagation côté cluster.
-- **Extensibilité** :
-  - Ajouter un endpoint 2FA → hooker `security.py`
-  - Intégrer un SSO → remplacer/compléter `auth_router.py`
-  - Réinitialisation de mot de passe → prévoir un flux dédié et un modèle DB.
-
-## Débogage rapide
-
-| Symptôme | Action |
-| --- | --- |
-| Sessions expirées trop tôt | Vérifier `SESSION_EXPIRY_HOURS` et l'horloge Redis |
-| Cookie non envoyé | Confirmer `COOKIE_DOMAIN` et `SECURE_COOKIES` en fonction du protocole |
-| Impossible d'ouvrir l'UI admin | Contrôler le rôle renvoyé par `/api/v1/auth/me` |
-| Traces JSON mal formées | S'assurer que `error_handlers.py` est chargé (voir `backend/main.py`) |
-
-Ce document devient la source unique pour l'authentification. Mettez-le à jour à chaque évolution des flux ou des contrôles de sécurité.

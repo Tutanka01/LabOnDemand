@@ -27,7 +27,7 @@
                 <i class="fas fa-check-circle"></i> <span id="success-text"></span>
             </div>
             
-            <div class="info-message">
+            <div class="info-message" id="register-info">
                 <i class="fas fa-user-plus"></i> Créez votre compte
             </div>
             
@@ -61,6 +61,13 @@
                     <i class="fas fa-user-plus"></i> S'inscrire
                 </button>
             </form>
+
+            <div class="sso-section" id="sso-register" style="display: none;">
+                <p class="sso-note">L'inscription est gérée par le SSO.</p>
+                <button type="button" class="btn-login btn-sso" id="sso-register-btn">
+                    <i class="fas fa-shield-alt"></i> Continuer avec SSO
+                </button>
+            </div>
 
             <div class="login-links">
                 <a href="login.html">Déjà inscrit ? Connectez-vous</a>

@@ -163,6 +163,17 @@ def ensure_admin_exists():
                 db.commit()
             except Exception:
                 pass
+            # Migration douce: ajouter auth_provider/external_id si absents
+            try:
+                db.execute(text("ALTER TABLE users ADD COLUMN auth_provider VARCHAR(20) NOT NULL DEFAULT 'local'"))
+                db.commit()
+            except Exception:
+                pass
+            try:
+                db.execute(text("ALTER TABLE users ADD COLUMN external_id VARCHAR(255) NULL"))
+                db.commit()
+            except Exception:
+                pass
             # Créer la table runtime_configs si absente (migration douce)
             try:
                 db.execute(text(
@@ -221,6 +232,8 @@ def ensure_admin_exists():
                     hashed_password=get_password_hash(admin_password),
                     role=UserRole.admin,
                     is_active=True,
+                    auth_provider="local",
+                    external_id=None,
                 )
                 db.add(admin)
                 db.commit()

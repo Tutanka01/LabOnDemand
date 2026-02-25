@@ -23,7 +23,7 @@
                 <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
             </div>
             
-            <div class="info-message">
+            <div class="info-message" id="login-info">
                 <i class="fas fa-info-circle"></i> Connectez-vous pour accéder à vos laboratoires
             </div>
             
@@ -41,13 +41,20 @@
                 <i class="fas fa-sign-in-alt"></i> Connexion
             </button>
         </form>
+
+        <div class="sso-section" id="sso-section" style="display: none;">
+            <button type="button" class="btn-login btn-sso" id="sso-login-btn">
+                <i class="fas fa-shield-alt"></i> Continuer avec SSO
+            </button>
+            <p class="sso-note" id="sso-note">Authentification via votre fournisseur SAML</p>
+        </div>
         
         <div class="login-links">
             <a href="register.html">Pas encore inscrit ? Créer un compte</a>
         </div>
             
         <div class="login-footer">
-            LabOnDemand &copy; 2023-2025 | Développé avec <i class="fas fa-heart"></i>
+            LabOnDemand &copy; 2023-2026 | Développé avec <i class="fas fa-heart"></i>
         </div>
         </div>
     </div>

@@ -177,6 +177,13 @@ def authenticate_user(db: Session, username: str, password: str):
         )
         return False
     
+    if getattr(user, "auth_provider", "local") != "local":
+        logger.warning(
+            "authenticate_user_failed",
+            extra={"extra_fields": {"username": username, "reason": "non_local_auth"}},
+        )
+        return False
+
     # Vérifier le mot de passe
     password_valid = verify_password(password, user.hashed_password)
     if not password_valid:

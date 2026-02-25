@@ -29,11 +29,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeButtons = document.querySelectorAll('.close-btn');
     const closeModalButtons = document.querySelectorAll('.close-modal');
     const confirmDeleteBtn = document.getElementById('confirm-delete');
+    const ssoNotice = document.getElementById('sso-admin-notice');
+
+    let ssoEnabled = false;
 
     const onUsersPage = !!userTableBody; // page administration utilisateurs
 
     // Vérification des droits d'administration
     checkAdminRights();
+    loadSsoStatus();
 
     // Initialiser l'affichage
     if (onUsersPage) {
@@ -98,6 +102,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     closeButtons.forEach(button => {
         button.addEventListener('click', function () {
+            const parent = this.closest('.notification');
+            if (parent) {
+                parent.style.display = 'none';
+                return;
+            }
             this.parentElement.style.display = 'none';
         });
     });
@@ -333,6 +342,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Ouvrir le modal d'ajout d'utilisateur
     function openAddUserModal() {
+        if (ssoEnabled) {
+            showError('Création d\'utilisateurs locaux désactivée (SSO activé).');
+            return;
+        }
         selectedUserId = null;
         modalTitle.innerHTML = '<i class="fas fa-user-plus"></i> Ajouter un utilisateur';
         userForm.reset();
@@ -403,6 +416,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Créer un utilisateur
     async function createUser() {
         try {
+            if (ssoEnabled) {
+                showModalError('Création d\'utilisateurs locaux désactivée (SSO activé).');
+                return;
+            }
             if (modalErrorMessage) modalErrorMessage.style.display = 'none';
 
             const username = document.getElementById('modal-username').value;
@@ -443,6 +460,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function loadSsoStatus() {
+        try {
+            const response = await fetch('/api/v1/auth/sso/status');
+            if (!response.ok) return;
+            const data = await response.json();
+            ssoEnabled = !!data.sso_enabled;
+            if (ssoEnabled) {
+                if (addUserBtn) {
+                    addUserBtn.disabled = true;
+                    addUserBtn.title = 'SSO activé: création d\'utilisateurs locaux désactivée';
+                }
+                if (ssoNotice) {
+                    ssoNotice.style.display = 'flex';
+                }
+            } else if (ssoNotice) {
+                ssoNotice.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Erreur lors du chargement du statut SSO:', error);
+        }
+    }
+
     // Mettre à jour un utilisateur
     async function updateUser() {
         try {
@@ -463,6 +502,10 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             if (password) {
+                if (ssoEnabled) {
+                    showModalError('Mot de passe indisponible pour les comptes SSO.');
+                    return;
+                }
                 userData.password = password;
             }
 
@@ -547,7 +590,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Déconnexion
-    document.getElementById('logout-btn').addEventListener('click', async () => {
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', async () => {
         try {
             const response = await fetch('/api/v1/auth/logout', {
                 method: 'POST',

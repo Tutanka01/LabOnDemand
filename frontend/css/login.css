@@ -68,6 +68,27 @@
     background-color: #4338ca;
 }
 
+.sso-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.btn-sso {
+    background-color: #0f766e;
+}
+
+.btn-sso:hover {
+    background-color: #0b5e59;
+}
+
+.sso-note {
+    text-align: center;
+    color: #475569;
+    font-size: 0.9rem;
+    margin: 0;
+}
+
 .login-footer {
     text-align: center;
     margin-top: 20px;

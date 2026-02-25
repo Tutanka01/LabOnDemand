@@ -21,6 +21,8 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8)
     role: UserRoleEnum = UserRoleEnum.student
     is_active: Optional[bool] = True
+    auth_provider: Optional[str] = None
+    external_id: Optional[str] = None
 
 # Schéma pour la mise à jour d'utilisateur
 class UserUpdate(BaseModel):
@@ -45,6 +47,8 @@ class UserResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+    auth_provider: Optional[str] = None
+    external_id: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -6,12 +6,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorText = document.getElementById('error-text');
     const successMessage = document.getElementById('success-message');
     const successText = document.getElementById('success-text');
+    const ssoRegister = document.getElementById('sso-register');
+    const ssoRegisterBtn = document.getElementById('sso-register-btn');
+    const registerInfo = document.getElementById('register-info');
     
     // Vérifier si l'utilisateur est déjà connecté
     checkAuthStatus();
+    initAuthMode();
     
-    registerForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
+    if (registerForm) {
+        registerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
         
         const username = document.getElementById('username').value;
         const email = document.getElementById('email').value;
@@ -69,7 +74,47 @@ document.addEventListener('DOMContentLoaded', () => {
             errorMessage.style.display = 'block';
             console.error('Erreur d\'inscription:', error);
         }
-    });
+        });
+    }
+
+    if (ssoRegisterBtn) {
+        ssoRegisterBtn.addEventListener('click', () => {
+            window.location.href = '/api/v1/auth/sso/login';
+        });
+    }
+
+    async function initAuthMode() {
+        try {
+            const response = await fetch('/api/v1/auth/sso/status');
+            if (!response.ok) {
+                return;
+            }
+            const data = await response.json();
+            if (data.sso_enabled) {
+                if (registerForm) {
+                    registerForm.style.display = 'none';
+                }
+                if (ssoRegister) {
+                    ssoRegister.style.display = 'flex';
+                }
+                if (registerInfo) {
+                    registerInfo.innerHTML = '<i class="fas fa-user-plus"></i> Inscription désactivée (SSO activé)';
+                }
+                if (ssoRegisterBtn) {
+                    ssoRegisterBtn.focus();
+                }
+            } else {
+                if (registerForm) {
+                    registerForm.style.display = 'flex';
+                }
+                if (ssoRegister) {
+                    ssoRegister.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            console.error('Erreur lors du chargement du mode SSO:', error);
+        }
+    }
 });
 
 // Fonction pour vérifier si l'utilisateur est déjà connecté

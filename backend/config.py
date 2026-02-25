@@ -104,6 +104,28 @@ class Settings:
     SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
     COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
 
+    # SSO (OpenID Connect — OIDC)
+    SSO_ENABLED = os.getenv("SSO_ENABLED", "False").lower() in ["true", "1", "yes"]
+    FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "").strip() or None
+
+    # URL de base de l'IdP OIDC (ex: https://sso.univ-pau.fr/cas/oidc)
+    OIDC_ISSUER = os.getenv("OIDC_ISSUER", "").strip() or None
+    # Identifiants de l'application enregistrée auprès de l'IdP
+    OIDC_CLIENT_ID = os.getenv("OIDC_CLIENT_ID", "").strip() or None
+    OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "").strip() or None
+    # URL de callback (doit correspondre exactement à ce qui est enregistré chez l'IdP)
+    # Par défaut: FRONTEND_BASE_URL + /api/v1/auth/sso/callback
+    OIDC_REDIRECT_URI = os.getenv("OIDC_REDIRECT_URI", "").strip() or None
+
+    # Mapping des rôles depuis les claims OIDC
+    # Claim OIDC contenant le rôle (ex: eduPersonAffiliation pour les universités françaises)
+    OIDC_ROLE_CLAIM = os.getenv("OIDC_ROLE_CLAIM", "eduPersonAffiliation").strip()
+    OIDC_TEACHER_VALUES = os.getenv("OIDC_TEACHER_VALUES", "staff,employee,faculty,enseignant,teacher")
+    OIDC_STUDENT_VALUES = os.getenv("OIDC_STUDENT_VALUES", "student,etudiant")
+    OIDC_DEFAULT_ROLE = os.getenv("OIDC_DEFAULT_ROLE", "student").strip().lower()
+    # Domaine email de secours si l'IdP ne fournit pas d'email
+    OIDC_EMAIL_FALLBACK_DOMAIN = os.getenv("OIDC_EMAIL_FALLBACK_DOMAIN", "sso.local").strip()
+
     # Sécurité / Admin
     ADMIN_DEFAULT_PASSWORD = os.getenv("ADMIN_DEFAULT_PASSWORD", None)
 
