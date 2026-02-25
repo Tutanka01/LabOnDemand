@@ -43,11 +43,6 @@ def login(
     """
     Connecte un utilisateur et crée une session
     """
-    if settings.SSO_ENABLED:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Connexion locale désactivée (SSO activé)",
-        )
     client = request.client or None
     logger.info(
         "login_attempt",
@@ -61,6 +56,11 @@ def login(
     )
     
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
+    if user and settings.SSO_ENABLED and user.auth_provider != "local":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Connexion locale désactivée pour les comptes SSO",
+        )
     if not user:
         audit_logger.warning(
             "login_failed",
