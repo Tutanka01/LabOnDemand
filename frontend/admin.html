@@ -48,7 +48,7 @@
             </div>
 
             <div class="notification-container">
-                <div id="sso-admin-notice" class="notification info" style="display: none;">
+                <div id="sso-admin-notice" class="notification info hidden">
                     <i class="fas fa-shield-alt"></i> Création d'utilisateurs locaux désactivée (SSO activé)
                     <button class="close-btn"><i class="fas fa-times"></i></button>
                 </div>
@@ -146,7 +146,7 @@
                 <button class="close-modal"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <div id="modal-error-message" class="notification error" style="display: none; margin-bottom: 15px;">
+                <div id="modal-error-message" class="notification error hidden" style="margin-bottom: 15px;">
                     <i class="fas fa-exclamation-circle"></i> <span id="modal-error-text"></span>
                 </div>
                 <form id="user-form">
@@ -300,6 +300,7 @@
         </div>
     </div>
 
+    <script src="js/api.js"></script>
     <script src="js/admin.js"></script>
     <script src="js/templates.js"></script>
     <script src="js/runtime-configs.js"></script>

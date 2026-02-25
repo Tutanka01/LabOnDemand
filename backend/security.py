@@ -70,6 +70,21 @@ def validate_password_strength(password: str) -> bool:
 
 # Gestion des sessions
 def create_session(user_id: int, username: str, role: UserRole) -> str:
+    """Create a new server-side session and return the opaque session token.
+
+    Generates a 32-byte cryptographically random token, stores the session
+    payload (user_id, username, role) in the configured session store (Redis
+    when available, in-memory fallback otherwise), and returns the token to
+    be set as the ``session_id`` cookie.
+
+    Args:
+        user_id:  Database ID of the authenticated user.
+        username: Login name (used for logging).
+        role:     RBAC role of the user (student / teacher / admin).
+
+    Returns:
+        URL-safe base64 session token (opaque to the client).
+    """
     # Générer un ID de session unique
     session_id = secrets.token_urlsafe(32)
     session_preview = shorten_token(session_id)
@@ -101,6 +116,17 @@ def get_session_data(
     request: Request,
     session_id: str = Depends(cookie_security),
 ) -> SessionData:
+    """FastAPI dependency: resolve the ``session_id`` cookie to a SessionData object.
+
+    Reads the ``session_id`` cookie (via :data:`cookie_security`), looks up
+    the session in the session store, and returns the deserialized
+    :class:`~schemas.SessionData`.  Raises ``401`` if the cookie is absent
+    or the session is unknown / expired.  On success the raw session ID and
+    the parsed object are attached to ``request.state`` for downstream use.
+
+    Raises:
+        HTTPException 401: Missing, invalid or expired session.
+    """
     session_preview = shorten_token(session_id)
 
     if not session_id:
@@ -229,6 +255,18 @@ def get_current_user(
     session_data: SessionData = Depends(get_session_data),
     db: Session = Depends(get_db)
 ):
+    """FastAPI dependency: return the authenticated :class:`~models.User` ORM object.
+
+    Chains on :func:`get_session_data` to validate the session, then fetches
+    the corresponding :class:`~models.User` row from the database.  Raises
+    ``401`` if the user no longer exists or has been deactivated.
+
+    The resolved user is also stored on ``request.state.user`` for use in
+    middleware or background tasks.
+
+    Raises:
+        HTTPException 401: User not found in DB or account inactive.
+    """
     user = db.query(User).filter(User.id == session_data.user_id).first()
     if not user:
         raise HTTPException(

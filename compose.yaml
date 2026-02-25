@@ -24,12 +24,11 @@ services:
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
     depends_on:
-      - db
-      - redis
-    command:
-      - sh
-      - -c
-      - sleep 15 && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend --reload-exclude logs
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend", "--reload-exclude", "logs"]
 
   frontend:
     image: nginx:alpine
@@ -43,8 +42,8 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
     restart: unless-stopped
     depends_on:
-      - api
-    command: sh -c "sleep 15 && nginx -g 'daemon off;'"
+      api:
+        condition: service_started
 
   db:
     image: mariadb:latest
@@ -61,6 +60,12 @@ services:
     volumes:
       - mariadb_data:/var/lib/mysql
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   redis:
     image: redis:8-alpine
@@ -69,6 +74,12 @@ services:
       - "6379:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
 volumes:
   mariadb_data:

@@ -92,35 +92,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function initAuthMode() {
-        try {
-            const response = await fetch('/api/v1/auth/sso/status');
-            if (!response.ok) {
-                return;
-            }
-            const data = await response.json();
-            if (data.sso_enabled) {
-                if (loginForm) {
-                    loginForm.style.display = 'none';
-                }
-                if (ssoSection) {
-                    ssoSection.style.display = 'block';
-                }
-                if (loginInfo) {
-                    loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> Authentification via SSO (OIDC)';
-                }
-                if (ssoLoginBtn) {
-                    ssoLoginBtn.focus();
-                }
-            } else {
-                if (loginForm) {
-                    loginForm.style.display = 'flex';
-                }
-                if (ssoSection) {
-                    ssoSection.style.display = 'none';
-                }
-            }
-        } catch (error) {
-            console.error('Erreur lors du chargement du mode SSO:', error);
+        const ssoEnabled = await checkSsoStatus();
+        if (ssoEnabled) {
+            if (loginForm) loginForm.style.display = 'none';
+            if (ssoSection) ssoSection.style.display = 'block';
+            if (loginInfo) loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> Authentification via SSO (OIDC)';
+            if (ssoLoginBtn) ssoLoginBtn.focus();
+        } else {
+            if (loginForm) loginForm.style.display = 'flex';
+            if (ssoSection) ssoSection.style.display = 'none';
         }
     }
 

@@ -3,36 +3,14 @@
 
 /* Variables de couleurs (Inspirées labondemand + Modernes) */
 :root {
-    --labondemand-blue: #003A70;
-    /* Bleu marine profond */
-    --labondemand-green: #99CC33;
-    /* Vert anis dynamique */
-    --light-blue: #E6F0FF;
-    /* Bleu très clair pour fonds légers */
-    --text-dark: #333333;
-    --text-light: #FFFFFF;
-    --grey-bg: #f4f7f6;
-    /* Gris clair pour fond principal */
-    --grey-border: #d3d9de;
-    --shadow-color: rgba(0, 58, 112, 0.1);
-    /* Ombre basée sur le bleu */
-    --success-color: #28a745;
-    --warning-color: #ffc107;
-    --error-color: #dc3545;
-    --disabled-color: #adb5bd;
-
-    --font-main: 'Poppins', sans-serif;
-    --border-radius: 8px;
-    --transition-speed: 0.3s;
-}
-
-:root {
-    /* Couleurs de l'labondemand et du thème */
+    /* Couleurs de marque */
     --labondemand-blue: #003A70;
     --labondemand-green: #99CC33;
-    --text-dark: #333333;
-    --text-light: #FFFFFF;
+
+    /* Couleurs de surface */
     --light-blue: #E6F0F9;
+    --text-dark: #333333;
+    --text-light: #FFFFFF;
     --grey-bg: #F5F7FA;
     --grey-border: #DEE2E6;
     --shadow-color: rgba(0, 58, 112, 0.1);
@@ -43,9 +21,17 @@
     --error-color: #dc3545;
     --disabled-color: #adb5bd;
 
+    /* Typographie et layout */
     --font-main: 'Poppins', sans-serif;
+    --font-code: 'Courier New', Consolas, Monaco, monospace;
     --border-radius: 8px;
     --transition-speed: 0.3s;
+
+    /* Aliases pour compatibilité */
+    --bg-secondary: var(--grey-bg);
+    --radius-sm: var(--border-radius);
+    --space-md: 16px;
+    --primary-color: var(--labondemand-green);
 }
 
 /* Reset et Base */
@@ -54,6 +40,9 @@
     margin: 0;
     padding: 0;
 }
+
+/* Utility: initially-hidden elements (JavaScript overrides with style.display to show) */
+.hidden { display: none; }
 
 body {
     font-family: var(--font-main);
@@ -2664,13 +2653,3 @@ pre::-webkit-scrollbar-thumb:hover {
     color: var(--success-color);
 }
 
-/* Fix for existing content with wrong variable names */
-/* Fallback styles if content uses non-existent variables */
-:root {
-    /* Add missing variables as aliases to existing ones */
-    --bg-secondary: var(--grey-bg);
-    --radius-sm: var(--border-radius);
-    --space-md: 16px;
-    --font-code: 'Courier New', Consolas, Monaco, monospace;
-    --primary-color: var(--labondemand-green);
-}

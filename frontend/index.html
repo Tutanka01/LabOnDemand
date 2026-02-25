@@ -140,7 +140,7 @@
             </div>
             
             <!-- Section pour les listes Kubernetes (masquée par défaut, réservée aux admins) -->
-            <div class="collapsible-section k8s-admin-only" style="display: none;">
+            <div class="collapsible-section k8s-admin-only hidden">
                 <div class="collapsible-header" id="k8s-section-toggle">
                     <h2><i class="fas fa-server"></i> Informations Kubernetes</h2>
                     <i class="fas fa-chevron-down toggle-icon"></i>
@@ -243,7 +243,7 @@
                 </div>
 
                 <!-- Options spécifiques pour les déploiements personnalisés -->
-                <div id="custom-deployment-options" style="display: none;">
+                <div id="custom-deployment-options" class="hidden">
                     <div class="form-group">
                         <label for="deployment-image"><i class="fas fa-box"></i> Image Docker</label>
                         <input type="text" id="deployment-image" name="deployment-image" value="nginx">
@@ -262,7 +262,7 @@
                             Exposer l'application (création d'un Service Kubernetes)
                         </label>
                         <p><a href="#" id="advanced-options-toggle">Options réseau avancées</a></p>
-                        <div id="service-options" style="display:none;">
+                        <div id="service-options" class="hidden">
                             <div class="form-group">
                                 <label for="service-type-select"><i class="fas fa-network-wired"></i> Mode d'accès</label>
                                 <select id="service-type-select" name="service-type-select">
@@ -287,7 +287,7 @@
                     </div>
                 </div>
 
-                <div class="form-group dataset-group" id="jupyter-options" style="display: none;"> <!-- Options spécifiques Jupyter -->
+                <div class="form-group dataset-group hidden" id="jupyter-options"> <!-- Options spécifiques Jupyter -->
                     <label><i class="fas fa-database"></i> Datasets à inclure</label>
                     <div class="checkbox-group">
                         <label><input type="checkbox" name="dataset" value="TP1_Data"> Données TP1</label>
@@ -296,7 +296,7 @@
                     </div>
                 </div>
 
-                <div class="form-group" id="persistent-volume-group" style="display: none;">
+                <div class="form-group hidden" id="persistent-volume-group">
                     <label for="existing-pvc-select"><i class="fas fa-hdd"></i> Volume persistant</label>
                     <select id="existing-pvc-select">
                         <option value="">Créer un nouveau volume</option>

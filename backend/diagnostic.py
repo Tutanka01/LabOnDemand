@@ -44,11 +44,6 @@ def check_database():
             print("❌ Table users manquante")
             return False
             
-        if 'labs' in tables:
-            print("✅ Table labs existe")
-        else:
-            print("⚠️  Table labs manquante (optionnel)")
-            
         return True
         
     except Exception as e:

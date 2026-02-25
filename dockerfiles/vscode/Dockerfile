@@ -1,15 +1,19 @@
 FROM codercom/code-server:latest
 
-# Proxy pour build et runtime
-ENV HTTP_PROXY="http://proxy.makhal:3128" \
-    HTTPS_PROXY="http://proxy.makhal:3128" \
-    http_proxy="http://proxy.makhal:3128" \
-    https_proxy="http://proxy.makhal:3128"
+# Proxy configurable via build args (laisser vide pour ne pas utiliser de proxy)
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ENV HTTP_PROXY="${HTTP_PROXY}" \
+    HTTPS_PROXY="${HTTPS_PROXY}" \
+    http_proxy="${HTTP_PROXY}" \
+    https_proxy="${HTTPS_PROXY}"
 
 USER root
 
-# Configurer le proxy pour APT
-RUN printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$HTTP_PROXY" "$HTTP_PROXY" > /etc/apt/apt.conf.d/01proxy
+# Configurer le proxy pour APT (uniquement si défini)
+RUN if [ -n "$HTTP_PROXY" ]; then \
+      printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$HTTP_PROXY" "$HTTP_PROXY" > /etc/apt/apt.conf.d/01proxy; \
+    fi
 
 # Installer les dépendances de base
 RUN apt-get update && apt-get install -y \
@@ -22,12 +26,14 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Configurer npm, git et pip pour utiliser le proxy
-RUN npm config set proxy "$HTTP_PROXY" \
-    && npm config set https-proxy "$HTTPS_PROXY" \
-    && git config --system http.proxy "$HTTP_PROXY" \
-    && git config --system https.proxy "$HTTPS_PROXY" \
-    && printf '[global]\nproxy = %s\n' "$HTTP_PROXY" > /etc/pip.conf
+# Configurer npm, git et pip pour utiliser le proxy (uniquement si défini)
+RUN if [ -n "$HTTP_PROXY" ]; then \
+      npm config set proxy "$HTTP_PROXY" \
+      && npm config set https-proxy "$HTTPS_PROXY" \
+      && git config --system http.proxy "$HTTP_PROXY" \
+      && git config --system https.proxy "$HTTPS_PROXY" \
+      && printf '[global]\nproxy = %s\n' "$HTTP_PROXY" > /etc/pip.conf; \
+    fi
 
 # Installer des extensions VS Code populaires
 RUN code-server --install-extension ms-python.python \
