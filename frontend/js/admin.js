@@ -481,7 +481,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.detail || 'Erreur lors de la création de l\'utilisateur');
+                const detail = Array.isArray(error.detail)
+                    ? error.detail.map(e => e.msg).join(', ')
+                    : (error.detail || 'Erreur lors de la création de l\'utilisateur');
+                throw new Error(detail);
             }
 
             const newUser = await response.json();
@@ -555,7 +558,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.detail || 'Erreur lors de la mise à jour de l\'utilisateur');
+                const detail = Array.isArray(error.detail)
+                    ? error.detail.map(e => e.msg).join(', ')
+                    : (error.detail || 'Erreur lors de la mise à jour de l\'utilisateur');
+                throw new Error(detail);
             }
 
             const updatedUser = await response.json();
