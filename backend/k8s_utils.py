@@ -274,37 +274,68 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
         return False
 
 
-def get_role_limits(role: str) -> Dict[str, Any]:
-    """Exposer des plafonds cohérents utilisés à la fois pour les ResourceQuota et les vérifications applicatives.
-    Retourne: {
-      max_apps: int,  # notion logique d'apps (stack wordpress = 1)
-      max_requests_cpu_m: int,
-      max_requests_mem_mi: int,
-      max_pods: int
-    }
+def get_role_limits(role: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Retourne les plafonds de ressources pour un rôle, en tenant compte des
+    dérogations de quota définies par un admin (``UserQuotaOverride``).
+
+    Priorité : override admin > défaut du rôle.
+
+    Returns:
+        Dict avec ``max_apps``, ``max_requests_cpu_m``, ``max_requests_mem_mi``,
+        ``max_pods``.
     """
     if role == "student":
-        # Aligné avec ResourceQuota étudiant "standard"
-        return {
+        base = {
             "max_apps": 4,
             "max_requests_cpu_m": 2500,
             "max_requests_mem_mi": 6144,
             "max_pods": 6,
         }
     elif role == "teacher":
-        return {
+        base = {
             "max_apps": 10,
             "max_requests_cpu_m": 4000,
             "max_requests_mem_mi": 8192,
             "max_pods": 20,
         }
     else:  # admin
-        return {
+        base = {
             "max_apps": 100,
             "max_requests_cpu_m": 16000,
             "max_requests_mem_mi": 65536,
             "max_pods": 100,
         }
+
+    if user_id is None:
+        return base
+
+    # Appliquer l'override si présent et non expiré
+    try:
+        from .database import SessionLocal
+        from .models import UserQuotaOverride
+        from datetime import datetime, timezone
+
+        with SessionLocal() as db:
+            now = datetime.now(timezone.utc)
+            override = (
+                db.query(UserQuotaOverride)
+                .filter(
+                    UserQuotaOverride.user_id == user_id,
+                    (UserQuotaOverride.expires_at == None) | (UserQuotaOverride.expires_at > now),  # noqa: E711
+                )
+                .first()
+            )
+            if override:
+                if override.max_apps is not None:
+                    base["max_apps"] = override.max_apps
+                if override.max_cpu_m is not None:
+                    base["max_requests_cpu_m"] = override.max_cpu_m
+                if override.max_mem_mi is not None:
+                    base["max_requests_mem_mi"] = override.max_mem_mi
+    except Exception:
+        pass  # En cas d'erreur DB, utiliser les limites par défaut du rôle
+
+    return base
 
 async def ensure_namespace_exists(namespace_name: str) -> bool:
     """

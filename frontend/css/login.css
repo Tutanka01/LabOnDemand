@@ -155,3 +155,99 @@
     color: #4338ca;
     text-decoration: underline;
 }
+
+/* ── Dark mode overrides ──────────────────────────────────────────────────── */
+[data-theme="dark"] body {
+    background: #0C0F16;
+}
+
+[data-theme="dark"] .login-container {
+    background-color: #131720;
+    box-shadow: 0 0 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05);
+}
+
+[data-theme="dark"] .login-logo {
+    color: #F0F4FA;
+}
+
+[data-theme="dark"] .form-group label {
+    color: #AAB4C4;
+}
+
+[data-theme="dark"] .form-group input {
+    background-color: #0C0F16;
+    border-color: #202840;
+    color: #E0E6F0;
+}
+
+[data-theme="dark"] .form-group input::placeholder {
+    color: #5A6A82;
+}
+
+[data-theme="dark"] .form-group input:focus {
+    border-color: #3B82F6;
+    background-color: #0C0F16;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+}
+
+[data-theme="dark"] .login-divider {
+    color: #5A6A82;
+}
+
+[data-theme="dark"] .login-divider::before,
+[data-theme="dark"] .login-divider::after {
+    background-color: #202840;
+}
+
+[data-theme="dark"] .sso-note {
+    color: #8B95A8;
+}
+
+[data-theme="dark"] .login-footer {
+    color: #5A6A82;
+}
+
+[data-theme="dark"] .error-message {
+    background-color: #2A0D0D;
+    color: #FCA5A5;
+    border: 1px solid #5A1A1A;
+}
+
+[data-theme="dark"] .success-message {
+    background-color: #0A2518;
+    color: #86EFAC;
+    border: 1px solid #1A4A30;
+}
+
+[data-theme="dark"] .info-message {
+    background-color: #0D1E42;
+    color: #93C5FD;
+    border: 1px solid #1A3A72;
+}
+
+[data-theme="dark"] .login-links a {
+    color: #60A5FA;
+}
+
+[data-theme="dark"] .login-links a:hover {
+    color: #93C5FD;
+}
+
+/* Media query version for system preference */
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) body { background: #0C0F16; }
+    html:not([data-theme="light"]) .login-container { background-color: #131720; box-shadow: 0 0 40px rgba(0,0,0,0.6); }
+    html:not([data-theme="light"]) .login-logo { color: #F0F4FA; }
+    html:not([data-theme="light"]) .form-group label { color: #AAB4C4; }
+    html:not([data-theme="light"]) .form-group input { background-color: #0C0F16; border-color: #202840; color: #E0E6F0; }
+    html:not([data-theme="light"]) .form-group input:focus { border-color: #3B82F6; }
+    html:not([data-theme="light"]) .login-divider { color: #5A6A82; }
+    html:not([data-theme="light"]) .login-divider::before,
+    html:not([data-theme="light"]) .login-divider::after { background-color: #202840; }
+    html:not([data-theme="light"]) .sso-note { color: #8B95A8; }
+    html:not([data-theme="light"]) .login-footer { color: #5A6A82; }
+    html:not([data-theme="light"]) .error-message { background-color: #2A0D0D; color: #FCA5A5; }
+    html:not([data-theme="light"]) .success-message { background-color: #0A2518; color: #86EFAC; }
+    html:not([data-theme="light"]) .info-message { background-color: #0D1E42; color: #93C5FD; }
+    html:not([data-theme="light"]) .login-links a { color: #60A5FA; }
+}

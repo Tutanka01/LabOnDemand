@@ -140,6 +140,8 @@ class Settings:
     OIDC_DEFAULT_ROLE = os.getenv("OIDC_DEFAULT_ROLE", "student").strip().lower()
     # Domaine email de secours si l'IdP ne fournit pas d'email
     OIDC_EMAIL_FALLBACK_DOMAIN = os.getenv("OIDC_EMAIL_FALLBACK_DOMAIN", "sso.local").strip()
+    # TTL du cache de découverte OIDC en secondes (défaut : 1 heure)
+    OIDC_DISCOVERY_TTL_SECONDS = int(os.getenv("OIDC_DISCOVERY_TTL_SECONDS", "3600"))
 
     # Sécurité / Admin
     ADMIN_DEFAULT_PASSWORD = os.getenv("ADMIN_DEFAULT_PASSWORD", None)

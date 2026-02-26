@@ -50,6 +50,47 @@ MIGRATIONS: list[tuple[str, str]] = [
         "add_users_role_override",
         "ALTER TABLE users ADD COLUMN role_override BOOLEAN NOT NULL DEFAULT FALSE",
     ),
+    # IMP-1 — table de suivi des déploiements
+    (
+        "create_deployments",
+        "CREATE TABLE IF NOT EXISTS deployments ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "user_id INTEGER NOT NULL,"
+        "name VARCHAR(100) NOT NULL,"
+        "deployment_type VARCHAR(50) NOT NULL DEFAULT 'custom',"
+        "namespace VARCHAR(100) NOT NULL,"
+        "stack_name VARCHAR(100) NULL,"
+        "status VARCHAR(30) NOT NULL DEFAULT 'active',"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "deleted_at DATETIME NULL,"
+        "last_seen_at DATETIME NULL,"
+        "expires_at DATETIME NULL,"
+        "cpu_requested VARCHAR(20) NULL,"
+        "mem_requested VARCHAR(20) NULL,"
+        "INDEX idx_dep_user (user_id),"
+        "INDEX idx_dep_status (status),"
+        "INDEX idx_dep_expires (expires_at),"
+        "CONSTRAINT fk_dep_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+        ")",
+    ),
+    # IMP-3 — dérogations de quota par utilisateur
+    (
+        "create_user_quota_overrides",
+        "CREATE TABLE IF NOT EXISTS user_quota_overrides ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "user_id INTEGER NOT NULL UNIQUE,"
+        "max_apps INTEGER NULL,"
+        "max_cpu_m INTEGER NULL,"
+        "max_mem_mi INTEGER NULL,"
+        "max_storage_gi INTEGER NULL,"
+        "expires_at DATETIME NULL,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "updated_at DATETIME NULL,"
+        "created_by INTEGER NULL,"
+        "INDEX idx_qo_user (user_id),"
+        "CONSTRAINT fk_qo_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+        ")",
+    ),
 ]
 
 

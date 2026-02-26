@@ -961,3 +961,83 @@ main {
 
   nav ul li a span { display: none; } /* collapse nav labels on mobile */
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Dark mode — variable inversion + component overrides
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Full gray scale inversion for admin (mirrors style.css) */
+[data-theme="dark"] {
+  --bg:        #0C0F16;
+  --surface:   #131720;
+  --border:    #202840;
+  --gray-50:   #111827;
+  --gray-100:  #1A2035;
+  --gray-200:  #202840;
+  --gray-300:  #2D3A55;
+  --gray-400:  #5A6A82;
+  --gray-500:  #8B95A8;
+  --gray-600:  #AAB4C4;
+  --gray-700:  #C8D2DF;
+  --gray-800:  #E0E6F0;
+  --gray-900:  #F0F4FA;
+  --blue-tint: #0D1E42;
+  --green-tint: #0A2518;
+  --red-tint:   #2A0D0D;
+  --amber-tint: #2A1805;
+  --purple-tint: #1A0D3F;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+  --shadow-lg: 0 20px 48px rgba(0,0,0,0.7);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --bg:        #0C0F16;
+    --surface:   #131720;
+    --border:    #202840;
+    --gray-50:   #111827;
+    --gray-100:  #1A2035;
+    --gray-200:  #202840;
+    --gray-300:  #2D3A55;
+    --gray-400:  #5A6A82;
+    --gray-500:  #8B95A8;
+    --gray-600:  #AAB4C4;
+    --gray-700:  #C8D2DF;
+    --gray-800:  #E0E6F0;
+    --gray-900:  #F0F4FA;
+    --blue-tint: #0D1E42;
+    --green-tint: #0A2518;
+    --red-tint:   #2A0D0D;
+    --amber-tint: #2A1805;
+    --purple-tint: #1A0D3F;
+    color-scheme: dark;
+  }
+}
+
+/* Fix hardcoded notification text colors */
+[data-theme="dark"] .notification.error  { color: #FCA5A5; border-color: #5A1A1A; }
+[data-theme="dark"] .notification.success { color: #86EFAC; border-color: #1A4A30; }
+[data-theme="dark"] .notification.info    { color: #93C5FD; border-color: #1A3A72; }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .notification.error  { color: #FCA5A5; border-color: #5A1A1A; }
+  html:not([data-theme="light"]) .notification.success { color: #86EFAC; border-color: #1A4A30; }
+  html:not([data-theme="light"]) .notification.info   { color: #93C5FD; border-color: #1A3A72; }
+}
+
+/* Fix hardcoded badge border colors */
+[data-theme="dark"] .status-badge.active   { border-color: #1A4A30; }
+[data-theme="dark"] .status-badge.inactive { border-color: #5A1A1A; }
+[data-theme="dark"] .role-badge.student    { border-color: #1A3A72; }
+[data-theme="dark"] .role-badge.teacher    { border-color: #1A4A30; }
+[data-theme="dark"] .role-badge.admin      { border-color: #3D2A0A; }
+[data-theme="dark"] .provider-badge.sso    { border-color: #2A1A5F; }
+
+/* Dark mode toggle button */
+[data-theme="dark"] .dark-mode-toggle {
+  color: #AAB4C4;
+  border-color: #202840;
+}
+[data-theme="dark"] .dark-mode-toggle:hover { background: #1A2035; }

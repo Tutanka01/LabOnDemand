@@ -4,11 +4,13 @@ import logging
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from kubernetes import client
+from sqlalchemy.orm import Session
 
-from ..security import get_current_user, is_admin, is_teacher_or_admin
-from ..models import User, UserRole
+from ..security import get_current_user, is_admin, is_teacher_or_admin, limiter
+from ..models import User, UserRole, Deployment as DeploymentModel
+from ..database import get_db
 from ..k8s_utils import validate_k8s_name
 from ..deployment_service import deployment_service
 from ..config import settings
@@ -21,7 +23,10 @@ logger = logging.getLogger("labondemand.k8s")
 # ============= LISTING DES DÉPLOIEMENTS LABONDEMAND =============
 
 @router.get("/deployments/labondemand")
-async def get_labondemand_deployments(current_user: User = Depends(get_current_user)):
+async def get_labondemand_deployments(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Récupérer uniquement les déploiements LabOnDemand."""
     try:
         v1 = client.AppsV1Api()
@@ -82,6 +87,18 @@ async def get_labondemand_deployments(current_user: User = Depends(get_current_u
                 singles.append(entry)
 
         deployments = list(stacks.values()) + singles
+
+        # Enrichir avec les métadonnées DB (expires_at, created_at)
+        db_records = db.query(DeploymentModel).filter(
+            DeploymentModel.user_id == current_user.id,
+            DeploymentModel.deleted_at.is_(None),
+        ).all()
+        db_index = {r.name: r for r in db_records}
+        for dep in deployments:
+            rec = db_index.get(dep["name"])
+            dep["expires_at"] = rec.expires_at.isoformat() if rec and rec.expires_at else None
+            dep["created_at"] = rec.created_at.isoformat() if rec and rec.created_at else None
+
         return {"deployments": deployments, "k8s_available": True}
     except Exception:
         return {"deployments": [], "k8s_available": False}
@@ -580,7 +597,9 @@ async def get_deployment_credentials(
 # ============= CRÉATION =============
 
 @router.post("/pods")
+@limiter.limit("10/5minute")
 async def create_pod(
+    request: Request,
     name: str,
     image: str,
     namespace: str = "default",
@@ -612,7 +631,9 @@ async def create_pod(
 
 
 @router.post("/deployments")
+@limiter.limit("10/5minute")
 async def create_deployment(
+    request: Request,
     name: str,
     image: str,
     replicas: int = 1,

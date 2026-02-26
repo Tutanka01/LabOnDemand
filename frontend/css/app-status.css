@@ -170,3 +170,56 @@
 }
 
 .novnc-inline-card .btn { align-self: flex-start; }
+
+/* ── Dark mode ──────────────────────────────────────────────────────────────── */
+[data-theme="dark"] .access-link {
+  background: #0D1E42;
+  border-color: #1A3A72;
+  color: #60A5FA;
+}
+[data-theme="dark"] .access-link i { color: #60A5FA; }
+[data-theme="dark"] .access-link:not(.disabled):hover {
+  background: #1D4ED8;
+  color: #fff;
+}
+
+[data-theme="dark"] .service-ports-summary {
+  border-color: #202840;
+  background: #111827;
+}
+[data-theme="dark"] .service-ports-summary h4 { color: #C8D2DF; }
+[data-theme="dark"] .ports-list li { color: #AAB4C4; }
+[data-theme="dark"] .port-node     { background: #0D1E42; color: #60A5FA; }
+[data-theme="dark"] .port-protocol { background: #1A0D3F; color: #A78BFA; }
+
+[data-theme="dark"] .connection-hints {
+  background: #0A2518;
+  border-color: #1A4A30;
+}
+[data-theme="dark"] .connection-hints h4 { color: #86EFAC; }
+[data-theme="dark"] .connection-hint-card {
+  background: #131720;
+  border-color: #1A4A30;
+}
+[data-theme="dark"] .connection-hint-card h5 { color: #86EFAC; }
+[data-theme="dark"] .connection-hint-card ul { color: #C8D2DF; }
+[data-theme="dark"] .hint-description { color: #8B95A8; }
+
+[data-theme="dark"] .novnc-inline-card {
+  background: #0D1E42;
+  border-color: #1A3A72;
+}
+[data-theme="dark"] .novnc-inline-card h4 { color: #60A5FA; }
+[data-theme="dark"] .novnc-inline-card p  { color: #8B95A8; }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .access-link { background: #0D1E42; border-color: #1A3A72; color: #60A5FA; }
+  html:not([data-theme="light"]) .service-ports-summary { border-color: #202840; background: #111827; }
+  html:not([data-theme="light"]) .service-ports-summary h4 { color: #C8D2DF; }
+  html:not([data-theme="light"]) .port-node { background: #0D1E42; color: #60A5FA; }
+  html:not([data-theme="light"]) .port-protocol { background: #1A0D3F; color: #A78BFA; }
+  html:not([data-theme="light"]) .connection-hints { background: #0A2518; border-color: #1A4A30; }
+  html:not([data-theme="light"]) .connection-hints h4 { color: #86EFAC; }
+  html:not([data-theme="light"]) .connection-hint-card { background: #131720; border-color: #1A4A30; }
+  html:not([data-theme="light"]) .novnc-inline-card { background: #0D1E42; border-color: #1A3A72; }
+}

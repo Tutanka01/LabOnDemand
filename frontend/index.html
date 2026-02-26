@@ -15,11 +15,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Ajout de Font Awesome pour les icônes -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Dark mode — appliqué avant le rendu pour éviter le flash -->
+    <script>
+      (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
+    </script>
     <!-- xterm.js pour terminal intégré (chargé globalement AVANT les modules) -->
     <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit/lib/xterm-addon-fit.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-attach/lib/xterm-addon-attach.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl/lib/xterm-addon-webgl.min.js"></script>
+    <script src="js/darkmode.js"></script>
     <script type="module" src="index-auth.js"></script>
     <script type="module" src="script.js"></script>
 </head>
@@ -33,6 +38,7 @@
             <div class="user-info">
                 <span id="api-status">Vérification de l'API...</span>
                 <span id="user-greeting">Chargement... <i class="fas fa-user-circle"></i></span>
+                <button id="dark-mode-toggle" class="dark-mode-toggle" onclick="toggleDarkMode()" title="Basculer le mode sombre" aria-label="Basculer le mode sombre">🌙</button>
                 <button id="logout-btn" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Déconnexion</button>
             </div>
         </div>

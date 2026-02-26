@@ -7,6 +7,7 @@ Flow:
 """
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -17,14 +18,29 @@ from .config import settings
 
 logger = logging.getLogger("labondemand.sso")
 
-# Cache du document de découverte OIDC (évite une requête à chaque login)
+# Cache du document de découverte OIDC avec TTL configurable
 _discovery_cache: Optional[Dict] = None
+_discovery_cached_at: Optional[datetime] = None
 
 
 def _get_discovery() -> Dict:
-    """Récupère (et met en cache) le document de découverte OIDC."""
-    global _discovery_cache
-    if _discovery_cache is not None:
+    """Récupère (et met en cache) le document de découverte OIDC.
+
+    Le cache est invalidé après ``OIDC_DISCOVERY_TTL_SECONDS`` secondes
+    (défaut : 3600 s = 1 h) pour prendre en compte les changements de
+    configuration de l'IdP sans redémarrage.
+    """
+    global _discovery_cache, _discovery_cached_at
+
+    ttl = settings.OIDC_DISCOVERY_TTL_SECONDS
+    now = datetime.now(timezone.utc)
+
+    # Utiliser le cache si valide
+    if (
+        _discovery_cache is not None
+        and _discovery_cached_at is not None
+        and (now - _discovery_cached_at).total_seconds() < ttl
+    ):
         return _discovery_cache
 
     url = f"{settings.OIDC_ISSUER.rstrip('/')}/.well-known/openid-configuration"
@@ -32,10 +48,18 @@ def _get_discovery() -> Dict:
         resp = httpx.get(url, timeout=10)
         resp.raise_for_status()
         _discovery_cache = resp.json()
+        _discovery_cached_at = now
         logger.info("oidc_discovery_loaded", extra={"extra_fields": {"issuer": settings.OIDC_ISSUER}})
         return _discovery_cache
     except httpx.HTTPError as e:
         logger.error("oidc_discovery_failed", extra={"extra_fields": {"url": url, "error": str(e)}})
+        # Si le cache est périmé mais disponible, on l'utilise en fallback plutôt que d'échouer
+        if _discovery_cache is not None:
+            logger.warning(
+                "oidc_discovery_using_stale_cache",
+                extra={"extra_fields": {"url": url, "error": str(e)}},
+            )
+            return _discovery_cache
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Impossible de contacter le serveur SSO: {e}",

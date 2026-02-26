@@ -188,6 +188,51 @@ def delete_session(session_id: str) -> bool:
     )
     return removed
 
+
+def delete_user_sessions(user_id: int) -> int:
+    """Invalide toutes les sessions Redis appartenant à ``user_id``.
+
+    Scanne les clés du namespace de session Redis, désérialise chaque entrée
+    et supprime celles dont ``user_id`` correspond.  Retourne le nombre de
+    sessions supprimées.
+
+    Cette fonction doit être appelée avant la suppression d'un utilisateur
+    (``DELETE /users/{id}``) pour éviter les sessions orphelines.
+    """
+    deleted_count = 0
+    try:
+        # Accès direct au client Redis via session_store
+        r = session_store._r
+        ns = session_store.ns
+        pattern = f"{ns}*"
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match=pattern, count=200)
+            for key in keys:
+                try:
+                    raw = r.get(key)
+                    if not raw:
+                        continue
+                    import json
+                    data = json.loads(raw)
+                    if data.get("user_id") == user_id:
+                        r.delete(key)
+                        deleted_count += 1
+                except Exception:
+                    continue
+            if cursor == 0:
+                break
+    except Exception as exc:
+        logger.warning(
+            "delete_user_sessions_error",
+            extra={"extra_fields": {"user_id": user_id, "error": str(exc)}},
+        )
+    logger.info(
+        "user_sessions_deleted",
+        extra={"extra_fields": {"user_id": user_id, "count": deleted_count}},
+    )
+    return deleted_count
+
 # Authentification utilisateur
 def authenticate_user(db: Session, username: str, password: str):
     logger.debug(

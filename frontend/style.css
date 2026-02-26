@@ -63,6 +63,169 @@
   --transition: 150ms ease;
 }
 
+/* ── Dark mode ─────────────────────────────────────────────────────────────── */
+/* Strategy: invert the gray scale so all var(--gray-*) uses auto-adapt.
+   gray-900 (headings) → near-white | gray-50 (subtle bg) → deep dark         */
+
+/* Manual toggle: [data-theme="dark"] on <html> */
+[data-theme="dark"] {
+  /* ── Layout tokens ── */
+  --bg:      #0C0F16;
+  --surface: #131720;
+  --border:  #202840;
+
+  /* ── Gray scale — inverted for dark backgrounds ── */
+  --gray-50:  #111827;   /* was lightest bg → darkest bg   */
+  --gray-100: #1A2035;   /* subtle bg                      */
+  --gray-200: #202840;   /* borders/dividers               */
+  --gray-300: #2D3A55;   /* stronger borders               */
+  --gray-400: #5A6A82;   /* muted icons/text               */
+  --gray-500: #8B95A8;   /* secondary text                 */
+  --gray-600: #AAB4C4;   /* body text                      */
+  --gray-700: #C8D2DF;   /* medium emphasis text           */
+  --gray-800: #E0E6F0;   /* primary text                   */
+  --gray-900: #F0F4FA;   /* headings                       */
+
+  /* ── Color tints — deep dark versions ── */
+  --blue-tint:   #0D1E42;
+  --blue-mid:    #1A3A72;
+  --green-tint:  #0A2518;
+  --red-tint:    #2A0D0D;
+  --amber-tint:  #2A1805;
+  --purple-tint: #1A0D3F;
+  --cyan-tint:   #052530;
+  --teal-tint:   #052520;
+  --teal-mid:    #0A4035;
+
+  /* ── Shadows & misc ── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.3);
+  --shadow-lg: 0 20px 48px rgba(0,0,0,0.7), 0 8px 16px rgba(0,0,0,0.4);
+  --grey-bg:     #131720;
+  --grey-border: #202840;
+  --shadow-color: rgba(0,0,0,0.5);
+  --text-dark:   #E0E6F0;
+  color-scheme: dark;
+}
+
+/* System preference: dark (only when user hasn't manually chosen) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:      #0C0F16;
+    --surface: #131720;
+    --border:  #202840;
+    --gray-50:  #111827;
+    --gray-100: #1A2035;
+    --gray-200: #202840;
+    --gray-300: #2D3A55;
+    --gray-400: #5A6A82;
+    --gray-500: #8B95A8;
+    --gray-600: #AAB4C4;
+    --gray-700: #C8D2DF;
+    --gray-800: #E0E6F0;
+    --gray-900: #F0F4FA;
+    --blue-tint:   #0D1E42;
+    --blue-mid:    #1A3A72;
+    --green-tint:  #0A2518;
+    --red-tint:    #2A0D0D;
+    --amber-tint:  #2A1805;
+    --purple-tint: #1A0D3F;
+    --cyan-tint:   #052530;
+    --teal-tint:   #052520;
+    --teal-mid:    #0A4035;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.3);
+    --shadow-lg: 0 20px 48px rgba(0,0,0,0.7), 0 8px 16px rgba(0,0,0,0.4);
+    --grey-bg:     #131720;
+    --grey-border: #202840;
+    --shadow-color: rgba(0,0,0,0.5);
+    --text-dark:   #E0E6F0;
+    color-scheme: dark;
+  }
+}
+
+/* ── Dark mode — component overrides for hardcoded colors ──────────────────── */
+
+/* Hero section — replaces hardcoded light gradient */
+[data-theme="dark"] .dashboard-hero {
+  background: linear-gradient(135deg, #0D1E42 0%, #131720 50%, #0A2518 100%);
+  border-color: #1A3A72;
+}
+[data-theme="dark"] .hero-stats {
+  border-top-color: #1A3A72;
+  background: rgba(19,23,32,0.7);
+}
+[data-theme="dark"] .hero-stat {
+  border-right-color: #1A3A72;
+}
+[data-theme="dark"] .hero-stat:hover { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .btn-hero.btn-ghost {
+  background: rgba(13,30,66,0.6);
+  border-color: rgba(59,130,246,0.3);
+}
+[data-theme="dark"] .btn-hero.btn-ghost:hover {
+  background: rgba(13,30,66,0.9);
+  border-color: var(--blue);
+}
+
+/* Lab cards — replaces hardcoded tinted gradients */
+[data-theme="dark"] .lab-card.lab-ready  { background: linear-gradient(135deg, #0A2518 0%, #131720 50%); }
+[data-theme="dark"] .lab-card.lab-pending { background: linear-gradient(135deg, #2A1805 0%, #131720 50%); }
+[data-theme="dark"] .lab-card.lab-error  { background: linear-gradient(135deg, #2A0D0D 0%, #131720 50%); }
+[data-theme="dark"] .lab-card.lab-paused { background: linear-gradient(135deg, #052520 0%, #131720 50%); }
+
+/* Compact stats */
+[data-theme="dark"] .stat-compact {
+  background: #0D1E42;
+  border-color: #1A3A72;
+}
+[data-theme="dark"] .stat-compact.bound {
+  background: #052530;
+  border-color: #0A4060;
+}
+
+/* Tips list */
+[data-theme="dark"] .tips-compact-list li {
+  background: #2A1805;
+  border-color: #3D2A0A;
+}
+[data-theme="dark"] .tips-compact-list li:hover { background: #331E08; }
+
+/* Error / status message in main view */
+[data-theme="dark"] .error-message {
+  background: var(--red-tint);
+  border-color: #5A1A1A;
+  color: #FCA5A5;
+}
+
+/* PVC table hover */
+[data-theme="dark"] .pvc-table tbody tr:hover { background: #1A2035; }
+
+/* Btn secondary / ghost in dark mode */
+[data-theme="dark"] .btn-secondary:hover { background: var(--gray-100); }
+[data-theme="dark"] .btn-ghost:hover { background: var(--gray-100); }
+[data-theme="dark"] .btn-compact { background: var(--gray-100); }
+[data-theme="dark"] .btn-compact:hover { background: var(--blue); color: #fff; }
+
+/* Bouton de bascule mode sombre */
+.dark-mode-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--gray-600);
+  transition: background var(--transition), border-color var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.dark-mode-toggle:hover { background: var(--gray-100); }
+[data-theme="dark"] .dark-mode-toggle { color: #E5E7EB; }
+[data-theme="dark"] .dark-mode-toggle:hover { background: var(--surface); }
+
 /* ── Reset & Base ───────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -898,6 +1061,96 @@ main {
   padding: 7px 12px;
   font-size: 0.82rem;
 }
+
+/* ── TTL / Expiration badge ─────────────────────────────────────────────────── */
+.ttl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 0 0;
+}
+
+.ttl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  width: fit-content;
+  border: 1px solid transparent;
+  transition: opacity 0.2s;
+}
+.ttl-badge i { font-size: 0.7rem; flex-shrink: 0; }
+
+/* Vert : > 3 jours */
+.ttl-badge.ttl-ok {
+  background: var(--green-tint);
+  color: var(--green);
+  border-color: #BBF7D0;
+}
+
+/* Amber : 1-3 jours */
+.ttl-badge.ttl-warn {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border-color: #FDE68A;
+}
+
+/* Rouge : < 1 jour */
+.ttl-badge.ttl-urgent {
+  background: var(--red-tint);
+  color: var(--red);
+  border-color: #FECACA;
+  animation: ttl-pulse 2s ease-in-out infinite;
+}
+
+/* Expiré */
+.ttl-badge.ttl-expired {
+  background: var(--gray-100);
+  color: var(--gray-500);
+  border-color: var(--gray-200);
+}
+
+/* Aucune expiration */
+.ttl-badge.ttl-none {
+  background: transparent;
+  color: var(--gray-400);
+  border-color: transparent;
+  font-size: 0.72rem;
+  padding: 2px 0;
+}
+
+@keyframes ttl-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.65; }
+}
+
+/* Barre de progression */
+.ttl-bar-track {
+  height: 3px;
+  background: var(--gray-100);
+  border-radius: 99px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.ttl-bar {
+  height: 100%;
+  border-radius: 99px;
+  transition: width 0.6s ease;
+}
+.ttl-bar-green { background: var(--green); }
+.ttl-bar-amber { background: var(--amber); }
+.ttl-bar-red   { background: var(--red); }
+
+/* Dark mode */
+[data-theme="dark"] .ttl-badge.ttl-ok     { border-color: #1A4A30; }
+[data-theme="dark"] .ttl-badge.ttl-warn   { border-color: #3D2A0A; }
+[data-theme="dark"] .ttl-badge.ttl-urgent { border-color: #5A1A1A; }
+[data-theme="dark"] .ttl-badge.ttl-expired { background: var(--gray-100); border-color: var(--gray-200); }
+[data-theme="dark"] .ttl-bar-track        { background: var(--gray-200); }
 
 /* ── Status Indicators ──────────────────────────────────────────────────────── */
 .status-indicator {

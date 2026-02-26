@@ -97,6 +97,8 @@ sequenceDiagram
 | `/api/v1/auth/change-password` | POST | Changer son propre mot de passe | Authentifié (désactivé si compte OIDC) |
 | `/api/v1/auth/users` | GET | Lister les utilisateurs | Admin |
 | `/api/v1/auth/users/{id}` | GET/PUT/DELETE | CRUD utilisateur | Admin |
+| `/api/v1/auth/users/import` | POST | Import CSV d'utilisateurs | Admin |
+| `/api/v1/auth/users/{id}/quota-override` | GET/PUT/DELETE | Dérogation de quota | Admin |
 | `/api/v1/auth/me` | PUT | Mettre à jour son propre profil | Authentifié |
 
 ## Configuration SSO (OIDC)
@@ -121,6 +123,24 @@ sequenceDiagram
 | `OIDC_STUDENT_VALUES` | `student,etudiant` | Valeurs du claim qui correspondent au rôle étudiant |
 | `OIDC_DEFAULT_ROLE` | `student` | Rôle attribué si aucune valeur ne correspond |
 | `OIDC_EMAIL_FALLBACK_DOMAIN` | `sso.local` | Domaine email de secours si l'IdP ne fournit pas d'email |
+| `OIDC_DISCOVERY_TTL_SECONDS` | `3600` | TTL du cache du document de découverte OIDC (en secondes) |
+
+### Cache du document de découverte OIDC
+
+Le document `/.well-known/openid-configuration` de l'IdP (qui contient les URLs
+des endpoints `authorization_endpoint`, `token_endpoint`, `userinfo_endpoint`)
+est mis en cache côté serveur pour éviter une requête réseau à chaque connexion SSO.
+
+Le cache expire après `OIDC_DISCOVERY_TTL_SECONDS` secondes (défaut : 1 heure).
+Si l'IdP change sa configuration (rotation des clés, migration), le cache sera
+automatiquement rafraîchi à la prochaine connexion après expiration.
+
+**Comportement en cas de panne de l'IdP** : si le cache est expiré mais que l'IdP
+est temporairement inaccessible, le cache périmé est utilisé en fallback plutôt
+que de bloquer toutes les connexions SSO. L'événement `oidc_discovery_using_stale_cache`
+est journalisé dans `logs/app.log`.
+
+Pour forcer un rafraîchissement immédiat : redémarrer l'API.
 
 ### Exemple minimal pour l'Université de Pau
 

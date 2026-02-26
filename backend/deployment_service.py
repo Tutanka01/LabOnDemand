@@ -1701,5 +1701,49 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             )
             raise HTTPException(status_code=500, detail=f"Erreur lors de la création: {str(e)}")
 
+    def cleanup_user_namespace(self, user_id: int) -> Dict[str, Any]:
+        """Supprime le namespace Kubernetes d'un utilisateur et toutes ses ressources.
+
+        Appelé automatiquement lors de la suppression d'un compte (``DELETE /users/{id}``).
+        Les erreurs K8s non critiques (namespace introuvable, etc.) sont journalisées
+        mais n'interrompent pas la suppression de l'utilisateur en base.
+
+        Returns:
+            Dict avec ``deleted`` (bool), ``namespace`` (str) et ``error`` (str ou None).
+        """
+        from .k8s_utils import build_user_namespace
+        namespace = build_user_namespace(user_id)
+        try:
+            core_v1 = client.CoreV1Api()
+            core_v1.delete_namespace(namespace)
+            logger.info(
+                "user_namespace_deleted",
+                extra={"extra_fields": {"user_id": user_id, "namespace": namespace}},
+            )
+            audit_logger.info(
+                "user_namespace_cleanup",
+                extra={"extra_fields": {"user_id": user_id, "namespace": namespace, "status": "deleted"}},
+            )
+            return {"deleted": True, "namespace": namespace, "error": None}
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                logger.info(
+                    "user_namespace_not_found",
+                    extra={"extra_fields": {"user_id": user_id, "namespace": namespace}},
+                )
+                return {"deleted": False, "namespace": namespace, "error": "namespace_not_found"}
+            logger.warning(
+                "user_namespace_delete_failed",
+                extra={"extra_fields": {"user_id": user_id, "namespace": namespace, "error": str(e)}},
+            )
+            return {"deleted": False, "namespace": namespace, "error": str(e)}
+        except Exception as exc:
+            logger.warning(
+                "user_namespace_delete_error",
+                extra={"extra_fields": {"user_id": user_id, "namespace": namespace, "error": str(exc)}},
+            )
+            return {"deleted": False, "namespace": namespace, "error": str(exc)}
+
+
 # Instance globale du service
 deployment_service = DeploymentService()

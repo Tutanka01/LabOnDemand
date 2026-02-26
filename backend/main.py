@@ -2,6 +2,7 @@
 Application principale LabOnDemand
 Principe KISS : configuration simple et routage centralisé
 """
+import asyncio
 import logging
 import os
 import time
@@ -150,8 +151,9 @@ setup_session_handler(app)
 Base.metadata.create_all(bind=engine)
 
 @app.on_event("startup")
-def bootstrap():
-    """Initialise la base de données, applique les migrations et peuple les données par défaut."""
+async def bootstrap():
+    """Initialise la base de données, applique les migrations, peuple les données par défaut
+    et démarre la tâche de fond de nettoyage des labs expirés."""
     try:
         with SessionLocal() as db:
             Base.metadata.create_all(bind=engine)
@@ -164,6 +166,14 @@ def bootstrap():
             "Bootstrap failed",
             extra={"extra_fields": {"action": "bootstrap", "error": str(exc)}}
         )
+
+    # Démarrer la tâche de nettoyage des labs expirés en arrière-plan
+    try:
+        from .tasks.cleanup import run_cleanup_loop
+        asyncio.create_task(run_cleanup_loop())
+        logger.info("cleanup_task_scheduled")
+    except Exception as exc:
+        logger.warning("cleanup_task_start_failed", extra={"extra_fields": {"error": str(exc)}})
 
 # ============= INCLUSION DES ROUTEURS =============
 
@@ -205,28 +215,41 @@ async def get_status():
 
 @app.get("/api/v1/health")
 async def health_check(db: Session = Depends(get_db)):
-    """Vérification de santé de l'API"""
+    """Vérification de santé : DB, Redis et Kubernetes."""
+    result = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "db": "ok",
+        "redis": "ok",
+        "k8s": "ok",
+    }
+    healthy = True
+
+    # --- Base de données ---
     try:
-        # Test de connexion DB
         db.execute(text("SELECT 1"))
-        
-        # Test des tables
-        from .models import User
-        user_count = db.query(User).count()
-        
-        return {
-            "status": "healthy",
-            "database": "connected",
-            "users": user_count,
-            "timestamp": datetime.now().isoformat()
-        }
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "database": "error",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
+        result["db"] = f"error: {e}"
+        healthy = False
+
+    # --- Redis ---
+    try:
+        from .session_store import session_store
+        session_store._r.ping()
+    except Exception as e:
+        result["redis"] = f"error: {e}"
+        healthy = False
+
+    # --- Kubernetes ---
+    try:
+        from kubernetes import client as k8s_client
+        k8s_client.CoreV1Api().list_namespace(limit=1)
+    except Exception as e:
+        result["k8s"] = f"error: {e}"
+        healthy = False
+
+    result["status"] = "healthy" if healthy else "degraded"
+    return result
 
 # ============= ENDPOINT DE DIAGNOSTIC =============
 

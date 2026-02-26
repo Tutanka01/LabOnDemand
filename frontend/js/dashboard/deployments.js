@@ -926,6 +926,104 @@ export function createDeploymentsModule({
         }
     }
 
+    // ── TTL / expiration helpers ──────────────────────────────────────────────
+
+    /** Décompose une durée (ms) en objet {days, hours, minutes}. */
+    function msToComponents(ms) {
+        const totalMinutes = Math.floor(ms / 60000);
+        const days    = Math.floor(totalMinutes / 1440);
+        const hours   = Math.floor((totalMinutes % 1440) / 60);
+        const minutes = totalMinutes % 60;
+        return { days, hours, minutes };
+    }
+
+    /**
+     * Retourne le HTML du badge TTL et de la barre de progression.
+     * @param {string|null} expiresAt  - ISO 8601 ou null
+     * @param {string}      labId      - identifiant de la card (pour data-*)
+     * @param {boolean}     isPaused   - état courant du lab
+     */
+    function buildTtlBadge(expiresAt, labId, isPaused) {
+        if (!expiresAt) {
+            // Pas d'expiration (labs admin ou sans TTL)
+            return `
+                <div class="ttl-row">
+                    <span class="ttl-badge ttl-none" data-lab-id="${labId}">
+                        <i class="fas fa-infinity"></i> Aucune expiration
+                    </span>
+                </div>`;
+        }
+
+        const now        = Date.now();
+        const expireMs   = new Date(expiresAt).getTime();
+        const remainMs   = expireMs - now;
+
+        if (remainMs <= 0) {
+            // Déjà expiré
+            const label = isPaused ? 'Expiré — en pause' : 'Expiré';
+            return `
+                <div class="ttl-row">
+                    <span class="ttl-badge ttl-expired" data-lab-id="${labId}" data-expires-at="${expiresAt}">
+                        <i class="fas fa-clock"></i> ${label}
+                    </span>
+                    <div class="ttl-bar-track"><div class="ttl-bar ttl-bar-red" style="width:100%"></div></div>
+                </div>`;
+        }
+
+        const { days, hours, minutes } = msToComponents(remainMs);
+        const label = days > 0
+            ? `${days}j ${hours}h`
+            : hours > 0
+                ? `${hours}h ${minutes}min`
+                : `${minutes} min`;
+
+        // Urgence : rouge < 1j, amber 1-3j, vert > 3j
+        let urgency = 'ttl-ok';
+        if (days < 1)      urgency = 'ttl-urgent';
+        else if (days < 3) urgency = 'ttl-warn';
+
+        // Durée maximale prise en référence pour la barre (30 jours = 100%)
+        const maxMs  = 30 * 24 * 60 * 60 * 1000;
+        const pct    = Math.min(100, Math.round((remainMs / maxMs) * 100));
+        const barClass = days < 1 ? 'ttl-bar-red' : days < 3 ? 'ttl-bar-amber' : 'ttl-bar-green';
+
+        const title  = `Mise en pause le ${new Date(expiresAt).toLocaleDateString('fr-FR', {day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'})}`;
+
+        return `
+            <div class="ttl-row">
+                <span class="ttl-badge ${urgency}" data-lab-id="${labId}" data-expires-at="${expiresAt}" title="${title}">
+                    <i class="fas fa-clock"></i>
+                    <span class="ttl-label">Expire dans <strong>${label}</strong></span>
+                </span>
+                <div class="ttl-bar-track" title="${pct}% restant">
+                    <div class="ttl-bar ${barClass}" style="width:${pct}%"></div>
+                </div>
+            </div>`;
+    }
+
+    /** Recalcule et met à jour TOUS les badges TTL de la page. Appelé toutes les minutes. */
+    function refreshTtlBadges() {
+        document.querySelectorAll('[data-expires-at]').forEach(el => {
+            const expiresAt = el.dataset.expiresAt;
+            const labId     = el.dataset.labId;
+            if (!expiresAt || !labId) return;
+            const card = document.getElementById(labId);
+            if (!card) return;
+            const row = card.querySelector('.ttl-row');
+            if (!row) return;
+            const isPaused = card.classList.contains('lab-paused');
+            row.outerHTML = buildTtlBadge(expiresAt, labId, isPaused);
+        });
+    }
+
+    // Démarrer le rafraîchissement des TTL (toutes les 60 secondes)
+    if (!window.__ttlRefreshStarted) {
+        window.__ttlRefreshStarted = true;
+        setInterval(refreshTtlBadges, 60000);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     function addLabCard(labDetails) {
         if (noLabsMessage) {
             noLabsMessage.style.display = 'none';
@@ -987,6 +1085,8 @@ export function createDeploymentsModule({
             </button>
         `;
 
+        const ttlHtml = buildTtlBadge(labDetails.expiresAt, labDetails.id, isPaused);
+
         card.innerHTML = `
             <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
             <div class="lab-subtitle">
@@ -998,6 +1098,7 @@ export function createDeploymentsModule({
                 <span class="meta-item"><i class="fas fa-memory"></i>${labDetails.ram}</span>
             </div>
             ${datasetsHtml}
+            ${ttlHtml}
             ${availabilityHtml}
             <div class="lab-actions">
                 <a href="${labDetails.link}" target="_blank" class="btn btn-primary ${labDetails.ready ? '' : 'disabled'}" id="access-btn-${labDetails.id}">

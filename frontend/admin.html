@@ -13,6 +13,11 @@
     <link rel="icon" href="Images/banner-projet.jpeg" type="image/jpeg">
     <!-- Styles spécifiques pour l'administration -->
     <link rel="stylesheet" href="css/admin.css">
+    <!-- Dark mode — appliqué avant le rendu pour éviter le flash -->
+    <script>
+      (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
+    </script>
+    <script src="js/darkmode.js"></script>
 </head>
 <body>
     <div class="main-container">
@@ -33,6 +38,7 @@
                 <div class="user-role" id="user-role">
                     <span class="role-badge">Rôle</span>
                 </div>
+                <button id="dark-mode-toggle" class="dark-mode-toggle" onclick="toggleDarkMode()" title="Basculer le mode sombre" aria-label="Basculer le mode sombre">🌙</button>
                 <button id="logout-btn" class="btn-logout">
                     <i class="fas fa-sign-out-alt"></i> Déconnexion
                 </button>
