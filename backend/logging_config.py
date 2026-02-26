@@ -2,6 +2,7 @@
 Logging configuration for LabOnDemand backend.
 Provides structured JSON logs and correlation helpers.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -108,8 +109,8 @@ def setup_logging() -> None:
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "json",
             "filename": str(log_dir / "audit.log"),
-            "maxBytes": settings.LOG_MAX_BYTES,
-            "backupCount": settings.LOG_BACKUP_COUNT,
+            "maxBytes": settings.AUDIT_LOG_MAX_BYTES,
+            "backupCount": settings.AUDIT_LOG_BACKUP_COUNT,
             "encoding": "utf-8",
         },
         "access_file": {
@@ -189,6 +190,8 @@ def setup_logging() -> None:
                 "level": settings.LOG_LEVEL,
                 "max_bytes": settings.LOG_MAX_BYTES,
                 "backup_count": settings.LOG_BACKUP_COUNT,
+                "audit_max_bytes": settings.AUDIT_LOG_MAX_BYTES,
+                "audit_backup_count": settings.AUDIT_LOG_BACKUP_COUNT,
                 "console_enabled": settings.LOG_ENABLE_CONSOLE,
             }
         },

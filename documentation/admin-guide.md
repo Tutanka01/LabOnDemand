@@ -1,7 +1,8 @@
 # Guide administrateur LabOnDemand
 
 Ce guide couvre toutes les fonctionnalités réservées au rôle `admin` :
-gestion des utilisateurs, dérogations de quotas, import CSV, supervision du cluster et dark mode.
+gestion des utilisateurs, dérogations de quotas, import CSV, supervision du cluster,
+logs d'audit et dark mode.
 
 ---
 
@@ -271,6 +272,105 @@ Pour forcer un rafraîchissement immédiat : redémarrer l'API ou attendre l'exp
 
 ---
 
+## Logs d'Audit
+
+L'interface **Logs d'Audit** permet aux administrateurs de consulter, filtrer, paginer et exporter le fichier `logs/audit.log` directement depuis le dashboard d'administration — sans accès SSH ni CLI.
+
+### Accès
+
+```
+http://<host>/admin.html#audit
+```
+
+L'onglet est réservé au rôle `admin`. Il se charge en lazy loading à la première ouverture.
+
+### Ce que vous y trouvez
+
+**Bande KPI (5 compteurs en temps réel) :**
+
+| Compteur | Ce qu'il mesure |
+|----------|-----------------|
+| Total événements | Toutes les entrées du log |
+| Authentification | `login_*`, `logout` |
+| Utilisateurs | `user_*`, `password_changed`, `users_imported_csv` |
+| Déploiements | `deployment_*` |
+| Alertes | Entrées de niveau `WARNING` ou `ERROR` |
+
+**Sparkbar 7 jours :** histogramme d'activité journalière avec tooltip au survol.
+
+**Tableau paginé (50 lignes / page) :**
+
+- Horodatage, niveau (`INFO` / `WARNING` / `ERROR`), catégorie, événement, utilisateur, IP, namespace
+- Badge coloré par catégorie (Auth, Utilisateurs, Déploiements, Quotas, Danger, Autre)
+- Clic sur une ligne → modal de détail avec tous les champs JSON de l'entrée
+
+### Filtres disponibles
+
+| Filtre | Description |
+|--------|-------------|
+| Recherche libre | Texte recherché dans tous les champs (debounce 350 ms) |
+| Catégorie | Auth / Utilisateurs / Déploiements / Quotas / Danger |
+| Niveau | INFO / WARNING / ERROR |
+| Événement | Nom exact de l'événement (`login_success`, `user_deleted`, etc.) |
+| Utilisateur | Nom d'utilisateur exact |
+| Date de début / Date de fin | Plage temporelle |
+
+Les filtres sont cumulatifs et s'appliquent côté serveur. Le bouton **Réinitialiser** efface tous les filtres actifs.
+
+### Export
+
+Le bouton **Exporter JSON** télécharge toutes les entrées correspondant aux filtres actifs (sans limite de pagination) sous forme de fichier `audit-export-<timestamp>.json`.
+
+```bash
+# Équivalent cURL
+curl -H "Cookie: session_id=<token_admin>" \
+  "http://localhost:8000/api/v1/audit-logs?export=json&category=auth&date_from=2026-01-01T00:00:00" \
+  -o export.json
+```
+
+### API sous-jacente
+
+```http
+GET /api/v1/audit-logs
+Authorization: session_id cookie (admin)
+
+Paramètres :
+  page        int     Numéro de page (défaut : 1)
+  per_page    int     Lignes par page (défaut : 50, max : 500)
+  search      str     Recherche texte libre
+  category    str     auth | users | deployments | quotas | danger
+  event       str     Nom exact de l'événement
+  level       str     INFO | WARNING | ERROR
+  username    str     Nom d'utilisateur
+  date_from   str     ISO 8601 (ex : 2026-01-01T00:00:00)
+  date_to     str     ISO 8601
+  export      str     "json" → réponse sans pagination
+
+GET /api/v1/audit-logs/stats
+  → total, répartition par niveau, par catégorie, top 10 événements, activité 7 jours
+```
+
+### Cas d'usage courants
+
+**Détecter une tentative de force brute :**
+```
+Catégorie : Auth  |  Événement : login_failed  |  Utilisateur : alice
+```
+→ Si vous observez de nombreux `login_failed` en peu de temps, l'IP source est visible dans le modal.
+
+**Tracer une action sensible :**
+```
+Événement : user_deleted  |  Date de début : 2026-02-20
+```
+→ Identifie quel admin a supprimé quel utilisateur, à quelle heure.
+
+**Corréler avec les logs applicatifs :**
+Chaque entrée contient un `request_id` (visible dans le modal). Recherchez ce même `request_id` dans `logs/app.log` ou `logs/access.log` pour reconstituer la chaîne complète d'une requête.
+
+> Pour une référence exhaustive (tous les événements, champs, exemples, intégration SIEM), voir [`audit-logs.md`](audit-logs.md).
+
+---
+
 ## Interface dark mode
 
 Tous les utilisateurs ont accès au bouton 🌙 dans le header pour basculer
@@ -292,7 +392,8 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 | Lister les utilisateurs | `curl -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users` |
 | Importer un CSV | `curl -X POST -F "file=@users.csv" -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users/import` |
 | Voir la dérogation quota | `curl -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users/42/quota-override` |
-| Logs d'audit | `tail -f logs/audit.log` |
+| Logs d'audit (UI) | `http://<host>/admin.html#audit` |
+| Logs d'audit (CLI) | `tail -f logs/audit.log \| python3 -m json.tool` |
 | Logs application | `docker compose logs -f api` |
 | Namespaces K8s actifs | `kubectl get ns -l managed-by=labondemand` |
 
@@ -302,6 +403,6 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 
 - Changer `ADMIN_DEFAULT_PASSWORD` dès la première connexion
 - Ne jamais activer `DEBUG_MODE=True` en production (expose Swagger + test-auth)
-- Surveiller `logs/audit.log` pour les actions sensibles : `user_deleted`, `quota_override_set`, `users_imported_csv`
+- Surveiller `logs/audit.log` (ou l'onglet **Logs d'Audit** dans l'UI) pour les actions sensibles : `user_deleted`, `quota_override_set`, `users_imported_csv`
 - Les sessions expirées sont automatiquement purgées par Redis (TTL Redis = `SESSION_EXPIRY_HOURS`)
 - Un admin supprimé voit ses sessions immédiatement invalidées

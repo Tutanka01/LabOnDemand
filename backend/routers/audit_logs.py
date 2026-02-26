@@ -6,14 +6,17 @@ Expose GET /api/v1/audit-logs avec :
   - filtres     : event, username, level, date_from, date_to, search (fulltext)
   - export      : ?export=json  → téléchargement du fichier complet filtré
   - stats       : GET /api/v1/audit-logs/stats → résumé par event / level
+
+Lecture des fichiers :
+  _read_log_entries() lit audit.log ET tous les fichiers rotatés audit.log.1 …
+  audit.log.N (triés du plus ancien au plus récent) afin que l'historique complet
+  reste visible dans l'UI même après rotation.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
-from io import StringIO
 from pathlib import Path
 from typing import Optional
 
@@ -25,8 +28,9 @@ from ..security import is_admin
 
 audit_router = APIRouter(prefix="/api/v1/audit-logs", tags=["audit"])
 
-# ── Chemin du fichier audit.log ────────────────────────────────────────────────
-_LOG_PATH = Path(settings.LOG_DIR) / "audit.log"
+# ── Chemin de base du fichier audit.log ───────────────────────────────────────
+_LOG_DIR = Path(settings.LOG_DIR)
+_LOG_PATH = _LOG_DIR / "audit.log"
 
 # ── Mapping event → catégorie lisible ─────────────────────────────────────────
 EVENT_LABELS: dict[str, str] = {
@@ -70,13 +74,41 @@ CATEGORIES: dict[str, list[str]] = {
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _read_log_entries() -> list[dict]:
-    """Lit le fichier audit.log et retourne les lignes JSON parsées."""
-    if not _LOG_PATH.exists():
-        return []
+def _iter_log_files() -> list[Path]:
+    """
+    Retourne la liste des fichiers audit.log (courant + archives rotatées)
+    dans l'ordre chronologique : du plus ancien (audit.log.N) au plus récent
+    (audit.log), afin que la concaténation produise un flux ordonné dans le temps.
+
+    Python's RotatingFileHandler nomme les archives audit.log.1, audit.log.2, …
+    où audit.log.1 est la plus récente des archives et audit.log.N la plus ancienne.
+    On les parcourt donc dans l'ordre décroissant du suffixe numérique.
+    """
+    files: list[Path] = []
+
+    # Collecter les archives numérotées (audit.log.1, audit.log.2, …)
+    rotated: list[tuple[int, Path]] = []
+    for candidate in _LOG_DIR.glob("audit.log.*"):
+        suffix = candidate.suffix.lstrip(".")
+        if suffix.isdigit():
+            rotated.append((int(suffix), candidate))
+
+    # Tri décroissant sur le numéro → du plus ancien (.N) au plus récent (.1)
+    rotated.sort(key=lambda t: t[0], reverse=True)
+    files.extend(path for _, path in rotated)
+
+    # Fichier courant en dernier (le plus récent)
+    if _LOG_PATH.exists():
+        files.append(_LOG_PATH)
+
+    return files
+
+
+def _parse_file(path: Path) -> list[dict]:
+    """Lit un fichier de log ligne par ligne et retourne les entrées JSON parsées."""
     entries: list[dict] = []
     try:
-        with _LOG_PATH.open("r", encoding="utf-8", errors="replace") as fh:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -85,7 +117,6 @@ def _read_log_entries() -> list[dict]:
                     obj = json.loads(line)
                     entries.append(obj)
                 except json.JSONDecodeError:
-                    # ligne malformée — on l'ignore gracieusement
                     entries.append(
                         {
                             "timestamp": None,
@@ -97,9 +128,39 @@ def _read_log_entries() -> list[dict]:
     except OSError as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Impossible de lire audit.log : {exc}",
+            detail=f"Impossible de lire {path.name} : {exc}",
         )
     return entries
+
+
+def _read_log_entries() -> list[dict]:
+    """
+    Lit audit.log ET tous les fichiers rotatés (audit.log.1 … audit.log.N),
+    du plus ancien au plus récent.
+
+    Le résultat est re-trié par timestamp pour garantir l'ordre chronologique
+    même si une rotation a eu lieu entre deux lectures ou si des entrées sans
+    timestamp (tâches background) sont présentes.
+
+    Les entrées sans timestamp sont placées en tête (timestamp None → ordre stable).
+    """
+    log_files = _iter_log_files()
+    if not log_files:
+        return []
+
+    all_entries: list[dict] = []
+    for f in log_files:
+        all_entries.extend(_parse_file(f))
+
+    # Tri stable par timestamp ; None en premier (valeur sentinelle basse)
+    def _sort_key(e: dict):
+        raw = e.get("timestamp")
+        if not raw:
+            return ""  # chaîne vide < tout ISO 8601
+        return raw  # les ISO 8601 sont triables lexicographiquement
+
+    all_entries.sort(key=_sort_key)
+    return all_entries
 
 
 def _parse_ts(entry: dict) -> Optional[datetime]:
@@ -195,6 +256,7 @@ async def get_audit_stats():
       - activité des 7 derniers jours (un bucket par jour)
     """
     entries = _read_log_entries()
+    log_files = _iter_log_files()
 
     by_event: dict[str, int] = {}
     by_level: dict[str, int] = {}
@@ -247,6 +309,7 @@ async def get_audit_stats():
 
     return {
         "total": len(entries),
+        "files_read": len(log_files),
         "last_event_at": last_ts,
         "by_level": by_level,
         "by_category": by_category,

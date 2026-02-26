@@ -75,6 +75,7 @@ les guides spécialisés selon votre profil.
 | Document | Contenu |
 |----------|---------|
 | [`admin-guide.md`](admin-guide.md) | Gestion utilisateurs, import CSV, dérogations de quotas, health check, dark mode |
+| [`audit-logs.md`](audit-logs.md) | Logs d'audit — interface UI, API, filtres, export, exploitation production |
 
 ### Stacks de déploiement
 
@@ -92,7 +93,8 @@ les guides spécialisés selon votre profil.
 |----------|----------|
 | Healthcheck API | `curl http://localhost:8000/api/v1/health` |
 | Logs en direct | `docker compose logs -f api` |
-| Audit trail | `tail -f logs/audit.log` |
+| Audit trail (UI) | `http://<host>/admin.html#audit` |
+| Audit trail (CLI) | `tail -f logs/audit.log` |
 | Labs expirés nettoyés | `grep deployment_auto_paused_expired logs/app.log` |
 | Namespaces K8s actifs | `kubectl get ns -l managed-by=labondemand` |
 | Lancer les tests | `python backend/tests/run_tests.py --all` |
@@ -117,6 +119,7 @@ les guides spécialisés selon votre profil.
 - Suppression propre d'utilisateur (sessions + namespace K8s)
 - Health check enrichi (DB + Redis + K8s)
 - Audit trail complet dans `logs/audit.log`
+- Interface Logs d'Audit dans l'admin UI (filtres, pagination, export JSON)
 
 ### Pour les ops
 - Health check `GET /api/v1/health` — DB + Redis + K8s
