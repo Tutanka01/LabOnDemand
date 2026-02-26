@@ -16,9 +16,42 @@ from ..k8s_utils import validate_k8s_name
 from ..deployment_service import deployment_service
 from ..config import settings
 from ._helpers import raise_k8s_http, audit_logger
+from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 logger = logging.getLogger("labondemand.k8s")
+
+
+def _soft_delete_deployment(db: Session, user_id: int, name: str) -> None:
+    """Marque un enregistrement Deployment comme supprimé (soft delete).
+
+    Appelé après chaque suppression K8s réussie pour maintenir la cohérence
+    historique en base. Silencieux en cas d'erreur pour ne pas bloquer la réponse.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        rec = (
+            db.query(DeploymentModel)
+            .filter(
+                DeploymentModel.user_id == user_id,
+                DeploymentModel.name == name,
+                DeploymentModel.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if rec:
+            rec.status = "deleted"
+            rec.deleted_at = datetime.now(timezone.utc)
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning(
+            "deployment_soft_delete_failed",
+            extra={
+                "extra_fields": {"name": name, "user_id": user_id, "error": str(exc)}
+            },
+        )
 
 
 # ============= LISTING DES DÉPLOIEMENTS LABONDEMAND =============
@@ -126,10 +159,23 @@ async def get_labondemand_deployments(
                     status="active",
                     expires_at=compute_expires_at(role_val),
                 )
-                db.add(new_rec)
-                db.commit()
-                db.refresh(new_rec)
-                rec = new_rec
+                try:
+                    db.add(new_rec)
+                    db.commit()
+                    db.refresh(new_rec)
+                    rec = new_rec
+                except IntegrityError:
+                    # Race condition : un autre processus a créé l'enregistrement entre-temps
+                    db.rollback()
+                    rec = (
+                        db.query(DeploymentModel)
+                        .filter(
+                            DeploymentModel.user_id == current_user.id,
+                            DeploymentModel.name == dep_name,
+                            DeploymentModel.deleted_at.is_(None),
+                        )
+                        .first()
+                    )
             dep["expires_at"] = (
                 rec.expires_at.isoformat() if rec and rec.expires_at else None
             )
@@ -889,6 +935,7 @@ async def delete_deployment(
     delete_service: bool = True,
     delete_persistent: bool = True,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Supprimer un déploiement et son service."""
     namespace = validate_k8s_name(namespace)
@@ -1030,6 +1077,8 @@ async def delete_deployment(
                     }
                 },
             )
+            # Soft delete en base pour garder l'historique
+            _soft_delete_deployment(db, current_user.id, stack_name)
             return {
                 "message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"
             }
@@ -1091,6 +1140,8 @@ async def delete_deployment(
                     }
                 },
             )
+            # Soft delete en base pour garder l'historique
+            _soft_delete_deployment(db, current_user.id, stack_name)
             return {
                 "message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"
             }
@@ -1150,6 +1201,8 @@ async def delete_deployment(
                     }
                 },
             )
+            # Soft delete en base pour garder l'historique
+            _soft_delete_deployment(db, current_user.id, stack_name)
             return {
                 "message": f"Stack LAMP '{stack_name}' supprimée: {', '.join(deleted)}"
             }
@@ -1176,6 +1229,8 @@ async def delete_deployment(
                     }
                 },
             )
+            # Soft delete en base pour garder l'historique
+            _soft_delete_deployment(db, current_user.id, name)
             return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
     except Exception as e:
         raise_k8s_http(e)

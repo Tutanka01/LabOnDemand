@@ -6,7 +6,18 @@ TTL par défaut (configurables via env) :
   - teacher  → LAB_TTL_TEACHER_DAYS  (défaut : 30 jours)
   - admin    → illimité (expires_at reste NULL)
 
+Grace period avant suppression définitive :
+  - LAB_GRACE_PERIOD_DAYS  (défaut : 3 jours après mise en pause)
+
 La tâche tourne toutes les CLEANUP_INTERVAL_MINUTES minutes (défaut : 60).
+
+Atomicité :
+  - La création de l'enregistrement DB suit la création K8s dans deployment_service.
+    Si la DB est indisponible à ce moment, _track_deployment_in_db() attrape l'erreur
+    silencieusement : le lab existe dans K8s mais pas encore en DB. L'auto-healing du
+    GET /deployments/labondemand le rattrapera lors du prochain listing.
+  - Il n'y a pas de rollback K8s car un lab sans enregistrement DB est préférable à
+    un lab supprimé de K8s sans que l'utilisateur le sache.
 """
 
 import asyncio
@@ -19,6 +30,9 @@ logger = logging.getLogger("labondemand.cleanup")
 # ── Paramètres ──────────────────────────────────────────────────────────────
 LAB_TTL_STUDENT_DAYS = int(os.getenv("LAB_TTL_STUDENT_DAYS", "7"))
 LAB_TTL_TEACHER_DAYS = int(os.getenv("LAB_TTL_TEACHER_DAYS", "30"))
+LAB_GRACE_PERIOD_DAYS = int(
+    os.getenv("LAB_GRACE_PERIOD_DAYS", "3")
+)  # délai avant suppression après pause
 CLEANUP_INTERVAL_MINUTES = int(os.getenv("CLEANUP_INTERVAL_MINUTES", "60"))
 
 _ROLE_TTL_DAYS = {
@@ -68,6 +82,9 @@ async def _run_cleanup_cycle() -> None:
                         dep.namespace, dep.name, user
                     )
                 dep.status = "paused"
+                dep.last_seen_at = (
+                    now  # horodatage de la mise en pause pour la grace period
+                )
                 db.commit()
                 logger.info(
                     "deployment_auto_paused_expired",
@@ -83,6 +100,62 @@ async def _run_cleanup_cycle() -> None:
                 db.rollback()
                 logger.warning(
                     "deployment_auto_pause_failed",
+                    extra={
+                        "extra_fields": {"deployment_id": dep.id, "error": str(exc)}
+                    },
+                )
+
+        # ── 1b. Labs en pause depuis trop longtemps → suppression définitive ─
+        grace_limit = now - timedelta(days=LAB_GRACE_PERIOD_DAYS)
+        grace_expired = (
+            db.query(Deployment)
+            .filter(
+                Deployment.status == "paused",
+                Deployment.last_seen_at != None,  # noqa: E711
+                Deployment.last_seen_at <= grace_limit,
+                Deployment.deleted_at.is_(None),
+            )
+            .all()
+        )
+        for dep in grace_expired:
+            try:
+                from kubernetes import client as k8s_client
+
+                apps_v1 = k8s_client.AppsV1Api()
+                core_v1 = k8s_client.CoreV1Api()
+                # Suppression du déploiement K8s (best-effort, ignorer 404)
+                try:
+                    apps_v1.delete_namespaced_deployment(dep.name, dep.namespace)
+                except Exception:
+                    pass
+                # Suppression du service associé (best-effort)
+                try:
+                    core_v1.delete_namespaced_service(
+                        f"{dep.name}-service", dep.namespace
+                    )
+                except Exception:
+                    pass
+                # Soft delete : on conserve l'historique
+                dep.status = "deleted"
+                dep.deleted_at = now
+                db.commit()
+                logger.info(
+                    "deployment_auto_deleted_grace_expired",
+                    extra={
+                        "extra_fields": {
+                            "deployment_id": dep.id,
+                            "name": dep.name,
+                            "namespace": dep.namespace,
+                            "paused_since": dep.last_seen_at.isoformat()
+                            if dep.last_seen_at
+                            else None,
+                        }
+                    },
+                )
+            except Exception as exc:
+                db.rollback()
+                logger.warning(
+                    "deployment_auto_delete_failed",
                     extra={
                         "extra_fields": {"deployment_id": dep.id, "error": str(exc)}
                     },
@@ -126,7 +199,12 @@ async def _run_cleanup_cycle() -> None:
                     },
                 )
             if orphan_expires:
-                db.commit()
+                try:
+                    db.commit()
+                except Exception:
+                    # Race condition : un autre processus a pu modifier ces lignes entre-temps
+                    db.rollback()
+                    logger.debug("deployment_expires_at_backfill_race_ignored")
         except Exception as exc:
             db.rollback()
             logger.warning(
