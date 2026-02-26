@@ -1035,9 +1035,356 @@ main {
 [data-theme="dark"] .role-badge.admin      { border-color: #3D2A0A; }
 [data-theme="dark"] .provider-badge.sso    { border-color: #2A1A5F; }
 
-/* Dark mode toggle button */
+/* ── Dark mode toggle button */
 [data-theme="dark"] .dark-mode-toggle {
   color: #AAB4C4;
   border-color: #202840;
 }
 [data-theme="dark"] .dark-mode-toggle:hover { background: #1A2035; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Système d'onglets (tabs)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.admin-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Barre de navigation des onglets ───────────────────────────────────────── */
+.tabs-nav {
+  display: flex;
+  gap: 2px;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 28px;
+  padding-bottom: 0;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+.tabs-nav::-webkit-scrollbar { display: none; }
+
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px; /* aligne le border avec la barre */
+  font-family: var(--font);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--gray-500);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition), border-color var(--transition);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.tab-btn i { font-size: 0.8rem; }
+
+.tab-btn:hover {
+  color: var(--gray-800);
+  background: var(--gray-50);
+}
+
+.tab-btn.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+  font-weight: 600;
+}
+
+/* ── Panneaux ──────────────────────────────────────────────────────────────── */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── En-tête de panneau ────────────────────────────────────────────────────── */
+.tab-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.tab-panel-header h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--gray-900);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: -0.02em;
+}
+
+.tab-panel-header h1 i { color: var(--blue); font-size: 1rem; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Stat cards — Parc des Labs
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.labs-stat-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: var(--shadow-sm);
+  border-left: 3px solid transparent;
+  transition: box-shadow var(--transition);
+}
+
+.stat-card:hover { box-shadow: var(--shadow-md); }
+
+.stat-card--active  { border-left-color: var(--green); }
+.stat-card--paused  { border-left-color: var(--amber); }
+.stat-card--expired { border-left-color: var(--red); }
+.stat-card--total   { border-left-color: var(--blue); }
+
+.stat-card__value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--gray-900);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.stat-card--active  .stat-card__value { color: var(--green); }
+.stat-card--paused  .stat-card__value { color: var(--amber); }
+.stat-card--expired .stat-card__value { color: var(--red); }
+.stat-card--total   .stat-card__value { color: var(--blue); }
+
+.stat-card__label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Ajouts : Import CSV, Quota Override, Parc des Labs
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Page-header action group ───────────────────────────────────────────────── */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Secondary variant for action-btn */
+.action-btn--secondary {
+  background: var(--surface);
+  color: var(--blue);
+  border: 1px solid var(--blue);
+}
+
+.action-btn--secondary:hover {
+  background: var(--blue-tint);
+  box-shadow: none;
+}
+
+/* ── Modal close variants ───────────────────────────────────────────────────── */
+.modal-header .close-csv-modal,
+.modal-header .close-quota-modal,
+.modal-header .close-lab-modal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gray-400);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  flex-shrink: 0;
+}
+
+.modal-header .close-csv-modal:hover,
+.modal-header .close-quota-modal:hover,
+.modal-header .close-lab-modal:hover {
+  background: var(--gray-100);
+  color: var(--gray-700);
+}
+
+/* ── CSV Import result box ──────────────────────────────────────────────────── */
+.csv-result-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-top: 16px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.csv-result-box table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.csv-result-box th {
+  background: var(--gray-50);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--gray-500);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+
+.csv-result-box td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--gray-100);
+  color: var(--gray-700);
+}
+
+.csv-result-box tr:last-child td { border-bottom: none; }
+
+.csv-result-box .row-created  td:first-child { border-left: 3px solid var(--green); }
+.csv-result-box .row-skipped  td:first-child { border-left: 3px solid var(--amber); }
+.csv-result-box .row-error    td:first-child { border-left: 3px solid var(--red); }
+
+.csv-summary {
+  display: flex;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.csv-summary .s-created { color: var(--green); }
+.csv-summary .s-skipped { color: var(--amber); }
+.csv-summary .s-error   { color: var(--red); }
+
+/* ── Quota modal extras ─────────────────────────────────────────────────────── */
+.quota-user-label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--gray-800);
+  margin: 0 0 12px;
+}
+
+.quota-current-info {
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--gray-600);
+  line-height: 1.6;
+}
+
+/* ── Labs table extras ──────────────────────────────────────────────────────── */
+.table-loading {
+  text-align: center;
+  padding: 24px;
+  color: var(--gray-400);
+  font-size: 0.875rem;
+}
+
+/* Status badges for labs */
+.status-badge.paused {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border: 1px solid #FDE68A;
+}
+
+.status-badge.expired {
+  background: var(--red-tint);
+  color: var(--red);
+  border: 1px solid #FECACA;
+}
+
+.status-badge.deleted {
+  background: var(--gray-100);
+  color: var(--gray-500);
+  border: 1px solid var(--gray-200);
+}
+
+/* Lab action buttons in table */
+.action-icons .pause-lab-btn  { color: var(--amber); }
+.action-icons .pause-lab-btn:hover  { background: var(--amber-tint); }
+
+.action-icons .delete-lab-btn { color: var(--red); }
+.action-icons .delete-lab-btn:hover { background: var(--red-tint); }
+
+.action-icons .quota-btn { color: var(--purple); }
+.action-icons .quota-btn:hover { background: var(--purple-tint); }
+
+/* ── Expiration warning ─────────────────────────────────────────────────────── */
+.expiry-soon { color: var(--amber); font-weight: 600; }
+.expiry-past  { color: var(--red);   font-weight: 600; }
+.expiry-none  { color: var(--gray-400); }
+
+/* ── Labs table — dense cells ───────────────────────────────────────────────── */
+.labs-table td { padding: 10px 14px; vertical-align: middle; }
+.labs-table th { padding: 10px 14px; }
+
+.lab-name { font-weight: 600; color: var(--gray-800); }
+.lab-ns   { font-size: 0.75rem; color: var(--gray-400); font-family: monospace; }
+
+.owner-name  { font-size: 0.875rem; color: var(--gray-700); font-weight: 500; }
+.owner-email { font-size: 0.75rem;  color: var(--gray-400); }
+
+.cell-date { font-size: 0.82rem; color: var(--gray-500); white-space: nowrap; }
+
+/* ── Type badge ─────────────────────────────────────────────────────────────── */
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--gray-600);
+}
+
+/* ── Labs count label ───────────────────────────────────────────────────────── */
+.labs-count {
+  font-size: 0.8rem;
+  color: var(--gray-400);
+  font-weight: 500;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* ── Resume button ──────────────────────────────────────────────────────────── */
+.action-icons .resume-lab-btn { color: var(--green); }
+.action-icons .resume-lab-btn:hover { background: var(--green-tint); }
+
+/* ── Responsive : stat cards → 2×2 sur mobile ──────────────────────────────── */
+@media (max-width: 768px) {
+  .labs-stat-cards { grid-template-columns: 1fr 1fr; }
+
+  .tabs-nav { gap: 0; }
+  .tab-btn  { padding: 8px 12px; font-size: 0.8rem; }
+  .tab-btn i { display: none; }
+
+  .tab-panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}

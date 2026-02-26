@@ -22,6 +22,62 @@ router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 logger = logging.getLogger("labondemand.k8s")
 
 
+# ============= VUE GLOBALE ADMIN — TOUS LES LABS (JOIN deployments × users) =============
+
+
+@router.get("/deployments/all", dependencies=[Depends(is_admin)])
+def list_all_deployments(
+    status: Optional[str] = Query(
+        None, description="Filtrer par statut (active/paused/expired/deleted)"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Liste tous les labs enregistrés en base avec les infos propriétaire (admin seulement).
+
+    Effectue un JOIN entre ``deployments`` et ``users`` pour renvoyer un tableau
+    complet permettant à l'admin de surveiller et administrer le parc des labs.
+    """
+    query = db.query(DeploymentModel, User).join(
+        User, DeploymentModel.user_id == User.id
+    )
+    if status:
+        query = query.filter(DeploymentModel.status == status)
+
+    rows = query.order_by(DeploymentModel.created_at.desc()).all()
+
+    result = []
+    for dep, user in rows:
+        result.append(
+            {
+                "id": dep.id,
+                "name": dep.name,
+                "deployment_type": dep.deployment_type,
+                "namespace": dep.namespace,
+                "stack_name": dep.stack_name,
+                "status": dep.status,
+                "created_at": dep.created_at.isoformat() if dep.created_at else None,
+                "deleted_at": dep.deleted_at.isoformat() if dep.deleted_at else None,
+                "expires_at": dep.expires_at.isoformat() if dep.expires_at else None,
+                "last_seen_at": dep.last_seen_at.isoformat()
+                if dep.last_seen_at
+                else None,
+                "cpu_requested": dep.cpu_requested,
+                "mem_requested": dep.mem_requested,
+                "owner": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "role": user.role.value
+                    if hasattr(user.role, "value")
+                    else str(user.role),
+                },
+            }
+        )
+
+    return {"deployments": result, "total": len(result)}
+
+
 def _soft_delete_deployment(db: Session, user_id: int, name: str) -> None:
     """Marque un enregistrement Deployment comme supprimé (soft delete).
 
