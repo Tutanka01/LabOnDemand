@@ -1,122 +1,40 @@
-/* Style pour les indicateurs d'état des labs */
-.status-indicator {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    margin-left: 10px;
-    vertical-align: middle;
-    animation: fadeIn 0.3s ease-in-out;
-}
+/* Lab status — aligné avec le design system principal */
 
-.status-indicator.pending {
-    background-color: #fff3cd;
-    color: #856404;
-    border: 1px solid #ffeeba;
-}
+/* Les classes .status-indicator et .lab-card.lab-* sont dans style.css */
 
-.status-indicator.ready {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
-}
-
-.status-indicator.error {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-}
-
-.status-indicator.paused {
-    background-color: #e0e7ff;
-    color: #1e3a8a;
-    border: 1px solid #c7d2fe;
-}
-
-/* Styles pour les cartes de lab */
-.lab-card {
-    transition: all 0.3s ease;
-}
-
-.lab-pending {
-    border-left: 5px solid #ffc107;
-}
-
-.lab-ready {
-    border-left: 5px solid #28a745;
-}
-
-.lab-error {
-    border-left: 5px solid #dc3545;
-}
-
-.lab-paused {
-    border-left: 5px solid #6b7bff;
-}
-
-/* Style pour les boutons d'accès désactivés */
-.lab-card .btn.disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-}
-
-/* Animation pour la vérification de l'état */
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(-5px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* Animation pour les changements d'état */
+/* Highlight animation quand le statut change */
 .lab-card.status-changed {
-    animation: highlight 1.5s ease-in-out;
+  animation: flashBorder 1.2s ease-out;
 }
 
-@keyframes highlight {
-    0% {
-        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
-    }
-    30% {
-        box-shadow: 0 0 0 8px rgba(40, 167, 69, 0.4);
-    }
-    100% {
-        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
-    }
+@keyframes flashBorder {
+  0%   { box-shadow: 0 0 0 3px rgba(22,163,74,0.35); }
+  100% { box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 }
 
-/* Style pour les indicateurs de réplicas */
+/* Indicateur de réplicas inline */
 .replica-status {
-    font-weight: normal;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 4px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  font-size: 0.72rem;
 }
 
 .replica-status.ready {
-    background-color: #d4edda;
-    color: #155724;
+  background: #F0FDF4;
+  color: #16A34A;
+  border: 1px solid #BBF7D0;
 }
 
 .replica-status.pending {
-    background-color: #fff3cd;
-    color: #856404;
-    animation: pulse 2s infinite;
+  background: #FFFBEB;
+  color: #D97706;
+  border: 1px solid #FDE68A;
+  animation: pulseOpacity 2s infinite;
 }
 
-@keyframes pulse {
-    0% {
-        opacity: 0.7;
-    }
-    50% {
-        opacity: 1;
-    }
-    100% {
-        opacity: 0.7;
-    }
+@keyframes pulseOpacity {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
 }

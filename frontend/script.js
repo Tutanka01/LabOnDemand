@@ -596,11 +596,12 @@ function createDashboardApp() {
                     const rawIcon = (t.icon || '').trim();
                     const isFA = rawIcon.includes('fa-');
                     const faClass = isFA ? rawIcon : 'fa-solid fa-cube';
-                    const iconHtml = isFA
+                    const iconInner = isFA
                         ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
                         : (rawIcon
                             ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${rawIcon}</span>`
                             : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
+                    const iconHtml = `<div class="service-icon-wrap">${iconInner}</div>`;
                     const title = t.name || t.id;
                     const desc = t.description || '';
                     const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
@@ -646,17 +647,17 @@ function createDashboardApp() {
                 // Pour étudiants: proposer uniquement Jupyter et VS Code en fallback
                 serviceCatalog.innerHTML = isElevated ? `
                     <div class=\"card service-card\" data-service=\"Custom\" data-icon=\"fa-solid fa-cube\" data-deployment-type=\"custom\">
-                        <i class=\"fas fa-cube service-icon\"></i>
+                        <div class=\"service-icon-wrap\"><i class=\"fas fa-cube service-icon\"></i></div>
                         <h3>Personnalisé</h3>
                         <p>Déploiement d'image Docker personnalisée.</p>
                     </div>` : `
                     <div class=\"card service-card\" data-service=\"Jupyter Notebook\" data-icon=\"fa-brands fa-python\" data-deployment-type=\"jupyter\" data-default-image=\"tutanka01/k8s:jupyter\" data-default-port=\"8888\" data-default-service-type=\"NodePort\">
-                        <i class=\"fa-brands fa-python service-icon\"></i>
+                        <div class=\"service-icon-wrap\"><i class=\"fa-brands fa-python service-icon\"></i></div>
                         <h3>Jupyter Notebook</h3>
                         <p>Environnement interactif pour Python et data science.</p>
                     </div>
                     <div class=\"card service-card\" data-service=\"VS Code\" data-icon=\"fa-solid fa-code\" data-deployment-type=\"vscode\" data-default-image=\"tutanka01/k8s:vscode\" data-default-port=\"8080\" data-default-service-type=\"NodePort\">
-                        <i class=\"fa-solid fa-code service-icon\"></i>
+                        <div class=\"service-icon-wrap\"><i class=\"fa-solid fa-code service-icon\"></i></div>
                         <h3>VS Code</h3>
                         <p>Éditeur de code accessible via le navigateur.</p>
                     </div>`;
