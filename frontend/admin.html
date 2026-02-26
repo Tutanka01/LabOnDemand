@@ -74,6 +74,9 @@
                     <button class="tab-btn" role="tab" data-tab="labs" aria-selected="false">
                         <i class="fas fa-layer-group"></i> Parc des Labs
                     </button>
+                    <button class="tab-btn" role="tab" data-tab="audit" aria-selected="false">
+                        <i class="fas fa-shield-halved"></i> Logs d'Audit
+                    </button>
                 </nav>
 
                 <!-- ══════════════════════════════════════════════════
@@ -263,6 +266,142 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Logs d'Audit
+                     ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-audit" role="tabpanel">
+
+                    <!-- En-tête -->
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-shield-halved"></i> Logs d'Audit</h1>
+                        <div class="page-header-actions">
+                            <button id="audit-refresh-btn" class="action-btn action-btn--secondary">
+                                <i class="fas fa-sync-alt"></i> Actualiser
+                            </button>
+                            <button id="audit-export-btn" class="action-btn action-btn--secondary">
+                                <i class="fas fa-download"></i> Exporter JSON
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- KPI cards -->
+                    <div class="audit-kpi-row" id="audit-kpi-row">
+                        <div class="audit-kpi audit-kpi--total">
+                            <div class="audit-kpi__value" id="audit-kpi-total">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-list"></i> Total</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--auth">
+                            <div class="audit-kpi__value" id="audit-kpi-auth">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-key"></i> Authentification</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--users">
+                            <div class="audit-kpi__value" id="audit-kpi-users">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-users"></i> Utilisateurs</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--deploy">
+                            <div class="audit-kpi__value" id="audit-kpi-deploy">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-rocket"></i> Déploiements</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--warn">
+                            <div class="audit-kpi__value" id="audit-kpi-warn">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-triangle-exclamation"></i> Alertes</div>
+                        </div>
+                    </div>
+
+                    <!-- Graphique activité 7 jours -->
+                    <div class="audit-activity-card" id="audit-activity-card">
+                        <div class="audit-activity-title">
+                            <i class="fas fa-chart-bar"></i> Activité — 7 derniers jours
+                        </div>
+                        <div class="audit-sparkbar" id="audit-sparkbar">
+                            <!-- Rempli par JS -->
+                        </div>
+                    </div>
+
+                    <!-- Filtres -->
+                    <div class="filter-container" id="audit-filters">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="audit-search" placeholder="Rechercher dans les logs…">
+                        </div>
+                        <div class="filter-options">
+                            <label>Catégorie :</label>
+                            <select id="audit-category-filter">
+                                <option value="">Toutes</option>
+                                <option value="auth">Authentification</option>
+                                <option value="users">Utilisateurs</option>
+                                <option value="deployments">Déploiements</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Événement :</label>
+                            <select id="audit-event-filter">
+                                <option value="">Tous</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Niveau :</label>
+                            <select id="audit-level-filter">
+                                <option value="">Tous</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="ERROR">ERROR</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Utilisateur :</label>
+                            <input type="text" id="audit-username-filter" placeholder="username…" style="padding:9px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:var(--font);font-size:.875rem;min-width:140px;">
+                        </div>
+                        <div class="filter-options">
+                            <label>Du :</label>
+                            <input type="date" id="audit-date-from" style="padding:9px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:var(--font);font-size:.875rem;">
+                        </div>
+                        <div class="filter-options">
+                            <label>Au :</label>
+                            <input type="date" id="audit-date-to" style="padding:9px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:var(--font);font-size:.875rem;">
+                        </div>
+                        <button id="audit-reset-filters" class="action-btn action-btn--secondary" style="padding:9px 12px;font-size:.82rem;">
+                            <i class="fas fa-times"></i> Réinitialiser
+                        </button>
+                        <span id="audit-count" class="labs-count"></span>
+                    </div>
+
+                    <!-- Tableau des logs -->
+                    <div class="users-table-container">
+                        <table class="users-table audit-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:170px">Horodatage</th>
+                                    <th style="width:80px">Niveau</th>
+                                    <th style="width:220px">Événement</th>
+                                    <th>Détails</th>
+                                    <th style="width:130px">Utilisateur</th>
+                                    <th style="width:120px">IP Client</th>
+                                </tr>
+                            </thead>
+                            <tbody id="audit-table-body">
+                                <tr>
+                                    <td colspan="6" class="table-loading">
+                                        <i class="fas fa-spinner fa-spin"></i> Chargement…
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="audit-pagination">
+                        <button id="audit-prev-page" class="pagination-btn" disabled>
+                            <i class="fas fa-chevron-left"></i> Précédent
+                        </button>
+                        <span id="audit-page-info">Page 1 sur 1</span>
+                        <button id="audit-next-page" class="pagination-btn" disabled>
+                            Suivant <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+
             </div>
         </main>
     </div>
@@ -562,6 +701,7 @@
     <script src="js/admin-labs.js"></script>
     <script src="js/templates.js"></script>
     <script src="js/runtime-configs.js"></script>
+    <script src="js/audit-logs.js"></script>
 
     <!-- ── Gestion des onglets ──────────────────────────────────────────────── -->
     <script>
@@ -584,6 +724,10 @@
             if (tabId === 'labs') {
                 document.dispatchEvent(new CustomEvent('labs-tab-opened'));
             }
+            // Déclencher le chargement des logs d'audit à la première ouverture
+            if (tabId === 'audit') {
+                document.dispatchEvent(new CustomEvent('audit-tab-opened'));
+            }
         }
 
         tabBtns.forEach(btn => {
@@ -592,7 +736,7 @@
 
         // Deep-link via hash
         const hash = location.hash.replace('#', '');
-        const validTabs = ['users', 'templates', 'runtimes', 'labs'];
+        const validTabs = ['users', 'templates', 'runtimes', 'labs', 'audit'];
         if (validTabs.includes(hash)) {
             activateTab(hash);
         }
