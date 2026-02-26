@@ -1,3 +1,12 @@
+---
+title: Documentation LabOnDemand
+summary: Point d'entrée unique de la documentation. Présente la structure générale, le démarrage rapide et les liens vers tous les guides spécialisés.
+read_when: |
+  - Tu commences à découvrir le projet LabOnDemand
+  - Tu cherches quel document lire en fonction de ton profil (admin, dev, enseignant)
+  - Tu veux une vue d'ensemble avant d'aller dans un guide spécifique
+---
+
 # Documentation LabOnDemand
 
 Point d'entrée unique de la documentation. Commencez ici, puis naviguez vers

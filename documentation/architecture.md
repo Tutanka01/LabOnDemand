@@ -1,3 +1,12 @@
+---
+title: Architecture LabOnDemand
+summary: Vue d'ensemble des composants techniques — FastAPI, MariaDB, Redis, Kubernetes, Nginx — structure du dépôt et flux de données entre les couches.
+read_when: |
+  - Tu découvres le projet et veux comprendre comment les composants s'articulent
+  - Tu travailles sur une nouvelle fonctionnalité et dois situer où coder
+  - Tu debugges un problème qui traverse plusieurs couches (API, BDD, K8s)
+---
+
 # Architecture LabOnDemand
 
 ## Présentation

@@ -1,3 +1,12 @@
+---
+title: Dépannage
+summary: Guide de résolution des problèmes courants — API qui ne démarre pas, erreurs 403 Kubernetes, pods en Pending, problèmes de connexion SSO et de stockage.
+read_when: |
+  - Un composant ne démarre pas ou retourne une erreur inattendue
+  - Un déploiement Kubernetes est bloqué (Forbidden, Pending, CrashLoopBackOff)
+  - Tu cherches rapidement la cause d'un problème sans lire toute la documentation
+---
+
 # Dépannage
 
 ## L'API ne démarre pas

@@ -1,3 +1,12 @@
+---
+title: Logs d'Audit — Guide complet
+summary: Architecture, événements tracés, endpoints API, interface d'administration et bonnes pratiques d'exploitation du système de logs d'audit.
+read_when: |
+  - Tu implémentes ou modifies un événement à auditer (auth, K8s, gestion des sessions)
+  - Tu consultes ou exportes des logs d'audit via l'interface admin ou l'API
+  - Tu mets en place une politique de sécurité ou de conformité sur la plateforme
+---
+
 # Logs d'Audit — Guide complet
 
 Ce document décrit en détail la fonctionnalité **Logs d'Audit** de LabOnDemand :

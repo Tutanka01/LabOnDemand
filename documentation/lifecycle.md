@@ -1,3 +1,12 @@
+---
+title: Cycle de vie des labs — TTL & nettoyage automatique
+summary: Mécanisme d'expiration des laboratoires par TTL selon le rôle, tâche de fond de nettoyage et gestion des namespaces Kubernetes orphelins.
+read_when: |
+  - Tu travailles sur la tâche de nettoyage (tasks/cleanup.py) ou le TTL des labs
+  - Tu veux comprendre pourquoi un lab a été mis en pause ou supprimé automatiquement
+  - Tu configures les variables LAB_TTL_* ou les politiques d'expiration par rôle
+---
+
 # Cycle de vie des labs — TTL & nettoyage automatique
 
 Ce document décrit le mécanisme d'expiration des laboratoires, la tâche de fond

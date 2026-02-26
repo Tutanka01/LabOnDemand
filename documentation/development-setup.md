@@ -1,3 +1,12 @@
+---
+title: Setup de développement
+summary: Procédure pour lancer LabOnDemand en local via Docker Compose ou Python natif, configuration des variables d'environnement et accès aux services.
+read_when: |
+  - Tu installes le projet pour la première fois sur ta machine de dev
+  - Tu veux lancer l'API ou le frontend en dehors de Docker
+  - Tu cherches quelles variables d'environnement configurer dans .env
+---
+
 # Setup de développement
 
 ## Prérequis

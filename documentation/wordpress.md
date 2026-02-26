@@ -1,3 +1,12 @@
+---
+title: Application WordPress (Web + Base de données)
+summary: Déploiement d'instances WordPress isolées par utilisateur avec MariaDB dans Kubernetes — composants créés, identifiants générés, accès NodePort et dépannage.
+read_when: |
+  - Tu travailles sur le backend de déploiement WordPress (routers, k8s_utils)
+  - Tu veux connaître les identifiants générés ou l'URL d'accès à une instance WordPress
+  - Tu dépannes un problème lié au pod WordPress ou MariaDB d'un utilisateur
+---
+
 # Application WordPress (Web + Base de données)
 
 Cette fonctionnalité permet à chaque utilisateur de déployer une instance WordPress isolée avec sa base MariaDB dans son propre namespace Kubernetes géré par LabOnDemand.
