@@ -155,13 +155,14 @@
                 <button class="close-modal"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <div id="modal-error-message" class="notification error hidden" style="margin-bottom: 15px;">
+                <div id="modal-error-message" class="notification error hidden">
                     <i class="fas fa-exclamation-circle"></i> <span id="modal-error-text"></span>
+                    <button class="close-btn" onclick="this.parentElement.style.display='none'"><i class="fas fa-times"></i></button>
                 </div>
                 <form id="user-form">
                     <input type="hidden" id="user-id">
 
-                    <div id="modal-sso-notice" class="notification info hidden" style="margin-bottom: 15px;">
+                    <div id="modal-sso-notice" class="notification info hidden">
                         <i class="fas fa-shield-alt"></i> Compte SSO — le mot de passe est géré par le fournisseur d'identité.
                     </div>
 

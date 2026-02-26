@@ -1,14 +1,85 @@
-/* Carte Quotas utilisateur */
-.quotas-card { margin-top: 10px; }
-.quotas-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.quotas-content { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:16px; }
-.quota-item { background:#fff; border:1px solid var(--grey-border); border-radius:8px; padding:14px; }
-.quota-item h4 { display:flex; align-items:center; gap:8px; font-size:1rem; margin-bottom:8px; color:#0f172a; }
-.quota-metric { font-size:0.9rem; color:#475569; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
-.progress { height:10px; background:#eef2f7; border-radius:999px; overflow:hidden; }
-.progress-bar { height:100%; border-radius:999px; transition:width .4s ease; }
-.pb-green { background:#22c55e; }
-.pb-amber { background:#f59e0b; }
-.pb-red { background:#ef4444; }
-.quota-legend { margin-top:6px; font-size:0.85rem; color:#64748b; }
-.btn-sm { padding:6px 10px; font-size:0.85rem; }
+/* Quotas — aligné avec le design system principal */
+
+.quotas-card { margin-top: 8px; }
+
+.quotas-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.quotas-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.quota-item {
+  background: #fff;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.quota-item h4 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #1F2937;
+}
+
+.quota-metric {
+  font-size: 0.82rem;
+  color: #6B7280;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Progress bar */
+.progress {
+  height: 6px;
+  background: #F3F4F6;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.pb-green { background: #16A34A; }
+.pb-amber { background: #D97706; }
+.pb-red   { background: #DC2626; }
+
+.quota-legend {
+  margin-top: 5px;
+  font-size: 0.75rem;
+  color: #9CA3AF;
+}
+
+/* Compact quotas (inside dashboard card) */
+.quotas-content-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quotas-content-compact .quota-item {
+  background: #F9FAFB;
+  border: 1px solid #F3F4F6;
+  padding: 10px 12px;
+}
+
+.quotas-content-compact .quota-item h4 { font-size: 0.8rem; margin-bottom: 6px; }
+.quotas-content-compact .quota-metric  { font-size: 0.78rem; margin-bottom: 4px; }
+.quotas-content-compact .progress      { height: 5px; }
+.quotas-content-compact .quota-legend  { font-size: 0.72rem; margin-top: 3px; }
