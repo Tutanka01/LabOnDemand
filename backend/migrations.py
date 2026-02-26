@@ -46,6 +46,10 @@ MIGRATIONS: list[tuple[str, str]] = [
         "add_runtime_configs_allowed_for_students",
         "ALTER TABLE runtime_configs ADD COLUMN allowed_for_students BOOLEAN DEFAULT TRUE",
     ),
+    (
+        "add_users_role_override",
+        "ALTER TABLE users ADD COLUMN role_override BOOLEAN NOT NULL DEFAULT FALSE",
+    ),
 ]
 
 

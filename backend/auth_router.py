@@ -167,7 +167,22 @@ def sso_login(request: Request, response: Response):
 
 @router.get("/sso/callback")
 def sso_callback(request: Request, db: Session = Depends(get_db)):
-    """Callback OIDC : échange le code, récupère l'utilisateur, crée la session."""
+    """Callback OIDC : échange le code, récupère l'utilisateur, crée la session.
+
+    Flux complet :
+    1. Vérifie le paramètre ``error`` renvoyé par l'IdP.
+    2. Valide le ``state`` CSRF (comparaison avec le cookie ``oidc_state``).
+    3. Échange le code d'autorisation contre un access token.
+    4. Récupère les claims utilisateur via le endpoint userinfo.
+    5. Recherche le compte existant par ``external_id`` (sub) puis par email.
+    6. Crée le compte s'il n'existe pas encore.
+    7. Met à jour les champs de profil (username, email, full_name) à chaque
+       connexion, **sauf le rôle** dans les cas suivants :
+         - L'utilisateur est admin (protection contre la rétrogradation).
+         - ``user.role_override`` est ``True`` : un admin a défini le rôle
+           manuellement via l'API et ce choix prime sur les claims IdP.
+    8. Crée la session et redirige vers ``FRONTEND_BASE_URL``.
+    """
     if not settings.SSO_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO désactivé")
 
@@ -280,7 +295,9 @@ def sso_callback(request: Request, db: Session = Depends(get_db)):
         user.full_name = full_name or user.full_name
         user.auth_provider = "oidc"
         user.external_id = sub
-        if user.role != UserRole.admin:
+        # Ne pas écraser le rôle si : (a) admin (protection), ou
+        # (b) role_override=True — un admin a manuellement défini ce rôle.
+        if user.role != UserRole.admin and not user.role_override:
             user.role = UserRole[role]
         db.commit()
         db.refresh(user)
@@ -469,7 +486,10 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     
     if user_update.role is not None:
         db_user.role = UserRole[user_update.role]
-    
+        # Marque le rôle comme défini manuellement : le callback SSO
+        # n'écrasera plus ce choix lors des prochaines connexions.
+        db_user.role_override = True
+
     if user_update.is_active is not None:
         db_user.is_active = user_update.is_active
     

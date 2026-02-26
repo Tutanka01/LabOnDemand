@@ -106,13 +106,25 @@ def get_userinfo(access_token: str) -> Dict:
 
 
 def _split_csv(value: Optional[str]) -> List[str]:
+    """Découpe une chaîne CSV en liste de valeurs minuscules et dé-blanchies."""
     if not value:
         return []
     return [item.strip().lower() for item in value.split(",") if item.strip()]
 
 
 def map_role(claims: Dict) -> str:
-    """Détermine le rôle de l'utilisateur depuis les claims OIDC."""
+    """Détermine le rôle à attribuer à partir des claims OIDC.
+
+    Lit le claim désigné par ``OIDC_ROLE_CLAIM`` (ex. eduPersonAffiliation) et
+    le compare aux listes configurées via ``OIDC_TEACHER_VALUES`` et
+    ``OIDC_STUDENT_VALUES``.  Si aucune correspondance n'est trouvée, retourne
+    ``OIDC_DEFAULT_ROLE`` (par défaut « student »).
+
+    .. note::
+        Cette fonction détermine uniquement le rôle *proposé* par l'IdP.  Le
+        callback SSO ignore ce résultat si ``user.role_override`` est à ``True``
+        (rôle défini manuellement par un administrateur).
+    """
     role_claim = settings.OIDC_ROLE_CLAIM
     teacher_values = set(_split_csv(settings.OIDC_TEACHER_VALUES))
     student_values = set(_split_csv(settings.OIDC_STUDENT_VALUES))
@@ -133,6 +145,8 @@ def map_role(claims: Dict) -> str:
 
 
 def sanitize_username(raw: str) -> str:
+    """Nettoie un username brut en ne conservant que les caractères alphanumériques,
+    points, tirets et underscores.  Les suites de tirets sont fusionnées."""
     if not raw:
         return "user"
     cleaned = re.sub(r"[^a-zA-Z0-9._-]", "-", raw.strip())
