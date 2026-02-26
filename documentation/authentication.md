@@ -34,7 +34,7 @@ LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
 
 - **Session store** : Redis (service `redis` dans `compose.yaml`), TTL configurable (`SESSION_EXPIRY_HOURS`).
 - **Cookies** : HttpOnly, SameSite configurable (`SESSION_SAMESITE`), `SECURE_COOKIES=True` en production.
-- **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP).
+- **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP, contraint `UNIQUE` en base).
 - **SSO** : `backend/sso.py` — découverte automatique de l'IdP via `/.well-known/openid-configuration`.
 - **Sécurité** : `backend/security.py` pour le hachage bcrypt et la vérification des mots de passe.
 - **Middleware** : `backend/session.py` accroche la session au scope FastAPI.
@@ -174,7 +174,7 @@ Pour utiliser le SSO, l'application doit être enregistrée auprès de la DSI :
 
 | Claim OIDC | Utilisation |
 | --- | --- |
-| `sub` | Identifiant unique de l'utilisateur (`external_id` en base) |
+| `sub` | Identifiant unique de l'utilisateur (`external_id` en base, contraint `UNIQUE`) |
 | `email` | Adresse email |
 | `name` ou `displayName` | Nom complet |
 | `preferred_username` ou `uid` | Nom d'utilisateur |
@@ -186,6 +186,18 @@ Pour utiliser le SSO, l'application doit être enregistrée auprès de la DSI :
 - Aux connexions suivantes, le profil (nom, email, rôle) est mis à jour depuis l'IdP.
 - Le rôle `admin` n'est **jamais** attribué automatiquement — il doit être assigné manuellement via l'interface admin.
 - Le mot de passe n'est pas utilisé pour les comptes OIDC (`auth_provider="oidc"`).
+
+### Réconciliation du compte SSO
+
+L'API retrouve le compte existant en deux étapes :
+1. Recherche par `external_id = sub` (identifiant unique de l'IdP).
+2. Fallback par `email` si `external_id` ne correspond à aucun enregistrement.
+
+Le champ `external_id` est soumis à une contrainte `UNIQUE` en base, ce qui garantit
+qu'un seul compte peut exister pour un identifiant SSO donné. Cela empêche la
+création de doublons lors de reconnexions successives et protège les déploiements
+de l'utilisateur contre une suppression accidentelle par la tâche de nettoyage
+des namespaces orphelins (voir `documentation/lifecycle.md`).
 
 ## Fonctionnalités de sécurité
 

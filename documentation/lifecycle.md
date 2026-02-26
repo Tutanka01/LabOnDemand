@@ -67,9 +67,22 @@ _run_cleanup_cycle()
   ├── 1. Labs expirés (status=active, expires_at ≤ now)
   │     → pause_application(namespace, name, user)
   │     → deployments.status = "paused"
+  │     → deployments.last_seen_at = now   (horloge de début de grace period)
   │     → log: deployment_auto_paused_expired
   │
-  └── 2. Namespaces orphelins (labondemand-user-N sans user en base)
+  ├── 1b. Labs en pause depuis trop longtemps (last_seen_at ≤ now − LAB_GRACE_PERIOD_DAYS)
+  │     → delete_namespaced_deployment + delete_namespaced_service (best-effort)
+  │     → deployments.status = "deleted" / deployments.deleted_at = now   (soft delete)
+  │     → log: deployment_auto_deleted_grace_expired
+  │
+  ├── 2. Rétro-remplissage expires_at manquant (status=active, expires_at IS NULL)
+  │     → calcul depuis created_at + TTL du rôle
+  │     → log: deployment_expires_at_backfilled
+  │
+  └── 3. Namespaces orphelins (labondemand-user-N sans user en base)
+        Garde-fous avant toute suppression :
+          (a) des déploiements actifs en DB sont encore rattachés à ce user_id → skip
+          (b) âge du namespace < ORPHAN_NS_GRACE_DAYS (défaut : 7 j) → skip
         → CoreV1Api().delete_namespace(namespace)
         → log: orphan_namespace_deleted
 ```
@@ -91,6 +104,10 @@ et le cycle suivant reprend normalement.
 | `paused`  | Lab suspendu (réplicas = 0, données préservées)       |
 | `expired` | Lab expiré — en attente de suppression               |
 | `deleted` | Lab supprimé (ligne conservée pour l'historique)      |
+
+> Après le passage en `paused`, le champ `last_seen_at` est mis à jour pour
+> démarrer l'horloge de la grace period. Le lab est définitivement supprimé de
+> Kubernetes après `LAB_GRACE_PERIOD_DAYS` jours dans cet état.
 
 ---
 
@@ -149,18 +166,48 @@ supprimé de la base de données mais que le namespace Kubernetes existe toujour
 (ex. suppression directe en base, bug, migration).
 
 La tâche de nettoyage les détecte en comparant les namespaces préfixés
-`labondemand-user-*` avec la table `users`.
+`labondemand-user-*` avec la table `users`. Avant toute suppression, **deux
+garde-fous** sont appliqués pour éviter de supprimer des namespaces appartenant
+à des utilisateurs SSO dont l'identifiant DB aurait changé :
+
+### Garde-fou (a) — déploiements actifs encore rattachés
+
+Si des enregistrements `deployments` avec `status != deleted` et `deleted_at IS NULL`
+sont encore rattachés au `user_id` extrait du nom du namespace, la suppression est
+différée. Cela protège contre le cas où un utilisateur SSO a été recréé avec un
+nouvel `id` (voir [Réconciliation SSO](#réconciliation-sso)).
+
+### Garde-fou (b) — délai de grâce sur l'âge du namespace
+
+Un namespace dont le `user_id` n'existe plus en base n'est supprimé que si son
+`creation_timestamp` Kubernetes est antérieur de plus de `ORPHAN_NS_GRACE_DAYS`
+jours (défaut : 7 jours). Cette fenêtre laisse le temps à un utilisateur SSO de
+se reconnecter et déclencher la réconciliation.
+
+```env
+ORPHAN_NS_GRACE_DAYS=7   # configurable via variable d'environnement
+```
 
 ```
 Namespace : labondemand-user-42
   → user_id extrait : 42
   → SELECT * FROM users WHERE id = 42 → vide
+  → Garde-fou (a) : deployments actifs pour user_id 42 ? → non → continuer
+  → Garde-fou (b) : âge du namespace > 7 jours ? → oui → supprimer
   → delete_namespace("labondemand-user-42")
 ```
 
 > **Note** : si la suppression K8s échoue (permissions RBAC manquantes, timeout),
 > l'erreur est journalisée mais la boucle continue. Vérifier les logs avec
 > `grep orphan_namespace logs/app.log`.
+
+### Réconciliation SSO
+
+En mode SSO (OIDC), l'identifiant primaire d'un utilisateur est le claim `sub`
+(stocké dans `users.external_id`, contraint `UNIQUE`). En cas de changement
+d'email côté IdP, le système retrouve d'abord l'utilisateur par `external_id`,
+puis par email. Si aucun match ne se fait, un nouveau compte est créé — et les
+garde-fous ci-dessus évitent que l'ancien namespace soit supprimé prématurément.
 
 ---
 
@@ -187,8 +234,15 @@ le statut de la suppression du namespace.
 LAB_TTL_STUDENT_DAYS=7
 LAB_TTL_TEACHER_DAYS=30
 
+# Grace period avant suppression définitive après mise en pause
+LAB_GRACE_PERIOD_DAYS=3
+
 # Fréquence de la tâche de nettoyage
 CLEANUP_INTERVAL_MINUTES=60
+
+# Délai avant suppression d'un namespace orphelin sans utilisateur en base
+# (garde-fou SSO : laisse le temps au re-login de réconcilier le compte)
+ORPHAN_NS_GRACE_DAYS=7
 ```
 
 Ces variables sont lues au démarrage par `backend/tasks/cleanup.py`.
@@ -197,10 +251,27 @@ un rechargement du service (les valeurs sont lues une seule fois au boot).
 
 ---
 
+## Auto-healing des enregistrements DB manquants
+
+Lors du listing `GET /api/v1/k8s/deployments/labondemand`, si un déploiement
+Kubernetes n'a pas d'enregistrement correspondant en base (par exemple après une
+interruption de l'API au moment de la création), un enregistrement est créé
+automatiquement (*auto-healing*).
+
+La date d'expiration `expires_at` est calculée depuis le `creation_timestamp`
+Kubernetes du déploiement (et non depuis l'instant du re-listing) afin de
+préserver le TTL réel du lab. Si le timestamp K8s est indisponible, `now() + TTL`
+est utilisé en fallback.
+
+---
+
 ## Checklist opérationnelle
 
 - [ ] Vérifier que la tâche de nettoyage démarre : `grep cleanup_task_started logs/app.log`
 - [ ] Surveiller les labs auto-paused : `grep deployment_auto_paused_expired logs/app.log`
+- [ ] Surveiller les labs auto-supprimés : `grep deployment_auto_deleted_grace_expired logs/app.log`
 - [ ] Vérifier les namespaces orphelins : `grep orphan_namespace logs/app.log`
+- [ ] Vérifier les namespaces ignorés par les garde-fous : `grep orphan_namespace_skipped logs/app.log`
 - [ ] En cas de namespace non supprimé : vérifier les RBAC K8s avec `kubectl auth can-i delete namespaces`
 - [ ] Ajuster `LAB_TTL_STUDENT_DAYS` si les étudiants se plaignent d'expiration trop rapide
+- [ ] Ajuster `ORPHAN_NS_GRACE_DAYS` si des namespaces SSO légitimes sont supprimés

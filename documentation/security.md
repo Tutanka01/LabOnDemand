@@ -24,8 +24,10 @@ est opaque pour le client et ne contient aucune donnée sensible.
 4. Vérification du state (cookie oidc_state)
 5. Échange du code contre access_token
 6. Récupération des claims (sub, email, nom, rôle)
-7. Création ou mise à jour du compte local
-8. Session Redis créée comme pour l'auth locale
+7. Recherche du compte : d'abord par external_id (sub), puis par email en fallback
+   → external_id est contraint UNIQUE : un seul compte par identifiant SSO
+8. Création ou mise à jour du compte local
+9. Session Redis créée comme pour l'auth locale
 ```
 
 Le document de découverte OIDC est mis en cache avec un TTL de

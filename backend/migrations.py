@@ -3,6 +3,7 @@ Migrations SQL souples pour LabOnDemand.
 Chaque migration est idempotente (ALTER/CREATE IF NOT EXISTS) et exécutée avec
 rollback propre en cas d'échec.
 """
+
 import logging
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -72,6 +73,12 @@ MIGRATIONS: list[tuple[str, str]] = [
         "INDEX idx_dep_expires (expires_at),"
         "CONSTRAINT fk_dep_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
         ")",
+    ),
+    # Contrainte UNIQUE sur external_id pour empêcher les doublons SSO
+    # (idempotente : MySQL ignore silencieusement si la contrainte existe déjà)
+    (
+        "add_users_external_id_unique",
+        "ALTER TABLE users ADD UNIQUE INDEX idx_users_external_id_unique (external_id)",
     ),
     # IMP-3 — dérogations de quota par utilisateur
     (

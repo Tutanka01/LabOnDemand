@@ -129,7 +129,7 @@ LabOnDemand/
 users
   id, username, email, hashed_password
   role (student|teacher|admin), role_override (bool)
-  is_active, auth_provider (local|oidc), external_id
+  is_active, auth_provider (local|oidc), external_id  ← UNIQUE (identifiant SSO)
   created_at, updated_at
 
 deployments                        ← IMP-1 (traçabilité)
@@ -187,7 +187,11 @@ la création selon le rôle (configurable via env, voir `documentation/lifecycle
 La tâche de fond `backend/tasks/cleanup.py` tourne toutes les `CLEANUP_INTERVAL_MINUTES`
 minutes et :
 1. Met en pause les déploiements dont `expires_at ≤ now`
-2. Supprime les namespaces Kubernetes orphelins (user supprimé mais namespace présent)
+2. Supprime définitivement (de K8s) les labs en pause depuis plus de `LAB_GRACE_PERIOD_DAYS` jours
+3. Supprime les namespaces Kubernetes orphelins (user supprimé mais namespace présent),
+   avec deux garde-fous pour protéger les namespaces SSO :
+   - déploiements actifs encore rattachés en DB → skip
+   - namespace créé depuis moins de `ORPHAN_NS_GRACE_DAYS` jours → skip
 
 ---
 

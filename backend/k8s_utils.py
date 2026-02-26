@@ -2,6 +2,7 @@
 Utilitaires Kubernetes - Fonctions de base pour les opérations K8s
 Principe KISS : fonctions simples et focalisées
 """
+
 import re
 import datetime
 from typing import Dict, Any, Optional
@@ -13,8 +14,10 @@ try:
     from .models import User, UserRole  # type: ignore
 except Exception:  # lors de l'import utilitaire isolé
     User = Any  # type: ignore
+
     class UserRole:  # type: ignore
         student = "student"
+
 
 def validate_k8s_name(name: str) -> str:
     """
@@ -22,35 +25,38 @@ def validate_k8s_name(name: str) -> str:
     Applique les règles RFC 1123
     """
     # Nettoyer le nom
-    name = name.replace('_', '-').lower()
-    
+    name = name.replace("_", "-").lower()
+
     # Valider le format
-    if not re.match(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$', name):
+    if not re.match(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", name):
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Le nom '{name}' n'est pas valide pour Kubernetes. "
-                   f"Les noms doivent être en minuscules, ne contenir que des "
-                   f"caractères alphanumériques ou des tirets."
+            f"Les noms doivent être en minuscules, ne contenir que des "
+            f"caractères alphanumériques ou des tirets.",
         )
     return name
 
+
 def parse_cpu_to_millicores(cpu_str: str) -> float:
     """Convertit une valeur CPU en millicores"""
-    if cpu_str.endswith('m'):
+    if cpu_str.endswith("m"):
         return float(cpu_str[:-1])
     else:
         return float(cpu_str) * 1000
 
+
 def parse_memory_to_mi(mem_str: str) -> float:
     """Convertit une valeur mémoire en Mi"""
-    units = {'Ki': 1/1024, 'Mi': 1, 'Gi': 1024, 'Ti': 1024*1024}
-    
+    units = {"Ki": 1 / 1024, "Mi": 1, "Gi": 1024, "Ti": 1024 * 1024}
+
     for unit, multiplier in units.items():
         if mem_str.endswith(unit):
-            return float(mem_str[:-len(unit)]) * multiplier
-    
+            return float(mem_str[: -len(unit)]) * multiplier
+
     # Si aucune unité, assume Mi
     return float(mem_str)
+
 
 def max_resource(res1: str, res2: str) -> str:
     """
@@ -58,22 +64,23 @@ def max_resource(res1: str, res2: str) -> str:
     Supporte CPU (millicores) et mémoire (Mi, Gi, etc.)
     """
     # Déterminer le type de ressource
-    is_memory = any(u in res1 for u in ['Ki', 'Mi', 'Gi', 'Ti'])
-    
+    is_memory = any(u in res1 for u in ["Ki", "Mi", "Gi", "Ti"])
+
     if is_memory:
         val1 = parse_memory_to_mi(res1)
         val2 = parse_memory_to_mi(res2)
     else:
         val1 = parse_cpu_to_millicores(res1)
         val2 = parse_cpu_to_millicores(res2)
-    
+
     return res1 if val1 > val2 else res2
 
+
 def create_labondemand_labels(
-    deployment_type: str, 
-    user_id: str, 
+    deployment_type: str,
+    user_id: str,
     user_role: str,
-    additional_labels: Optional[Dict[str, str]] = None
+    additional_labels: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
     """
     Crée les labels standards LabOnDemand
@@ -83,35 +90,46 @@ def create_labondemand_labels(
         "app-type": deployment_type,
         "user-id": user_id,
         "user-role": user_role,
-        "created-at": datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        "created-at": datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"),
     }
-    
+
     if additional_labels:
         labels.update(additional_labels)
-        
+
     return labels
 
-def get_namespace_for_deployment(deployment_type: str, user_namespace: Optional[str] = None) -> str:
+
+def get_namespace_for_deployment(
+    deployment_type: str, user_namespace: Optional[str] = None
+) -> str:
     """
     Détermine le namespace approprié pour un déploiement
     """
     from .config import settings
-    
+
     if user_namespace:
         return user_namespace
-    
+
     return settings.DEFAULT_NAMESPACES.get(deployment_type, "labondemand-custom")
+
 
 def build_user_namespace(user: Any) -> str:
     """
     Construit le namespace dédié à un utilisateur.
     Format: <prefix>-<user_id>
+
+    Accepte soit un objet User (avec attribut .id), soit directement un entier (user_id).
     """
     from .config import settings
-    prefix = validate_k8s_name(settings.USER_NAMESPACE_PREFIX)
-    return validate_k8s_name(f"{prefix}-{user.id}")
 
-def should_use_user_namespace(user: Any, deployment_type: str, explicit_namespace: Optional[str]) -> bool:
+    prefix = validate_k8s_name(settings.USER_NAMESPACE_PREFIX)
+    user_id = user if isinstance(user, int) else user.id
+    return validate_k8s_name(f"{prefix}-{user_id}")
+
+
+def should_use_user_namespace(
+    user: Any, deployment_type: str, explicit_namespace: Optional[str]
+) -> bool:
     """
     Stratégie d'isolation:
     - Étudiants: namespace dédié obligatoire (ignore le namespace explicite non autorisé)
@@ -126,6 +144,7 @@ def should_use_user_namespace(user: Any, deployment_type: str, explicit_namespac
         return True
     # Pour teacher/admin: si un namespace explicite est fourni, on le respecte, sinon namespace user
     return explicit_namespace is None
+
 
 def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
     """
@@ -187,7 +206,9 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
         try:
             existing_rq = core.read_namespaced_resource_quota(rq_name, namespace_name)
             # Si déjà présent, vérifier et patcher si différent
-            existing_hard = (getattr(getattr(existing_rq, "spec", None), "hard", None) or {})
+            existing_hard = (
+                getattr(getattr(existing_rq, "spec", None), "hard", None) or {}
+            )
             # On patch si au moins une valeur diffère
             needs_patch = False
             for k, v in rq_hard.items():
@@ -236,8 +257,15 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
                 if current_spec and current_spec.limits:
                     cur = current_spec.limits[0]
                     cur_def = getattr(cur, "default", {}) or {}
-                    cur_req = getattr(cur, "default_request", None) or getattr(cur, "defaultRequest", {}) or {}
-                    needs_patch = not (str(cur_def) == str(lr_default) and str(cur_req) == str(lr_request))
+                    cur_req = (
+                        getattr(cur, "default_request", None)
+                        or getattr(cur, "defaultRequest", {})
+                        or {}
+                    )
+                    needs_patch = not (
+                        str(cur_def) == str(lr_default)
+                        and str(cur_req) == str(lr_request)
+                    )
             except Exception:
                 needs_patch = True
             if needs_patch:
@@ -321,7 +349,8 @@ def get_role_limits(role: str, user_id: Optional[int] = None) -> Dict[str, Any]:
                 db.query(UserQuotaOverride)
                 .filter(
                     UserQuotaOverride.user_id == user_id,
-                    (UserQuotaOverride.expires_at == None) | (UserQuotaOverride.expires_at > now),  # noqa: E711
+                    (UserQuotaOverride.expires_at == None)
+                    | (UserQuotaOverride.expires_at > now),  # noqa: E711
                 )
                 .first()
             )
@@ -336,6 +365,7 @@ def get_role_limits(role: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         pass  # En cas d'erreur DB, utiliser les limites par défaut du rôle
 
     return base
+
 
 async def ensure_namespace_exists(namespace_name: str) -> bool:
     """
@@ -356,9 +386,9 @@ async def ensure_namespace_exists(namespace_name: str) -> bool:
                         "name": namespace_name,
                         "labels": {
                             "managed-by": "labondemand",
-                            "created-at": datetime.datetime.now().strftime("%Y-%m-%d")
-                        }
-                    }
+                            "created-at": datetime.datetime.now().strftime("%Y-%m-%d"),
+                        },
+                    },
                 }
                 v1.create_namespace(namespace_manifest)
                 print(f"Namespace {namespace_name} créé avec succès")
@@ -369,28 +399,38 @@ async def ensure_namespace_exists(namespace_name: str) -> bool:
         print(f"Erreur lors de la gestion du namespace {namespace_name}: {e}")
         return False
 
-def validate_resource_format(cpu_request: str, cpu_limit: str, memory_request: str, memory_limit: str):
+
+def validate_resource_format(
+    cpu_request: str, cpu_limit: str, memory_request: str, memory_limit: str
+):
     """
     Valide le format des ressources CPU et mémoire
     """
     # Valider CPU
     for cpu_val, cpu_type in [(cpu_request, "request"), (cpu_limit, "limit")]:
-        if not re.match(r'^(\d+m|[0-9]*\.?[0-9]+)$', cpu_val):
+        if not re.match(r"^(\d+m|[0-9]*\.?[0-9]+)$", cpu_val):
             raise ValueError(
                 f"Format CPU {cpu_type} invalide: {cpu_val}. "
                 f"Utilisez un nombre suivi de 'm' (millicores) ou un nombre décimal."
             )
-    
+
     # Valider mémoire
     for mem_val, mem_type in [(memory_request, "request"), (memory_limit, "limit")]:
-        if not re.match(r'^(\d+)(Ki|Mi|Gi|Ti|Pi|Ei|[kMGTPE]i?)?$', mem_val):
+        if not re.match(r"^(\d+)(Ki|Mi|Gi|Ti|Pi|Ei|[kMGTPE]i?)?$", mem_val):
             raise ValueError(
                 f"Format memory {mem_type} invalide: {mem_val}. "
                 f"Utilisez un nombre suivi d'une unité (Mi, Gi, etc.)."
             )
 
 
-def clamp_resources_for_role(role: str, cpu_request: str, cpu_limit: str, memory_request: str, memory_limit: str, replicas: int) -> Dict[str, Any]:
+def clamp_resources_for_role(
+    role: str,
+    cpu_request: str,
+    cpu_limit: str,
+    memory_request: str,
+    memory_limit: str,
+    replicas: int,
+) -> Dict[str, Any]:
     """Applique des plafonds stricts selon le rôle.
     Retourne les valeurs corrigées: cpu_request, cpu_limit, memory_request, memory_limit, replicas.
     """
@@ -416,7 +456,9 @@ def clamp_resources_for_role(role: str, cpu_request: str, cpu_limit: str, memory
 
     def min_resource(a: str, b: str) -> str:
         # retourne la plus petite des deux (pour plafonner)
-        is_mem = any(u in a for u in ['Ki', 'Mi', 'Gi', 'Ti']) or any(u in b for u in ['Ki', 'Mi', 'Gi', 'Ti'])
+        is_mem = any(u in a for u in ["Ki", "Mi", "Gi", "Ti"]) or any(
+            u in b for u in ["Ki", "Mi", "Gi", "Ti"]
+        )
         if is_mem:
             va = parse_memory_to_mi(a)
             vb = parse_memory_to_mi(b)

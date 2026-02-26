@@ -213,9 +213,22 @@ async def _run_cleanup_cycle() -> None:
             )
 
         # ── 3. Namespaces orphelins ──────────────────────────────────────────
-        #    Lister tous les namespaces labondemand-user-*, vérifier si l'user existe
+        #    Lister tous les namespaces labondemand-user-*, vérifier si l'user existe.
+        #
+        #    SÉCURITÉ SSO : un utilisateur SSO peut se voir attribuer un nouvel id en DB
+        #    si son email change côté IdP (nouvelle ligne User créée, ancienne conservée).
+        #    Pour éviter de supprimer le namespace d'un user SSO encore actif, on applique
+        #    deux garde-fous :
+        #      a) On vérifie si le namespace a des déploiements actifs en DB (user_id orphelin
+        #         mais deployments rattachés à ce user_id → on ne supprime pas).
+        #      b) On applique un délai de grâce de ORPHAN_NS_GRACE_DAYS jours : un namespace
+        #         dont l'utilisateur DB n'existe plus n'est supprimé que s'il a été créé
+        #         il y a plus de ORPHAN_NS_GRACE_DAYS jours, laissant le temps à un
+        #         éventuel re-login SSO de réconcilier les comptes.
+        ORPHAN_NS_GRACE_DAYS = int(os.getenv("ORPHAN_NS_GRACE_DAYS", "7"))
         try:
             from kubernetes import client as k8s_client
+            from ..models import Deployment as DeploymentModel
 
             core_v1 = k8s_client.CoreV1Api()
             prefix = "labondemand-user-"
@@ -230,29 +243,76 @@ async def _run_cleanup_cycle() -> None:
                 except ValueError:
                     continue
                 user = db.query(User).filter(User.id == user_id).first()
-                if user is None:
+                if user is not None:
+                    # Utilisateur trouvé → namespace légitime, on ne touche pas
+                    continue
+
+                # Utilisateur introuvable en DB. Vérifier les garde-fous avant suppression.
+
+                # Garde-fou (a) : des déploiements actifs sont encore associés à ce user_id
+                active_deployments = (
+                    db.query(DeploymentModel)
+                    .filter(
+                        DeploymentModel.user_id == user_id,
+                        DeploymentModel.deleted_at.is_(None),
+                        DeploymentModel.status != "deleted",
+                    )
+                    .count()
+                )
+                if active_deployments > 0:
                     logger.info(
-                        "orphan_namespace_found",
+                        "orphan_namespace_skipped_active_deployments",
                         extra={
-                            "extra_fields": {"namespace": ns_name, "user_id": user_id}
+                            "extra_fields": {
+                                "namespace": ns_name,
+                                "user_id": user_id,
+                                "active_deployments": active_deployments,
+                            }
                         },
                     )
-                    try:
-                        core_v1.delete_namespace(ns_name)
+                    continue
+
+                # Garde-fou (b) : délai de grâce basé sur la date de création du namespace
+                ns_creation = ns.metadata.creation_timestamp  # datetime ou None
+                if ns_creation is not None:
+                    # s'assurer que c'est timezone-aware
+                    if ns_creation.tzinfo is None:
+                        ns_creation = ns_creation.replace(tzinfo=timezone.utc)
+                    age_days = (now - ns_creation).days
+                    if age_days < ORPHAN_NS_GRACE_DAYS:
                         logger.info(
-                            "orphan_namespace_deleted",
-                            extra={"extra_fields": {"namespace": ns_name}},
-                        )
-                    except Exception as del_exc:
-                        logger.warning(
-                            "orphan_namespace_delete_failed",
+                            "orphan_namespace_skipped_grace_period",
                             extra={
                                 "extra_fields": {
                                     "namespace": ns_name,
-                                    "error": str(del_exc),
+                                    "user_id": user_id,
+                                    "age_days": age_days,
+                                    "grace_days": ORPHAN_NS_GRACE_DAYS,
                                 }
                             },
                         )
+                        continue
+
+                logger.info(
+                    "orphan_namespace_found",
+                    extra={"extra_fields": {"namespace": ns_name, "user_id": user_id}},
+                )
+                try:
+                    core_v1.delete_namespace(ns_name)
+                    logger.info(
+                        "orphan_namespace_deleted",
+                        extra={"extra_fields": {"namespace": ns_name}},
+                    )
+                except Exception as del_exc:
+                    logger.warning(
+                        "orphan_namespace_delete_failed",
+                        extra={
+                            "extra_fields": {
+                                "namespace": ns_name,
+                                "error": str(del_exc),
+                            }
+                        },
+                    )
         except Exception as k8s_exc:
             logger.debug(
                 "orphan_ns_check_skipped",

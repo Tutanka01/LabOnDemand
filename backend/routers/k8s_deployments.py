@@ -140,6 +140,8 @@ async def get_labondemand_deployments(
                     stack_name = dep_name
 
             lifecycle = deployment_service.describe_component_lifecycle(dep)
+            # Conserver la date de création K8s pour calculer expires_at correctement
+            k8s_created_at = dep.metadata.creation_timestamp  # datetime ou None
             entry = {
                 "name": dep.metadata.name,
                 "namespace": dep.metadata.namespace,
@@ -152,6 +154,7 @@ async def get_labondemand_deployments(
                 else "Unknown",
                 "lifecycle": lifecycle,
                 "is_paused": lifecycle.get("paused", False),
+                "k8s_created_at": k8s_created_at,
             }
 
             if stack_name:
@@ -205,7 +208,22 @@ async def get_labondemand_deployments(
             rec = db_index.get(dep_name)
             if rec is None:
                 # Créer l'enregistrement manquant avec expires_at
+                # On utilise la date de création K8s pour calculer expires_at correctement,
+                # afin d'éviter de réinitialiser le TTL à chaque auto-healing.
                 role_val = getattr(current_user.role, "value", str(current_user.role))
+                k8s_ts = dep.get("k8s_created_at")  # datetime K8s ou None
+                if k8s_ts is not None:
+                    from datetime import timezone as _tz
+
+                    if k8s_ts.tzinfo is None:
+                        k8s_ts = k8s_ts.replace(tzinfo=_tz.utc)
+                    from ..tasks.cleanup import get_ttl_days_for_role
+                    from datetime import timedelta as _td
+
+                    ttl = get_ttl_days_for_role(role_val)
+                    expires_at = (k8s_ts + _td(days=ttl)) if ttl is not None else None
+                else:
+                    expires_at = compute_expires_at(role_val)
                 new_rec = DeploymentModel(
                     user_id=current_user.id,
                     name=dep_name,
@@ -213,7 +231,7 @@ async def get_labondemand_deployments(
                     namespace=dep.get("namespace", ""),
                     stack_name=dep.get("labels", {}).get("stack-name"),
                     status="active",
-                    expires_at=compute_expires_at(role_val),
+                    expires_at=expires_at,
                 )
                 try:
                     db.add(new_rec)
