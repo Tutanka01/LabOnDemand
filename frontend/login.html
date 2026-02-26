@@ -11,6 +11,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Ajout de Font Awesome pour les icônes -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Dark mode — appliqué avant le rendu pour éviter le flash -->
+    <script>
+      (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
+    </script>
 </head>
 <body>
     <div class="container">
@@ -58,12 +62,16 @@
         </div>
             
         <div class="login-footer">
-            LabOnDemand &copy; 2026 | Développé par @makhal_01</i>
+            LabOnDemand &copy; 2026 | Développé par @makhal_01
+            <button onclick="toggleDarkMode()" class="dark-mode-toggle" style="margin-top:10px;" title="Basculer le thème">
+                <i class="fas fa-moon"></i>
+            </button>
         </div>
         </div>
     </div>
       <!-- Charger le script de login -->
     <script src="js/api.js"></script>
+    <script src="js/darkmode.js"></script>
     <script src="js/login.js"></script>
 </body>
 </html>

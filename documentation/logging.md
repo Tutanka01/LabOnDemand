@@ -72,15 +72,24 @@ Cela permet de reconstituer le parcours d une requete dans les trois log files.
 
 ## Variables d environnement utiles
 
-| Variable              | Description                                  | Valeur par defaut |
+| Variable | Description | Valeur par defaut |
 |-----------------------|----------------------------------------------|-------------------|
-| `LOG_DIR`             | Chemin du dossier de logs                    | `<repo>/logs`     |
-| `LOG_LEVEL`           | Niveau minimal pour `labondemand`            | `INFO`            |
-| `LOG_MAX_BYTES`       | Seuil de rotation par fichier (octets)       | `5242880`         |
-| `LOG_BACKUP_COUNT`    | Nombre d archives conservees par handler     | `10`              |
-| `LOG_ENABLE_CONSOLE`  | Active la sortie console (dev)               | `True`            |
-|
+| `LOG_DIR` | Chemin du dossier de logs | `<repo>/logs` |
+| `LOG_LEVEL` | Niveau minimal pour `labondemand` | `INFO` |
+| `LOG_MAX_BYTES` | Seuil de rotation pour `app.log` et `access.log` (octets) | `5242880` (5 MiB) |
+| `LOG_BACKUP_COUNT` | Archives conservees pour `app.log` et `access.log` | `10` |
+| `AUDIT_LOG_MAX_BYTES` | Seuil de rotation specifique a `audit.log` | `10485760` (10 MiB) |
+| `AUDIT_LOG_BACKUP_COUNT` | Archives conservees pour `audit.log` | `30` |
+| `LOG_ENABLE_CONSOLE` | Active la sortie console (dev) | `True` |
 | `WATCHFILES_FORCE_POLLING` | (Compose dev) force la surveillance par polling pour eviter l erreur `Invalid argument` avec les partages de fichiers Docker. | `true` (compose.yaml) |
+
+Les variables `AUDIT_LOG_*` permettent de configurer une retention plus longue pour l audit sans gonfler les fichiers applicatifs. Avec les valeurs par defaut, la capacite maximale est :
+
+| Fichier | Taille max par archive | Archives | Capacite totale |
+|---------|----------------------|----------|-----------------|
+| `app.log` | 5 MiB | 10 | ~55 MiB |
+| `access.log` | 5 MiB | 10 | ~55 MiB |
+| `audit.log` | 10 MiB | 30 | ~310 MiB |
 
 Exporter `LOG_DIR` permet de rediriger les journaux vers un volume partage ou un chemin specifique. Sur Docker Compose, `compose.yaml` monte `./logs:/app/logs` pour persister localement entre redemarrages.
 
@@ -103,14 +112,58 @@ scrape_configs:
 
 ## Evenements audites
 
-Quelques evenements clefs ecrits dans `audit.log`:
+Tous les evenements sensibles sont ecrits dans `audit.log` via le logger `labondemand.audit`. Le tableau ci-dessous liste l'ensemble des evenements emis par le backend.
 
-- `login_attempt`, `login_success`, `login_failure`
-- `session_created`, `session_terminated`
-- `deployment_requested`, `deployment_created`, `deployment_failed`
-- `deployment_deleted`, `quota_violation`
+### Catalogue complet des evenements
 
-Chaque entree inclut le `user_id`, le namespace cible et les metadonnees de la ressource Kubernetes concernee. Combinez ces logs avec `access.log` pour tracer l action precise ayant conduit a une modification cluster.
+| Evenement | Niveau | Categorie | Declencheur |
+|-----------|--------|-----------|-------------|
+| `login_success` | INFO | auth | Connexion locale ou SSO reussie |
+| `login_failed` | WARNING | auth | Mot de passe incorrect ou utilisateur inexistant |
+| `logout` | INFO | auth | Deconnexion explicite (`POST /logout`) |
+| `user_registered` | INFO | users | Creation d'un utilisateur par un admin |
+| `user_updated` | INFO | users | Modification d'un utilisateur (`PUT /users/{id}`) |
+| `user_deleted` | WARNING | users | Suppression d'un utilisateur (cascade sessions + K8s) |
+| `user_self_update` | INFO | users | L'utilisateur modifie son propre profil |
+| `password_changed` | INFO | users | Changement de mot de passe (admin ou self) |
+| `quota_override_set` | WARNING | quotas | Derogation de quota posee ou modifiee |
+| `users_imported_csv` | INFO | users | Import CSV d'utilisateurs en masse |
+| `deployment_created` | INFO | deployments | Nouveau lab Kubernetes cree |
+| `deployment_deleted` | WARNING | deployments | Lab supprime (manuel ou expiré) |
+| `deployment_paused` | INFO | deployments | Lab mis en pause |
+| `deployment_resumed` | INFO | deployments | Lab remis en marche |
+
+### Champs communs a toutes les entrees audit
+
+```json
+{
+  "timestamp":  "2026-02-26T10:00:00.000Z",
+  "level":      "INFO | WARNING | ERROR",
+  "logger":     "labondemand.audit",
+  "message":    "<nom_evenement>",
+  "request_id": "a1b2c3d4",
+  "user_id":    "alice",
+  "ip":         "192.168.1.10",
+  "namespace":  "labondemand-user-42"
+}
+```
+
+Des champs supplementaires sont ajoutes selon le contexte (ex: `deployment_name`, `target_user_id`, `role`, `summary` pour les imports CSV).
+
+### Interface UI
+
+Les logs d'audit sont consultables directement dans le dashboard d'administration sans acces SSH :
+
+```
+http://<host>/admin.html#audit
+```
+
+L'API lit automatiquement `audit.log` ET tous les fichiers rotat\u00e9s (`audit.log.1` … `audit.log.N`), fusionnant et triant les entrees par timestamp. L'historique complet reste visible dans l'UI meme apres plusieurs rotations.
+
+Filtres disponibles : recherche libre, categorie, niveau, evenement, utilisateur, plage de dates.
+Export JSON d'un lot filtre disponible depuis l'UI ou via `GET /api/v1/audit-logs?export=json`.
+
+> Pour la reference complete (API, filtres, export, exploitation SIEM), voir [`audit-logs.md`](audit-logs.md).
 
 ## Silencieux par defaut
 
@@ -142,5 +195,7 @@ Certains bruits de logs ont ete desactives:
 - Configuration: `backend/config.py`
 - Volume Compose: `compose.yaml`
 - Exemple d audit: consulter `logs/audit.log`
+- Interface UI audit: `frontend/admin.html` + `frontend/js/audit-logs.js`
+- Documentation audit detaillee: [`audit-logs.md`](audit-logs.md)
 
 Pour toute amelioration ou ajout de loggers, mettez a jour cette documentation et soumettez une merge request pour validation.

@@ -1,72 +1,129 @@
 # Documentation LabOnDemand
 
-Ce fichier est le point d'entrée unique pour la documentation du projet. Il donne la marche à suivre pour lancer LabOnDemand en local et réoriente vers les guides spécialisés.
+Point d'entrée unique de la documentation. Commencez ici, puis naviguez vers
+les guides spécialisés selon votre profil.
 
-## Démarrage express (≈10 minutes)
+---
+
+## Démarrage express (≈ 10 minutes)
 
 1. **Prérequis**
    - Docker Desktop + Docker Compose Plugin
-   - `kubectl` pointant vers votre cluster (k3s, kind, Minikube, ou cluster distant)
-   - Helm (requis si vous devez installer l'Ingress Controller)
-   - Python 3.11+ (uniquement si vous souhaitez exécuter les scripts hors conteneur)
+   - `kubectl` pointant vers un cluster (k3s, kind, Minikube, ou distant)
+   - Helm (si vous installez un Ingress Controller)
+
 2. **Préparer la configuration**
-   - Copier l'exemple d'environnement : `cp .env.exemple .env`
-   - Renseigner les secrets DB (`DB_PASSWORD`, `DB_ROOT_PASSWORD`), le domaine (`COOKIE_DOMAIN`) et les options Ingress (`INGRESS_*`)
-   - Placer votre kubeconfig actuel dans `kubeconfig.yaml` (ou adapter le bind-volume de `compose.yaml`)
-3. **Lancer l'infrastructure locale**
+   ```bash
+   cp .env.example .env
+   # Renseigner : DB_PASSWORD, DB_ROOT_PASSWORD, ADMIN_DEFAULT_PASSWORD
+   # Optionnel  : INGRESS_*, SSO/OIDC, LAB_TTL_*
+   ```
+
+3. **Lancer**
    ```bash
    docker compose up -d --build
-   docker compose logs -f api
+   docker compose logs -f api   # attendre "Application startup complete"
    ```
-   Attendez que FastAPI affiche `Application startup complete`.
-4. **Initialiser les données**
-   ```bash
-   docker exec -it labondemand-api python backend/init_db.py
-   docker exec -it labondemand-api python backend/test_connection.py
-   ```
-   Un administrateur `admin / admin123` est créé si nécessaire.
-5. **Sanity check**
-   - Ouvrir http://localhost:80/login.html
-   - Se connecter avec `admin / admin123`
-   - Déployer un VS Code ou une stack LAMP depuis le catalogue et vérifier les URLs exposées
-6. **Nettoyer / arrêter**
+
+4. **Se connecter**
+   - Ouvrir `http://localhost/login.html`
+   - Connexion admin : `admin` / valeur de `ADMIN_DEFAULT_PASSWORD`
+
+5. **Nettoyer**
    ```bash
    docker compose down -v
    ```
 
-> Besoin de préparer un cluster k3s + Ingress + MetalLB avant d'y connecter LabOnDemand ? Voir `documentation/platform-setup.md`.
+> Besoin de préparer un cluster k3s + Ingress + MetalLB ? Voir `platform-setup.md`.
 
-## Mode pause
-
-Le mode pause permet de couper temporairement une application sans la détruire.
-
-1. Dans `Déploiements actifs`, cliquer sur `Pause` ; l'API force les réplicas à 0 et stocke l'état désiré dans les annotations `labondemand.io/paused-*`.
-2. Le dashboard affiche un badge gris *Pause* et la carte de coût bascule en mode économie.
-3. Cliquer sur `Reprendre` pour restaurer les réplicas mémorisés. Les labels/verrous sont supprimés automatiquement.
-4. Si un composant est exclu (quota ou label `pause-disabled=true`), la requête échoue explicitement sans modifier les autres services.
-
-## Scripts et commandes utiles
-
-| Objectif | Commande |
-| --- | --- |
-| Initialiser la base | `docker exec -it labondemand-api python backend/init_db.py` |
-| Vérifier la connectivité DB | `docker exec -it labondemand-api python backend/test_connection.py` |
-| Réinitialiser le compte admin | `docker exec -it labondemand-api python backend/reset_admin.py` |
-| Healthcheck API | `curl http://localhost:8000/api/v1/health` |
-| Lancer tous les tests | `python backend/tests/run_tests.py --all` |
-| Tests backend uniquement | `python backend/tests/run_tests.py --backend` |
-| Tests UI (Selenium) | `python backend/tests/run_tests.py --ui --skip-server-check` |
-
-Les logs JSON (`app.log`, `access.log`, `audit.log`) sont montés dans `./logs`. Pour tracer un bug, taillez `docker compose logs -f api` tout en surveillant `logs/audit.log` pour les actions sensibles.
+---
 
 ## Où continuer ?
 
-- **Plateforme & réseau** : `documentation/platform-setup.md` explique comment préparer k3s, ingress-nginx, MetalLB, DNS et TLS.
-- **Authentification & rôles** : `documentation/authentication.md` couvre l'architecture et l'API `/api/v1/auth/*` (diagramme Mermaid inclus).
-- **Observabilité** : `documentation/logging.md` détaille les flux JSON, variables d'environnement et recommandations de collecte.
-- **Ressources & quotas** : `documentation/resource-limits.md` centralise les LimitRange, ResourceQuota et clamps côté API.
-- **Stockage persistant** : `documentation/storage.md` décrit la mise à disposition des StorageClass/PVC et l'intégration à l'UI.
-- **Stacks prêtes à l'emploi** : `documentation/lamp.md` et `documentation/wordpress.md` listent la topologie, les secrets et les URL générées.
-- **Terminal Web** : `documentation/terminal.md` explique le WebSocket exec sécurisé et les restrictions par rôle.
+### Opérations & infrastructure
 
-Ces documents sont volontairement courts mais complémentaires : commencez par ce README, puis creusez uniquement les sections nécessaires à votre profil (ops, dev, enseignants).
+| Document | Contenu |
+|----------|---------|
+| [`platform-setup.md`](platform-setup.md) | k3s, ingress-nginx, MetalLB, DNS, TLS |
+| [`development-setup.md`](development-setup.md) | Variables d'environnement, exécution locale, migrations, logs |
+| [`troubleshooting.md`](troubleshooting.md) | Problèmes courants et solutions |
+
+### Architecture & fonctionnement
+
+| Document | Contenu |
+|----------|---------|
+| [`architecture.md`](architecture.md) | Vue d'ensemble, structure des fichiers, flux de requêtes, modèle de données |
+| [`lifecycle.md`](lifecycle.md) | TTL des labs, tâche de nettoyage automatique, namespaces orphelins |
+| [`logging.md`](logging.md) | Logs JSON structurés, audit trail, variables de configuration |
+
+### Sécurité & accès
+
+| Document | Contenu |
+|----------|---------|
+| [`security.md`](security.md) | Sessions, RBAC, mots de passe, rate limiting, suppression propre |
+| [`authentication.md`](authentication.md) | Auth locale et SSO/OIDC — diagramme complet, variables, endpoints |
+
+### Ressources & quotas
+
+| Document | Contenu |
+|----------|---------|
+| [`resource-limits.md`](resource-limits.md) | ResourceQuota K8s, limites applicatives, dérogations `UserQuotaOverride` |
+| [`storage.md`](storage.md) | PVC, StorageClass, intégration UI |
+
+### Administration
+
+| Document | Contenu |
+|----------|---------|
+| [`admin-guide.md`](admin-guide.md) | Gestion utilisateurs, import CSV, dérogations de quotas, health check, dark mode |
+| [`audit-logs.md`](audit-logs.md) | Logs d'audit — interface UI, API, filtres, export, exploitation production |
+
+### Stacks de déploiement
+
+| Document | Contenu |
+|----------|---------|
+| [`lamp.md`](lamp.md) | Stack LAMP (Apache + PHP + MySQL + phpMyAdmin) |
+| [`wordpress.md`](wordpress.md) | Stack WordPress + MariaDB |
+| [`terminal.md`](terminal.md) | Terminal WebSocket dans les pods |
+
+---
+
+## Commandes de référence rapide
+
+| Objectif | Commande |
+|----------|----------|
+| Healthcheck API | `curl http://localhost:8000/api/v1/health` |
+| Logs en direct | `docker compose logs -f api` |
+| Audit trail (UI) | `http://<host>/admin.html#audit` |
+| Audit trail (CLI) | `tail -f logs/audit.log` |
+| Labs expirés nettoyés | `grep deployment_auto_paused_expired logs/app.log` |
+| Namespaces K8s actifs | `kubectl get ns -l managed-by=labondemand` |
+| Lancer les tests | `python backend/tests/run_tests.py --all` |
+
+---
+
+## Fonctionnalités clés
+
+### Pour les étudiants et enseignants
+- Déploiement en 1 clic : VS Code, Jupyter, LAMP, WordPress, MySQL, Custom
+- Pause/Resume sans perte de données
+- Terminal web intégré dans les pods
+- Dashboard avec suivi des quotas CPU/RAM
+- Expiration automatique des labs (TTL configurable)
+- Mode sombre/clair (toggle dans le header, persisté en localStorage)
+
+### Pour les administrateurs
+- RBAC 3 niveaux : student / teacher / admin
+- Import CSV d'utilisateurs (création en masse)
+- Dérogations de quota individuelles et temporaires
+- SSO/OIDC avec mapping automatique des rôles
+- Suppression propre d'utilisateur (sessions + namespace K8s)
+- Health check enrichi (DB + Redis + K8s)
+- Audit trail complet dans `logs/audit.log`
+- Interface Logs d'Audit dans l'admin UI (filtres, pagination, export JSON)
+
+### Pour les ops
+- Health check `GET /api/v1/health` — DB + Redis + K8s
+- Nettoyage automatique des labs expirés (tâche asyncio)
+- Isolation réseau par namespace Kubernetes
+- ResourceQuota + LimitRange par namespace et par rôle
+- Logs JSON rotatifs (app, access, audit)

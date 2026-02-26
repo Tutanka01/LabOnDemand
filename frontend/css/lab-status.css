@@ -34,6 +34,23 @@
   animation: pulseOpacity 2s infinite;
 }
 
+/* ── Dark mode ──────────────────────────────────────────────────────────────── */
+[data-theme="dark"] .replica-status.ready {
+  background: #0A2518;
+  color: #86EFAC;
+  border-color: #1A4A30;
+}
+[data-theme="dark"] .replica-status.pending {
+  background: #2A1805;
+  color: #FCD34D;
+  border-color: #3D2A0A;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .replica-status.ready  { background: #0A2518; color: #86EFAC; border-color: #1A4A30; }
+  html:not([data-theme="light"]) .replica-status.pending { background: #2A1805; color: #FCD34D; border-color: #3D2A0A; }
+}
+
 @keyframes pulseOpacity {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.55; }

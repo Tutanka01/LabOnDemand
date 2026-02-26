@@ -34,7 +34,7 @@ LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
 
 - **Session store** : Redis (service `redis` dans `compose.yaml`), TTL configurable (`SESSION_EXPIRY_HOURS`).
 - **Cookies** : HttpOnly, SameSite configurable (`SESSION_SAMESITE`), `SECURE_COOKIES=True` en production.
-- **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP).
+- **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP, contraint `UNIQUE` en base).
 - **SSO** : `backend/sso.py` — découverte automatique de l'IdP via `/.well-known/openid-configuration`.
 - **Sécurité** : `backend/security.py` pour le hachage bcrypt et la vérification des mots de passe.
 - **Middleware** : `backend/session.py` accroche la session au scope FastAPI.
@@ -97,6 +97,8 @@ sequenceDiagram
 | `/api/v1/auth/change-password` | POST | Changer son propre mot de passe | Authentifié (désactivé si compte OIDC) |
 | `/api/v1/auth/users` | GET | Lister les utilisateurs | Admin |
 | `/api/v1/auth/users/{id}` | GET/PUT/DELETE | CRUD utilisateur | Admin |
+| `/api/v1/auth/users/import` | POST | Import CSV d'utilisateurs | Admin |
+| `/api/v1/auth/users/{id}/quota-override` | GET/PUT/DELETE | Dérogation de quota | Admin |
 | `/api/v1/auth/me` | PUT | Mettre à jour son propre profil | Authentifié |
 
 ## Configuration SSO (OIDC)
@@ -121,6 +123,24 @@ sequenceDiagram
 | `OIDC_STUDENT_VALUES` | `student,etudiant` | Valeurs du claim qui correspondent au rôle étudiant |
 | `OIDC_DEFAULT_ROLE` | `student` | Rôle attribué si aucune valeur ne correspond |
 | `OIDC_EMAIL_FALLBACK_DOMAIN` | `sso.local` | Domaine email de secours si l'IdP ne fournit pas d'email |
+| `OIDC_DISCOVERY_TTL_SECONDS` | `3600` | TTL du cache du document de découverte OIDC (en secondes) |
+
+### Cache du document de découverte OIDC
+
+Le document `/.well-known/openid-configuration` de l'IdP (qui contient les URLs
+des endpoints `authorization_endpoint`, `token_endpoint`, `userinfo_endpoint`)
+est mis en cache côté serveur pour éviter une requête réseau à chaque connexion SSO.
+
+Le cache expire après `OIDC_DISCOVERY_TTL_SECONDS` secondes (défaut : 1 heure).
+Si l'IdP change sa configuration (rotation des clés, migration), le cache sera
+automatiquement rafraîchi à la prochaine connexion après expiration.
+
+**Comportement en cas de panne de l'IdP** : si le cache est expiré mais que l'IdP
+est temporairement inaccessible, le cache périmé est utilisé en fallback plutôt
+que de bloquer toutes les connexions SSO. L'événement `oidc_discovery_using_stale_cache`
+est journalisé dans `logs/app.log`.
+
+Pour forcer un rafraîchissement immédiat : redémarrer l'API.
 
 ### Exemple minimal pour l'Université de Pau
 
@@ -154,7 +174,7 @@ Pour utiliser le SSO, l'application doit être enregistrée auprès de la DSI :
 
 | Claim OIDC | Utilisation |
 | --- | --- |
-| `sub` | Identifiant unique de l'utilisateur (`external_id` en base) |
+| `sub` | Identifiant unique de l'utilisateur (`external_id` en base, contraint `UNIQUE`) |
 | `email` | Adresse email |
 | `name` ou `displayName` | Nom complet |
 | `preferred_username` ou `uid` | Nom d'utilisateur |
@@ -166,6 +186,18 @@ Pour utiliser le SSO, l'application doit être enregistrée auprès de la DSI :
 - Aux connexions suivantes, le profil (nom, email, rôle) est mis à jour depuis l'IdP.
 - Le rôle `admin` n'est **jamais** attribué automatiquement — il doit être assigné manuellement via l'interface admin.
 - Le mot de passe n'est pas utilisé pour les comptes OIDC (`auth_provider="oidc"`).
+
+### Réconciliation du compte SSO
+
+L'API retrouve le compte existant en deux étapes :
+1. Recherche par `external_id = sub` (identifiant unique de l'IdP).
+2. Fallback par `email` si `external_id` ne correspond à aucun enregistrement.
+
+Le champ `external_id` est soumis à une contrainte `UNIQUE` en base, ce qui garantit
+qu'un seul compte peut exister pour un identifiant SSO donné. Cela empêche la
+création de doublons lors de reconnexions successives et protège les déploiements
+de l'utilisateur contre une suppression accidentelle par la tâche de nettoyage
+des namespaces orphelins (voir `documentation/lifecycle.md`).
 
 ## Fonctionnalités de sécurité
 

@@ -3,20 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Administration des utilisateurs - LabOnDemand</title>
+    <title>Administration - LabOnDemand</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Ajout de Font Awesome pour les icônes -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="icon" href="Images/banner-projet.jpeg" type="image/jpeg">
-    <!-- Styles spécifiques pour l'administration -->
     <link rel="stylesheet" href="css/admin.css">
+    <!-- Dark mode — appliqué avant le rendu pour éviter le flash -->
+    <script>
+      (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
+    </script>
+    <script src="js/darkmode.js"></script>
 </head>
 <body>
     <div class="main-container">
-        <!-- En-tête avec le menu de navigation -->
         <header>
             <div class="logo">
                 <i class="fas fa-cubes"></i> LabOnDemand
@@ -33,20 +35,15 @@
                 <div class="user-role" id="user-role">
                     <span class="role-badge">Rôle</span>
                 </div>
+                <button id="dark-mode-toggle" class="dark-mode-toggle" onclick="toggleDarkMode()" title="Basculer le mode sombre" aria-label="Basculer le mode sombre">🌙</button>
                 <button id="logout-btn" class="btn-logout">
                     <i class="fas fa-sign-out-alt"></i> Déconnexion
                 </button>
             </div>
         </header>
 
-    <main>
-            <div class="page-header">
-                <h1><i class="fas fa-users-cog"></i> Administration des utilisateurs</h1>
-                <button id="add-user-btn" class="action-btn">
-                    <i class="fas fa-user-plus"></i> Ajouter un utilisateur
-                </button>
-            </div>
-
+        <main>
+            <!-- ── Notifications globales ─────────────────────────────────────── -->
             <div class="notification-container">
                 <div id="sso-admin-notice" class="notification info hidden">
                     <i class="fas fa-shield-alt"></i> Création d'utilisateurs locaux désactivée (SSO activé)
@@ -62,92 +59,356 @@
                 </div>
             </div>
 
-            <div class="filter-container">
-                <div class="search-box">
-                    <i class="fas fa-search"></i>
-                    <input type="text" id="search-input" placeholder="Rechercher un utilisateur...">
-                </div>
-                <div class="filter-options">
-                    <label>Filtrer par rôle:</label>
-                    <select id="role-filter">
-                        <option value="all">Tous</option>
-                        <option value="student">Étudiants</option>
-                        <option value="teacher">Enseignants</option>
-                        <option value="admin">Administrateurs</option>
-                    </select>
-                </div>
-                <div class="filter-options">
-                    <label>Filtrer par auth:</label>
-                    <select id="provider-filter">
-                        <option value="all">Tous</option>
-                        <option value="local">Local</option>
-                        <option value="oidc">SSO</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="users-table-container">
-                <table class="users-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Nom d'utilisateur</th>
-                            <th>Email</th>
-                            <th>Nom complet</th>
-                            <th>Auth</th>
-                            <th>Rôle</th>
-                            <th>Statut</th>
-                            <th>Date de création</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="users-table-body">
-                        <!-- Le contenu sera rempli dynamiquement par JavaScript -->
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="pagination">
-                <button id="prev-page" class="pagination-btn" disabled>
-                    <i class="fas fa-chevron-left"></i> Précédent
-                </button>
-                <span id="page-info">Page 1 sur 1</span>
-                <button id="next-page" class="pagination-btn" disabled>
-                    Suivant <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
-
-            
-
-            <!-- Gestion des Templates d'applications -->
-            <section class="admin-section" id="templates-section">
-                <div class="page-header">
-                    <h2><i class="fas fa-th-large"></i> Templates d’applications</h2>
-                    <button id="add-template-btn" class="action-btn">
-                        <i class="fas fa-plus"></i> Nouveau template
+            <!-- ── Système d'onglets ──────────────────────────────────────────── -->
+            <div class="admin-tabs">
+                <nav class="tabs-nav" role="tablist">
+                    <button class="tab-btn active" role="tab" data-tab="users" aria-selected="true">
+                        <i class="fas fa-users"></i> Utilisateurs
                     </button>
-                </div>
-                <div id="templates-list" class="users-table-container">
-                    <!-- Rempli par JS -->
-                </div>
-            </section>
-
-            <!-- Gestion des Runtimes (autorisations étudiants) -->
-            <section class="admin-section" id="runtime-configs-section">
-                <div class="page-header">
-                    <h2><i class="fas fa-cogs"></i> Runtimes & accès étudiants</h2>
-                    <button id="add-rc-btn" class="action-btn">
-                        <i class="fas fa-plus"></i> Nouveau runtime
+                    <button class="tab-btn" role="tab" data-tab="templates" aria-selected="false">
+                        <i class="fas fa-th-large"></i> Templates
                     </button>
+                    <button class="tab-btn" role="tab" data-tab="runtimes" aria-selected="false">
+                        <i class="fas fa-cogs"></i> Runtimes
+                    </button>
+                    <button class="tab-btn" role="tab" data-tab="labs" aria-selected="false">
+                        <i class="fas fa-layer-group"></i> Parc des Labs
+                    </button>
+                    <button class="tab-btn" role="tab" data-tab="audit" aria-selected="false">
+                        <i class="fas fa-shield-halved"></i> Logs d'Audit
+                    </button>
+                </nav>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Utilisateurs
+                     ══════════════════════════════════════════════════ -->
+                <div class="tab-panel active" id="tab-users" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-users"></i> Utilisateurs</h1>
+                        <div class="page-header-actions">
+                            <button id="import-csv-btn" class="action-btn action-btn--secondary">
+                                <i class="fas fa-file-csv"></i> Importer CSV
+                            </button>
+                            <button id="add-user-btn" class="action-btn">
+                                <i class="fas fa-user-plus"></i> Ajouter
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="filter-container">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="search-input" placeholder="Rechercher un utilisateur...">
+                        </div>
+                        <div class="filter-options">
+                            <label>Rôle :</label>
+                            <select id="role-filter">
+                                <option value="all">Tous</option>
+                                <option value="student">Étudiants</option>
+                                <option value="teacher">Enseignants</option>
+                                <option value="admin">Administrateurs</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Auth :</label>
+                            <select id="provider-filter">
+                                <option value="all">Tous</option>
+                                <option value="local">Local</option>
+                                <option value="oidc">SSO</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="users-table-container">
+                        <table class="users-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nom d'utilisateur</th>
+                                    <th>Email</th>
+                                    <th>Nom complet</th>
+                                    <th>Auth</th>
+                                    <th>Rôle</th>
+                                    <th>Statut</th>
+                                    <th>Date de création</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-table-body">
+                                <!-- Rempli par JS -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="pagination">
+                        <button id="prev-page" class="pagination-btn" disabled>
+                            <i class="fas fa-chevron-left"></i> Précédent
+                        </button>
+                        <span id="page-info">Page 1 sur 1</span>
+                        <button id="next-page" class="pagination-btn" disabled>
+                            Suivant <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
                 </div>
-                <div id="runtime-configs-list" class="users-table-container">
-                    <!-- Rempli par JS -->
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Templates
+                     ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-templates" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-th-large"></i> Templates d'applications</h1>
+                        <button id="add-template-btn" class="action-btn">
+                            <i class="fas fa-plus"></i> Nouveau template
+                        </button>
+                    </div>
+                    <div id="templates-list" class="users-table-container">
+                        <!-- Rempli par JS -->
+                    </div>
                 </div>
-            </section>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Runtimes
+                     ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-runtimes" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-cogs"></i> Runtimes &amp; accès étudiants</h1>
+                        <button id="add-rc-btn" class="action-btn">
+                            <i class="fas fa-plus"></i> Nouveau runtime
+                        </button>
+                    </div>
+                    <div id="runtime-configs-list" class="users-table-container">
+                        <!-- Rempli par JS -->
+                    </div>
+                </div>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Parc des Labs
+                     ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-labs" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-layer-group"></i> Parc des Labs</h1>
+                        <button id="refresh-labs-btn" class="action-btn action-btn--secondary">
+                            <i class="fas fa-sync-alt"></i> Actualiser
+                        </button>
+                    </div>
+
+                    <!-- Stat cards -->
+                    <div class="labs-stat-cards" id="labs-stat-cards">
+                        <div class="stat-card stat-card--active">
+                            <div class="stat-card__value" id="stat-active">—</div>
+                            <div class="stat-card__label"><i class="fas fa-play-circle"></i> Actifs</div>
+                        </div>
+                        <div class="stat-card stat-card--paused">
+                            <div class="stat-card__value" id="stat-paused">—</div>
+                            <div class="stat-card__label"><i class="fas fa-pause-circle"></i> En pause</div>
+                        </div>
+                        <div class="stat-card stat-card--expired">
+                            <div class="stat-card__value" id="stat-expired">—</div>
+                            <div class="stat-card__label"><i class="fas fa-hourglass-end"></i> Expirés</div>
+                        </div>
+                        <div class="stat-card stat-card--total">
+                            <div class="stat-card__value" id="stat-total">—</div>
+                            <div class="stat-card__label"><i class="fas fa-layer-group"></i> Total</div>
+                        </div>
+                    </div>
+
+                    <!-- Filtres -->
+                    <div class="filter-container">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="labs-search" placeholder="Rechercher un lab ou propriétaire...">
+                        </div>
+                        <div class="filter-options">
+                            <label>Statut :</label>
+                            <select id="labs-status-filter">
+                                <option value="all">Tous</option>
+                                <option value="active">Actifs</option>
+                                <option value="paused">En pause</option>
+                                <option value="expired">Expirés</option>
+                                <option value="deleted">Supprimés</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Type :</label>
+                            <select id="labs-type-filter">
+                                <option value="all">Tous</option>
+                                <option value="vscode">VSCode</option>
+                                <option value="jupyter">Jupyter</option>
+                                <option value="wordpress">WordPress</option>
+                                <option value="lamp">LAMP</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <span id="labs-count" class="labs-count"></span>
+                    </div>
+
+                    <!-- Tableau dense -->
+                    <div class="users-table-container">
+                        <table class="users-table labs-table" id="labs-table">
+                            <thead>
+                                <tr>
+                                    <th>Lab</th>
+                                    <th>Propriétaire</th>
+                                    <th>Type</th>
+                                    <th>Statut</th>
+                                    <th>Expiration</th>
+                                    <th>Créé le</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="labs-table-body">
+                                <tr>
+                                    <td colspan="7" class="table-loading">
+                                        <i class="fas fa-spinner fa-spin"></i> Chargement...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Logs d'Audit
+                     ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-audit" role="tabpanel">
+
+                    <!-- En-tête -->
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-shield-halved"></i> Logs d'Audit</h1>
+                        <div class="page-header-actions">
+                            <button id="audit-refresh-btn" class="action-btn action-btn--secondary">
+                                <i class="fas fa-sync-alt"></i> Actualiser
+                            </button>
+                            <button id="audit-export-btn" class="action-btn action-btn--secondary">
+                                <i class="fas fa-download"></i> Exporter JSON
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- KPI cards -->
+                    <div class="audit-kpi-row" id="audit-kpi-row">
+                        <div class="audit-kpi audit-kpi--total">
+                            <div class="audit-kpi__value" id="audit-kpi-total">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-list"></i> Total</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--auth">
+                            <div class="audit-kpi__value" id="audit-kpi-auth">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-key"></i> Authentification</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--users">
+                            <div class="audit-kpi__value" id="audit-kpi-users">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-users"></i> Utilisateurs</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--deploy">
+                            <div class="audit-kpi__value" id="audit-kpi-deploy">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-rocket"></i> Déploiements</div>
+                        </div>
+                        <div class="audit-kpi audit-kpi--warn">
+                            <div class="audit-kpi__value" id="audit-kpi-warn">—</div>
+                            <div class="audit-kpi__label"><i class="fas fa-triangle-exclamation"></i> Alertes</div>
+                        </div>
+                    </div>
+
+                    <!-- Graphique activité 7 jours -->
+                    <div class="audit-activity-card" id="audit-activity-card">
+                        <div class="audit-activity-title">
+                            <i class="fas fa-chart-bar"></i> Activité — 7 derniers jours
+                        </div>
+                        <div class="audit-sparkbar" id="audit-sparkbar">
+                            <!-- Rempli par JS -->
+                        </div>
+                    </div>
+
+                    <!-- Filtres -->
+                    <div class="filter-container" id="audit-filters">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="audit-search" placeholder="Rechercher dans les logs…">
+                        </div>
+                        <div class="filter-options">
+                            <label>Catégorie :</label>
+                            <select id="audit-category-filter">
+                                <option value="">Toutes</option>
+                                <option value="auth">Authentification</option>
+                                <option value="users">Utilisateurs</option>
+                                <option value="deployments">Déploiements</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Événement :</label>
+                            <select id="audit-event-filter">
+                                <option value="">Tous</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Niveau :</label>
+                            <select id="audit-level-filter">
+                                <option value="">Tous</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="ERROR">ERROR</option>
+                            </select>
+                        </div>
+                        <div class="filter-options">
+                            <label>Utilisateur :</label>
+                            <input type="text" id="audit-username-filter" placeholder="username…" style="padding:9px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:var(--font);font-size:.875rem;min-width:140px;">
+                        </div>
+                        <div class="filter-options">
+                            <label>Du :</label>
+                            <input type="date" id="audit-date-from" style="padding:9px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:var(--font);font-size:.875rem;">
+                        </div>
+                        <div class="filter-options">
+                            <label>Au :</label>
+                            <input type="date" id="audit-date-to" style="padding:9px 12px;border:1px solid var(--gray-300);border-radius:var(--radius);font-family:var(--font);font-size:.875rem;">
+                        </div>
+                        <button id="audit-reset-filters" class="action-btn action-btn--secondary" style="padding:9px 12px;font-size:.82rem;">
+                            <i class="fas fa-times"></i> Réinitialiser
+                        </button>
+                        <span id="audit-count" class="labs-count"></span>
+                    </div>
+
+                    <!-- Tableau des logs -->
+                    <div class="users-table-container">
+                        <table class="users-table audit-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:170px">Horodatage</th>
+                                    <th style="width:80px">Niveau</th>
+                                    <th style="width:220px">Événement</th>
+                                    <th>Détails</th>
+                                    <th style="width:130px">Utilisateur</th>
+                                    <th style="width:120px">IP Client</th>
+                                </tr>
+                            </thead>
+                            <tbody id="audit-table-body">
+                                <tr>
+                                    <td colspan="6" class="table-loading">
+                                        <i class="fas fa-spinner fa-spin"></i> Chargement…
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="audit-pagination">
+                        <button id="audit-prev-page" class="pagination-btn" disabled>
+                            <i class="fas fa-chevron-left"></i> Précédent
+                        </button>
+                        <span id="audit-page-info">Page 1 sur 1</span>
+                        <button id="audit-next-page" class="pagination-btn" disabled>
+                            Suivant <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+            </div>
         </main>
     </div>
 
-    <!-- Modal pour l'ajout/modification d'utilisateur -->
+    <!-- ══════════════════════════════════════════════════════════
+         Modal : Ajout/modification utilisateur
+         ══════════════════════════════════════════════════════════ -->
     <div id="user-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -170,23 +431,19 @@
                         <label for="modal-username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
                         <input type="text" id="modal-username" required minlength="3" maxlength="50">
                     </div>
-                    
                     <div class="form-group">
                         <label for="modal-email"><i class="fas fa-envelope"></i> Email</label>
                         <input type="email" id="modal-email" required>
                     </div>
-                    
                     <div class="form-group">
                         <label for="modal-full-name"><i class="fas fa-id-card"></i> Nom complet</label>
                         <input type="text" id="modal-full-name">
                     </div>
-                    
                     <div class="form-group">
                         <label for="modal-password"><i class="fas fa-lock"></i> Mot de passe</label>
                         <input type="password" id="modal-password" minlength="8">
                         <small id="password-hint">Minimum 8 caractères. Laissez vide pour ne pas modifier le mot de passe.</small>
                     </div>
-                    
                     <div class="form-group">
                         <label for="modal-role"><i class="fas fa-user-tag"></i> Rôle</label>
                         <select id="modal-role" required>
@@ -195,12 +452,10 @@
                             <option value="admin">Administrateur</option>
                         </select>
                     </div>
-                    
                     <div class="form-group checkbox-group">
                         <input type="checkbox" id="modal-is-active" checked>
                         <label for="modal-is-active">Compte actif</label>
                     </div>
-                    
                     <div class="form-actions">
                         <button type="button" class="btn-cancel close-modal">Annuler</button>
                         <button type="submit" class="btn-save">Enregistrer</button>
@@ -210,7 +465,9 @@
         </div>
     </div>
 
-    <!-- Modal de confirmation de suppression -->
+    <!-- ══════════════════════════════════════════════════════════
+         Modal : Confirmation suppression utilisateur
+         ══════════════════════════════════════════════════════════ -->
     <div id="delete-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -220,7 +477,6 @@
             <div class="modal-body">
                 <p>Êtes-vous sûr de vouloir supprimer l'utilisateur <span id="delete-user-name"></span> ?</p>
                 <p class="warning">Cette action est irréversible.</p>
-                
                 <div class="form-actions">
                     <button type="button" class="btn-cancel close-modal">Annuler</button>
                     <button type="button" id="confirm-delete" class="btn-delete">Supprimer</button>
@@ -229,7 +485,9 @@
         </div>
     </div>
 
-    <!-- Modal Templates (création/édition) -->
+    <!-- ══════════════════════════════════════════════════════════
+         Modal : Templates (création/édition)
+         ══════════════════════════════════════════════════════════ -->
     <div id="template-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -261,7 +519,7 @@
                         <div class="form-group">
                             <label for="tpl-icon"><i class="fas fa-icons"></i> Icône (classe ou emoji)</label>
                             <input type="text" id="tpl-icon" maxlength="100" placeholder="fa-solid fa-code ou 🧪">
-                            <small>Vous pouvez saisir une classe Font Awesome (ex: fa-solid fa-code) ou directement un emoji (ex: 🧪)</small>
+                            <small>Classe Font Awesome ou emoji</small>
                         </div>
                         <div class="form-group">
                             <label for="tpl-type"><i class="fas fa-cubes"></i> Runtime</label>
@@ -288,11 +546,11 @@
                     <div class="form-group">
                         <label for="tpl-tags"><i class="fas fa-tags"></i> Tags (séparés par des virgules)</label>
                         <input type="text" id="tpl-tags" maxlength="255" placeholder="ex: web,python,education">
-                        <small>Permet d’assigner plusieurs catégories à l’application (facultatif)</small>
+                        <small>Facultatif</small>
                     </div>
 
                     <div class="form-group">
-                        <label for="tpl-service-type"><i class="fas fa-network-wired"></i> Mode d’accès</label>
+                        <label for="tpl-service-type"><i class="fas fa-network-wired"></i> Mode d'accès</label>
                         <select id="tpl-service-type">
                             <option value="ClusterIP">ClusterIP</option>
                             <option value="NodePort" selected>NodePort</option>
@@ -314,9 +572,175 @@
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════════════════════════
+         Modal : Import CSV
+         ══════════════════════════════════════════════════════════ -->
+    <div id="csv-import-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-file-csv"></i> Importer des utilisateurs via CSV</h2>
+                <button class="close-csv-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="notification info" id="csv-format-info" style="display:flex;">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Format CSV attendu (avec en-tête) :<br>
+                    <code>username,email,full_name,role,password</code><br>
+                    Rôles valides : <strong>student</strong>, <strong>teacher</strong>, <strong>admin</strong>.<br>
+                    Mot de passe : 12 caractères min., maj., min., chiffre et caractère spécial.</span>
+                </div>
+
+                <div id="csv-result-box" class="csv-result-box hidden"></div>
+
+                <form id="csv-import-form">
+                    <div class="form-group" style="margin-top:16px;">
+                        <label for="csv-file-input"><i class="fas fa-upload"></i> Fichier CSV</label>
+                        <input type="file" id="csv-file-input" accept=".csv" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn-cancel close-csv-modal">Annuler</button>
+                        <button type="submit" class="btn-save" id="csv-import-submit">
+                            <i class="fas fa-upload"></i> Importer
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════
+         Modal : Quota Override
+         ══════════════════════════════════════════════════════════ -->
+    <div id="quota-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-tachometer-alt"></i> Dérogation de quota</h2>
+                <button class="close-quota-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div id="quota-modal-error" class="notification error hidden">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span id="quota-modal-error-text"></span>
+                    <button class="close-btn"><i class="fas fa-times"></i></button>
+                </div>
+
+                <p id="quota-modal-user-label" class="quota-user-label"></p>
+
+                <div class="notification info" style="display:flex; margin-bottom:16px;">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Laissez un champ vide pour utiliser la valeur par défaut du rôle.<br>
+                    <strong>Permanent</strong> si "Expiration" est vide.</span>
+                </div>
+
+                <form id="quota-form">
+                    <input type="hidden" id="quota-user-id">
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="quota-max-apps"><i class="fas fa-th-large"></i> Max labs</label>
+                            <input type="number" id="quota-max-apps" min="0" max="99" placeholder="Défaut du rôle">
+                        </div>
+                        <div class="form-group">
+                            <label for="quota-max-cpu"><i class="fas fa-microchip"></i> Max CPU (millicores)</label>
+                            <input type="number" id="quota-max-cpu" min="0" placeholder="ex: 2000">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="quota-max-mem"><i class="fas fa-memory"></i> Max Mémoire (MiB)</label>
+                            <input type="number" id="quota-max-mem" min="0" placeholder="ex: 4096">
+                        </div>
+                        <div class="form-group">
+                            <label for="quota-max-storage"><i class="fas fa-hdd"></i> Max Stockage (GiB)</label>
+                            <input type="number" id="quota-max-storage" min="0" placeholder="ex: 20">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="quota-expires-at"><i class="fas fa-calendar-alt"></i> Expiration (vide = permanent)</label>
+                        <input type="datetime-local" id="quota-expires-at">
+                    </div>
+
+                    <div id="quota-current-info" class="quota-current-info hidden"></div>
+
+                    <div class="form-actions">
+                        <button type="button" id="quota-delete-btn" class="btn-delete" style="margin-right:auto;">
+                            <i class="fas fa-trash-alt"></i> Supprimer la dérogation
+                        </button>
+                        <button type="button" class="btn-cancel close-quota-modal">Annuler</button>
+                        <button type="submit" class="btn-save">Enregistrer</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════
+         Modal : Confirmation action admin sur un lab
+         ══════════════════════════════════════════════════════════ -->
+    <div id="lab-action-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="lab-action-modal-title"><i class="fas fa-exclamation-triangle"></i> Confirmation</h2>
+                <button class="close-lab-modal"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="lab-action-modal-body"></p>
+                <p class="warning" id="lab-action-modal-warning"></p>
+                <div class="form-actions">
+                    <button type="button" class="btn-cancel close-lab-modal">Annuler</button>
+                    <button type="button" id="lab-action-confirm-btn" class="btn-delete">Confirmer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="js/api.js"></script>
     <script src="js/admin.js"></script>
+    <script src="js/admin-labs.js"></script>
     <script src="js/templates.js"></script>
     <script src="js/runtime-configs.js"></script>
+    <script src="js/audit-logs.js"></script>
+
+    <!-- ── Gestion des onglets ──────────────────────────────────────────────── -->
+    <script>
+    (function () {
+        const tabBtns  = document.querySelectorAll('.tab-btn');
+        const tabPanels = document.querySelectorAll('.tab-panel');
+
+        function activateTab(tabId) {
+            tabBtns.forEach(btn => {
+                const active = btn.dataset.tab === tabId;
+                btn.classList.toggle('active', active);
+                btn.setAttribute('aria-selected', active);
+            });
+            tabPanels.forEach(panel => {
+                panel.classList.toggle('active', panel.id === 'tab-' + tabId);
+            });
+            // Persist dans l'URL (hash) pour permettre le deep-link
+            history.replaceState(null, '', '#' + tabId);
+            // Déclencher le chargement du parc des labs à la première ouverture
+            if (tabId === 'labs') {
+                document.dispatchEvent(new CustomEvent('labs-tab-opened'));
+            }
+            // Déclencher le chargement des logs d'audit à la première ouverture
+            if (tabId === 'audit') {
+                document.dispatchEvent(new CustomEvent('audit-tab-opened'));
+            }
+        }
+
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+        });
+
+        // Deep-link via hash
+        const hash = location.hash.replace('#', '');
+        const validTabs = ['users', 'templates', 'runtimes', 'labs', 'audit'];
+        if (validTabs.includes(hash)) {
+            activateTab(hash);
+        }
+    })();
+    </script>
 </body>
 </html>

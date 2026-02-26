@@ -7,6 +7,7 @@ Flow:
 """
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
@@ -17,14 +18,29 @@ from .config import settings
 
 logger = logging.getLogger("labondemand.sso")
 
-# Cache du document de découverte OIDC (évite une requête à chaque login)
+# Cache du document de découverte OIDC avec TTL configurable
 _discovery_cache: Optional[Dict] = None
+_discovery_cached_at: Optional[datetime] = None
 
 
 def _get_discovery() -> Dict:
-    """Récupère (et met en cache) le document de découverte OIDC."""
-    global _discovery_cache
-    if _discovery_cache is not None:
+    """Récupère (et met en cache) le document de découverte OIDC.
+
+    Le cache est invalidé après ``OIDC_DISCOVERY_TTL_SECONDS`` secondes
+    (défaut : 3600 s = 1 h) pour prendre en compte les changements de
+    configuration de l'IdP sans redémarrage.
+    """
+    global _discovery_cache, _discovery_cached_at
+
+    ttl = settings.OIDC_DISCOVERY_TTL_SECONDS
+    now = datetime.now(timezone.utc)
+
+    # Utiliser le cache si valide
+    if (
+        _discovery_cache is not None
+        and _discovery_cached_at is not None
+        and (now - _discovery_cached_at).total_seconds() < ttl
+    ):
         return _discovery_cache
 
     url = f"{settings.OIDC_ISSUER.rstrip('/')}/.well-known/openid-configuration"
@@ -32,10 +48,18 @@ def _get_discovery() -> Dict:
         resp = httpx.get(url, timeout=10)
         resp.raise_for_status()
         _discovery_cache = resp.json()
+        _discovery_cached_at = now
         logger.info("oidc_discovery_loaded", extra={"extra_fields": {"issuer": settings.OIDC_ISSUER}})
         return _discovery_cache
     except httpx.HTTPError as e:
         logger.error("oidc_discovery_failed", extra={"extra_fields": {"url": url, "error": str(e)}})
+        # Si le cache est périmé mais disponible, on l'utilise en fallback plutôt que d'échouer
+        if _discovery_cache is not None:
+            logger.warning(
+                "oidc_discovery_using_stale_cache",
+                extra={"extra_fields": {"url": url, "error": str(e)}},
+            )
+            return _discovery_cache
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Impossible de contacter le serveur SSO: {e}",
@@ -106,13 +130,25 @@ def get_userinfo(access_token: str) -> Dict:
 
 
 def _split_csv(value: Optional[str]) -> List[str]:
+    """Découpe une chaîne CSV en liste de valeurs minuscules et dé-blanchies."""
     if not value:
         return []
     return [item.strip().lower() for item in value.split(",") if item.strip()]
 
 
 def map_role(claims: Dict) -> str:
-    """Détermine le rôle de l'utilisateur depuis les claims OIDC."""
+    """Détermine le rôle à attribuer à partir des claims OIDC.
+
+    Lit le claim désigné par ``OIDC_ROLE_CLAIM`` (ex. eduPersonAffiliation) et
+    le compare aux listes configurées via ``OIDC_TEACHER_VALUES`` et
+    ``OIDC_STUDENT_VALUES``.  Si aucune correspondance n'est trouvée, retourne
+    ``OIDC_DEFAULT_ROLE`` (par défaut « student »).
+
+    .. note::
+        Cette fonction détermine uniquement le rôle *proposé* par l'IdP.  Le
+        callback SSO ignore ce résultat si ``user.role_override`` est à ``True``
+        (rôle défini manuellement par un administrateur).
+    """
     role_claim = settings.OIDC_ROLE_CLAIM
     teacher_values = set(_split_csv(settings.OIDC_TEACHER_VALUES))
     student_values = set(_split_csv(settings.OIDC_STUDENT_VALUES))
@@ -133,6 +169,8 @@ def map_role(claims: Dict) -> str:
 
 
 def sanitize_username(raw: str) -> str:
+    """Nettoie un username brut en ne conservant que les caractères alphanumériques,
+    points, tirets et underscores.  Les suites de tirets sont fusionnées."""
     if not raw:
         return "user"
     cleaned = re.sub(r"[^a-zA-Z0-9._-]", "-", raw.strip())

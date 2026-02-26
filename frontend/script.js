@@ -1220,7 +1220,9 @@ function createDashboardApp() {
                                 urlTemplate: undefined,
                                 protocol: novncInfo.protocol,
                                 secure: novncInfo.secure,
-                                credentials: deployment.type === 'netbeans' ? { username: 'kasm_user', password: 'password' } : undefined
+                                credentials: deployment.type === 'netbeans' ? { username: 'kasm_user', password: 'password' } : undefined,
+                                expiresAt: deployment.expires_at || null,
+                                createdAt: deployment.created_at || null,
                             });
                         } else {
                             console.error(`Erreur lors de la récupération des détails pour ${deployment.name}:`, detailsResponse.status);

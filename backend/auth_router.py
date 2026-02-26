@@ -10,12 +10,12 @@ from sqlalchemy.orm import Session
 from .logging_config import shorten_token
 
 from .database import get_db
-from .models import User, UserRole
-from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse
+from .models import User, UserRole, UserQuotaOverride
+from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse, SessionData
 from .security import (
     authenticate_user, create_session, get_password_hash,
-    get_current_user, delete_session, is_admin, is_teacher_or_admin,
-    limiter, validate_password_strength
+    get_current_user, delete_session, delete_user_sessions,
+    is_admin, is_teacher_or_admin, limiter, validate_password_strength
 )
 from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
 from .config import settings
@@ -167,7 +167,22 @@ def sso_login(request: Request, response: Response):
 
 @router.get("/sso/callback")
 def sso_callback(request: Request, db: Session = Depends(get_db)):
-    """Callback OIDC : échange le code, récupère l'utilisateur, crée la session."""
+    """Callback OIDC : échange le code, récupère l'utilisateur, crée la session.
+
+    Flux complet :
+    1. Vérifie le paramètre ``error`` renvoyé par l'IdP.
+    2. Valide le ``state`` CSRF (comparaison avec le cookie ``oidc_state``).
+    3. Échange le code d'autorisation contre un access token.
+    4. Récupère les claims utilisateur via le endpoint userinfo.
+    5. Recherche le compte existant par ``external_id`` (sub) puis par email.
+    6. Crée le compte s'il n'existe pas encore.
+    7. Met à jour les champs de profil (username, email, full_name) à chaque
+       connexion, **sauf le rôle** dans les cas suivants :
+         - L'utilisateur est admin (protection contre la rétrogradation).
+         - ``user.role_override`` est ``True`` : un admin a défini le rôle
+           manuellement via l'API et ce choix prime sur les claims IdP.
+    8. Crée la session et redirige vers ``FRONTEND_BASE_URL``.
+    """
     if not settings.SSO_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO désactivé")
 
@@ -280,7 +295,9 @@ def sso_callback(request: Request, db: Session = Depends(get_db)):
         user.full_name = full_name or user.full_name
         user.auth_provider = "oidc"
         user.external_id = sub
-        if user.role != UserRole.admin:
+        # Ne pas écraser le rôle si : (a) admin (protection), ou
+        # (b) role_override=True — un admin a manuellement défini ce rôle.
+        if user.role != UserRole.admin and not user.role_override:
             user.role = UserRole[role]
         db.commit()
         db.refresh(user)
@@ -469,7 +486,10 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     
     if user_update.role is not None:
         db_user.role = UserRole[user_update.role]
-    
+        # Marque le rôle comme défini manuellement : le callback SSO
+        # n'écrasera plus ce choix lors des prochaines connexions.
+        db_user.role_override = True
+
     if user_update.is_active is not None:
         db_user.is_active = user_update.is_active
     
@@ -494,7 +514,11 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(is_admin)])
 def delete_user(user_id: int, db: Session = Depends(get_db)):
     """
-    Supprime un utilisateur (admins seulement)
+    Supprime un utilisateur (admins seulement).
+
+    Avant la suppression en base :
+    1. Invalide toutes les sessions Redis de l'utilisateur (ROB-2).
+    2. Supprime le namespace Kubernetes de l'utilisateur (CRITIQUE-5).
     """
     db_user = db.query(User).filter(User.id == user_id).first()
     if db_user is None:
@@ -502,7 +526,21 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Utilisateur non trouvé"
         )
-    
+
+    # 1. Invalider toutes les sessions Redis
+    sessions_deleted = delete_user_sessions(user_id)
+
+    # 2. Nettoyer le namespace K8s (erreurs non bloquantes)
+    try:
+        from .deployment_service import deployment_service
+        ns_result = deployment_service.cleanup_user_namespace(user_id)
+    except Exception as exc:
+        logger.warning(
+            "user_namespace_cleanup_skipped",
+            extra={"extra_fields": {"user_id": user_id, "error": str(exc)}},
+        )
+        ns_result = {"deleted": False, "error": str(exc)}
+
     db.delete(db_user)
     db.commit()
 
@@ -513,10 +551,12 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
                 "user_id": user_id,
                 "username": db_user.username,
                 "role": db_user.role.value,
+                "sessions_revoked": sessions_deleted,
+                "namespace_deleted": ns_result.get("deleted", False),
             }
         },
     )
-    
+
     return None
 
 @router.put("/me", response_model=UserResponse)
@@ -667,3 +707,209 @@ def change_password(
     return current_user
 
 
+# ============= QUOTA OVERRIDES (admin) — IMP-3 =============
+
+from datetime import datetime as _dt
+from typing import Optional as _Opt
+
+
+@router.get("/users/{user_id}/quota-override", dependencies=[Depends(is_admin)])
+def get_quota_override(user_id: int, db: Session = Depends(get_db)):
+    """Récupère la dérogation de quota d'un utilisateur (admins seulement)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+    override = db.query(UserQuotaOverride).filter(UserQuotaOverride.user_id == user_id).first()
+    if override is None:
+        return {"user_id": user_id, "override": None}
+    return {
+        "user_id": user_id,
+        "override": {
+            "id": override.id,
+            "max_apps": override.max_apps,
+            "max_cpu_m": override.max_cpu_m,
+            "max_mem_mi": override.max_mem_mi,
+            "max_storage_gi": override.max_storage_gi,
+            "expires_at": override.expires_at.isoformat() if override.expires_at else None,
+            "created_at": override.created_at.isoformat() if override.created_at else None,
+        },
+    }
+
+
+@router.put("/users/{user_id}/quota-override", dependencies=[Depends(is_admin)])
+def set_quota_override(
+    user_id: int,
+    max_apps: _Opt[int] = None,
+    max_cpu_m: _Opt[int] = None,
+    max_mem_mi: _Opt[int] = None,
+    max_storage_gi: _Opt[int] = None,
+    expires_at: _Opt[str] = None,
+    admin: SessionData = Depends(is_admin),
+    db: Session = Depends(get_db),
+):
+    """Crée ou met à jour la dérogation de quota d'un utilisateur (admins seulement).
+
+    Passe ``expires_at`` au format ISO 8601 pour une dérogation temporaire,
+    ou omis pour une dérogation permanente.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvé")
+
+    expires_dt: _Opt[_dt] = None
+    if expires_at:
+        try:
+            expires_dt = _dt.fromisoformat(expires_at)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Format expires_at invalide (ISO 8601 attendu, ex: 2026-06-01T00:00:00)",
+            )
+
+    override = db.query(UserQuotaOverride).filter(UserQuotaOverride.user_id == user_id).first()
+    if override is None:
+        override = UserQuotaOverride(user_id=user_id, created_by=admin.user_id)
+        db.add(override)
+
+    override.max_apps = max_apps
+    override.max_cpu_m = max_cpu_m
+    override.max_mem_mi = max_mem_mi
+    override.max_storage_gi = max_storage_gi
+    override.expires_at = expires_dt
+    db.commit()
+    db.refresh(override)
+
+    audit_logger.info(
+        "quota_override_set",
+        extra={
+            "extra_fields": {
+                "target_user_id": user_id,
+                "admin_user_id": admin.user_id,
+                "max_apps": max_apps,
+                "max_cpu_m": max_cpu_m,
+                "max_mem_mi": max_mem_mi,
+                "expires_at": expires_at,
+            }
+        },
+    )
+    return {"message": "Dérogation de quota mise à jour", "user_id": user_id}
+
+
+@router.delete("/users/{user_id}/quota-override", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(is_admin)])
+def delete_quota_override(user_id: int, db: Session = Depends(get_db)):
+    """Supprime la dérogation de quota d'un utilisateur (admins seulement)."""
+    override = db.query(UserQuotaOverride).filter(UserQuotaOverride.user_id == user_id).first()
+    if override:
+        db.delete(override)
+        db.commit()
+    return None
+
+
+# ============= IMPORT CSV UTILISATEURS (admin) — FEAT-3 =============
+
+import csv
+import io
+from fastapi import UploadFile, File
+
+
+@router.post("/users/import", dependencies=[Depends(is_admin)], status_code=status.HTTP_200_OK)
+async def import_users_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Importe des utilisateurs depuis un fichier CSV (admins seulement).
+
+    Format CSV attendu (avec en-tête) ::
+
+        username,email,full_name,role,password
+
+    Retourne un rapport ligne par ligne avec le statut de chaque import.
+    """
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Le fichier doit être au format CSV (.csv)",
+        )
+
+    content = await file.read()
+    try:
+        text_content = content.decode("utf-8-sig")  # gère le BOM UTF-8
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Encodage du fichier invalide (UTF-8 attendu)",
+        )
+
+    results = []
+    reader = csv.DictReader(io.StringIO(text_content))
+    required_fields = {"username", "email", "role", "password"}
+
+    if not reader.fieldnames or not required_fields.issubset(set(reader.fieldnames)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"En-têtes CSV invalides. Requis : {', '.join(sorted(required_fields))}",
+        )
+
+    for line_num, row in enumerate(reader, start=2):
+        username = (row.get("username") or "").strip()
+        email = (row.get("email") or "").strip()
+        full_name = (row.get("full_name") or "").strip() or None
+        role_raw = (row.get("role") or "student").strip().lower()
+        password = (row.get("password") or "").strip()
+
+        # Validation de base
+        if not username or not email or not password:
+            results.append({"line": line_num, "username": username, "status": "error", "detail": "Champs obligatoires manquants"})
+            continue
+
+        if role_raw not in ("student", "teacher", "admin"):
+            results.append({"line": line_num, "username": username, "status": "error", "detail": f"Rôle invalide : {role_raw}"})
+            continue
+
+        if "@" not in email:
+            results.append({"line": line_num, "username": username, "status": "error", "detail": "Email invalide"})
+            continue
+
+        if not validate_password_strength(password):
+            results.append({"line": line_num, "username": username, "status": "error", "detail": "Mot de passe trop faible (12 car., maj., min., chiffre, spécial)"})
+            continue
+
+        if db.query(User).filter(User.username == username).first():
+            results.append({"line": line_num, "username": username, "status": "skipped", "detail": "Nom d'utilisateur déjà utilisé"})
+            continue
+
+        if db.query(User).filter(User.email == email).first():
+            results.append({"line": line_num, "username": username, "status": "skipped", "detail": "Email déjà utilisé"})
+            continue
+
+        try:
+            new_user = User(
+                username=username,
+                email=email,
+                full_name=full_name,
+                hashed_password=get_password_hash(password),
+                auth_provider="local",
+                role=UserRole[role_raw],
+                is_active=True,
+            )
+            db.add(new_user)
+            db.commit()
+            db.refresh(new_user)
+            results.append({"line": line_num, "username": username, "status": "created", "user_id": new_user.id})
+        except Exception as exc:
+            db.rollback()
+            results.append({"line": line_num, "username": username, "status": "error", "detail": str(exc)})
+
+    created = sum(1 for r in results if r["status"] == "created")
+    errors = sum(1 for r in results if r["status"] == "error")
+    skipped = sum(1 for r in results if r["status"] == "skipped")
+
+    audit_logger.info(
+        "users_imported_csv",
+        extra={"extra_fields": {"created": created, "errors": errors, "skipped": skipped}},
+    )
+
+    return {
+        "summary": {"created": created, "errors": errors, "skipped": skipped, "total": len(results)},
+        "results": results,
+    }

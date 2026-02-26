@@ -155,6 +155,28 @@ async def test_update_user_role(admin_client, student_user):
     assert r.json()["role"] == "teacher"
 
 
+async def test_update_user_role_sets_override_flag(admin_client, student_user, db):
+    """Changer le rôle via l'API admin doit positionner role_override=True en base."""
+    r = await admin_client.put(
+        f"{BASE}/users/{student_user.id}",
+        json={"role": "teacher"},
+    )
+    assert r.status_code in (200, 204)
+    db.refresh(student_user)
+    assert student_user.role_override is True
+
+
+async def test_update_user_without_role_does_not_set_override(admin_client, student_user, db):
+    """Modifier un champ autre que le rôle ne doit pas activer role_override."""
+    r = await admin_client.put(
+        f"{BASE}/users/{student_user.id}",
+        json={"full_name": "Just a name"},
+    )
+    assert r.status_code in (200, 204)
+    db.refresh(student_user)
+    assert student_user.role_override is False
+
+
 async def test_update_user_deactivate(admin_client, student_user):
     r = await admin_client.put(
         f"{BASE}/users/{student_user.id}",

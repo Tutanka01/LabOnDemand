@@ -310,6 +310,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="edit-btn" data-id="${user.id}" title="Modifier">
                         <i class="fas fa-edit"></i>
                     </button>
+                    <button class="quota-btn" data-id="${user.id}" title="Gérer les quotas">
+                        <i class="fas fa-tachometer-alt"></i>
+                    </button>
                     <button class="delete-btn" data-id="${user.id}" title="Supprimer">
                         <i class="fas fa-trash-alt"></i>
                     </button>
@@ -340,6 +343,13 @@ document.addEventListener('DOMContentLoaded', () => {
             button.addEventListener('click', () => {
                 const userId = button.dataset.id;
                 openEditUserModal(userId);
+            });
+        });
+
+        document.querySelectorAll('.quota-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                const userId = button.dataset.id;
+                openQuotaModal(userId);
             });
         });
 
@@ -651,6 +661,291 @@ document.addEventListener('DOMContentLoaded', () => {
             window.location.href = 'login.html';
         } catch (error) {
             showError(error.message);
+        }
+    });
+
+    // ══════════════════════════════════════════════════════════
+    // MISSION 1 — Import CSV
+    // ══════════════════════════════════════════════════════════
+
+    const importCsvBtn    = document.getElementById('import-csv-btn');
+    const csvImportModal  = document.getElementById('csv-import-modal');
+    const csvImportForm   = document.getElementById('csv-import-form');
+    const csvFileInput    = document.getElementById('csv-file-input');
+    const csvResultBox    = document.getElementById('csv-result-box');
+    const csvSubmitBtn    = document.getElementById('csv-import-submit');
+
+    function openCsvModal() {
+        if (csvImportForm) csvImportForm.reset();
+        if (csvResultBox) { csvResultBox.classList.add('hidden'); csvResultBox.innerHTML = ''; }
+        if (csvImportModal) csvImportModal.classList.add('show');
+    }
+
+    function closeCsvModal() {
+        if (csvImportModal) csvImportModal.classList.remove('show');
+    }
+
+    if (importCsvBtn) importCsvBtn.addEventListener('click', openCsvModal);
+
+    document.querySelectorAll('.close-csv-modal').forEach(btn =>
+        btn.addEventListener('click', closeCsvModal)
+    );
+
+    if (csvImportModal) {
+        csvImportModal.addEventListener('click', e => {
+            if (e.target === csvImportModal) closeCsvModal();
+        });
+    }
+
+    if (csvImportForm) {
+        csvImportForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            const file = csvFileInput && csvFileInput.files[0];
+            if (!file) return;
+
+            csvSubmitBtn.disabled = true;
+            csvSubmitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Import en cours…';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const resp = await fetch('/api/v1/auth/users/import', {
+                    method: 'POST',
+                    credentials: 'include',
+                    body: formData
+                });
+
+                let data;
+                try { data = await resp.json(); } catch { data = null; }
+
+                if (!resp.ok) {
+                    const msg = (data && (data.detail || data.message)) || `HTTP ${resp.status}`;
+                    throw new Error(msg);
+                }
+
+                renderCsvResults(data);
+                // Rechargement silencieux de la liste si de nouveaux comptes ont été créés
+                if (data.created > 0) {
+                    loadUsers();
+                    showSuccess(`${data.created} utilisateur(s) importé(s) avec succès.`);
+                }
+            } catch (err) {
+                showError(err.message);
+                closeCsvModal();
+            } finally {
+                csvSubmitBtn.disabled = false;
+                csvSubmitBtn.innerHTML = '<i class="fas fa-upload"></i> Importer';
+            }
+        });
+    }
+
+    function renderCsvResults(data) {
+        if (!csvResultBox) return;
+        const rows = data.results || [];
+        const created = data.created ?? rows.filter(r => r.status === 'created').length;
+        const skipped = data.skipped ?? rows.filter(r => r.status === 'skipped').length;
+        const errors  = data.errors  ?? rows.filter(r => r.status === 'error').length;
+
+        const statusLabel = {
+            created: '<span style="color:var(--green);font-weight:600;">Créé</span>',
+            skipped: '<span style="color:var(--amber);font-weight:600;">Ignoré</span>',
+            error:   '<span style="color:var(--red);font-weight:600;">Erreur</span>'
+        };
+
+        let html = `
+            <div class="csv-summary">
+                <span class="s-created"><i class="fas fa-check-circle"></i> ${created} créé(s)</span>
+                <span class="s-skipped"><i class="fas fa-forward"></i> ${skipped} ignoré(s)</span>
+                <span class="s-error"><i class="fas fa-times-circle"></i> ${errors} erreur(s)</span>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ligne</th>
+                        <th>Utilisateur</th>
+                        <th>Statut</th>
+                        <th>Détail</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        rows.forEach(r => {
+            const cls = `row-${r.status}`;
+            html += `<tr class="${cls}">
+                <td>${r.line ?? '-'}</td>
+                <td>${r.username || '-'}</td>
+                <td>${statusLabel[r.status] || r.status}</td>
+                <td>${r.detail || (r.user_id ? `ID #${r.user_id}` : '')}</td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        csvResultBox.innerHTML = html;
+        csvResultBox.classList.remove('hidden');
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // MISSION 2 — Quota Override
+    // ══════════════════════════════════════════════════════════
+
+    const quotaModal        = document.getElementById('quota-modal');
+    const quotaForm         = document.getElementById('quota-form');
+    const quotaUserIdInput  = document.getElementById('quota-user-id');
+    const quotaUserLabel    = document.getElementById('quota-modal-user-label');
+    const quotaCurrentInfo  = document.getElementById('quota-current-info');
+    const quotaModalError   = document.getElementById('quota-modal-error');
+    const quotaModalErrText = document.getElementById('quota-modal-error-text');
+    const quotaDeleteBtn    = document.getElementById('quota-delete-btn');
+
+    function showQuotaModalError(msg) {
+        if (!quotaModalError || !quotaModalErrText) return;
+        quotaModalErrText.textContent = msg;
+        quotaModalError.classList.remove('hidden');
+        quotaModalError.style.display = 'flex';
+    }
+
+    function hideQuotaModalError() {
+        if (quotaModalError) {
+            quotaModalError.classList.add('hidden');
+            quotaModalError.style.display = 'none';
+        }
+    }
+
+    function closeQuotaModal() {
+        if (quotaModal) quotaModal.classList.remove('show');
+    }
+
+    document.querySelectorAll('.close-quota-modal').forEach(btn =>
+        btn.addEventListener('click', closeQuotaModal)
+    );
+
+    if (quotaModal) {
+        quotaModal.addEventListener('click', e => {
+            if (e.target === quotaModal) closeQuotaModal();
+        });
+    }
+
+    async function openQuotaModal(userId) {
+        const user = users.find(u => u.id == userId);
+        if (!user) { showError('Utilisateur introuvable'); return; }
+
+        hideQuotaModalError();
+        if (quotaUserIdInput) quotaUserIdInput.value = userId;
+        if (quotaUserLabel) {
+            quotaUserLabel.textContent =
+                `Utilisateur : ${user.full_name || user.username} (${user.email}) — rôle : ${formatRole(user.role)}`;
+        }
+
+        // Réinitialiser le formulaire
+        ['quota-max-apps', 'quota-max-cpu', 'quota-max-mem', 'quota-max-storage', 'quota-expires-at']
+            .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+
+        if (quotaCurrentInfo) {
+            quotaCurrentInfo.classList.add('hidden');
+            quotaCurrentInfo.innerHTML = '';
+        }
+
+        if (quotaDeleteBtn) quotaDeleteBtn.style.display = 'none';
+
+        if (quotaModal) quotaModal.classList.add('show');
+
+        // Charger la dérogation existante
+        try {
+            const data = await window.api(`/api/v1/auth/users/${userId}/quota-override`);
+            const ov = data.override;
+
+            if (ov) {
+                if (quotaDeleteBtn) quotaDeleteBtn.style.display = 'inline-flex';
+
+                const set = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el && val !== null && val !== undefined) el.value = val;
+                };
+                set('quota-max-apps',    ov.max_apps);
+                set('quota-max-cpu',     ov.max_cpu_m);
+                set('quota-max-mem',     ov.max_mem_mi);
+                set('quota-max-storage', ov.max_storage_gi);
+
+                if (ov.expires_at) {
+                    const el = document.getElementById('quota-expires-at');
+                    if (el) el.value = ov.expires_at.slice(0, 16);
+                }
+
+                if (quotaCurrentInfo) {
+                    const expiryStr = ov.expires_at
+                        ? `Expire le ${new Date(ov.expires_at).toLocaleDateString('fr-FR')}`
+                        : 'Permanente';
+                    quotaCurrentInfo.innerHTML =
+                        `<i class="fas fa-info-circle"></i> Dérogation existante — ${expiryStr}<br>
+                         Créée le ${ov.created_at ? new Date(ov.created_at).toLocaleDateString('fr-FR') : '?'}`;
+                    quotaCurrentInfo.classList.remove('hidden');
+                }
+            }
+        } catch (err) {
+            // 404 = pas de dérogation : comportement normal
+            if (!err.message.includes('404')) {
+                showQuotaModalError(`Erreur lors du chargement : ${err.message}`);
+            }
+        }
+    }
+
+    if (quotaForm) {
+        quotaForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            hideQuotaModalError();
+
+            const userId    = quotaUserIdInput ? quotaUserIdInput.value : null;
+            const maxApps   = document.getElementById('quota-max-apps')?.value    || null;
+            const maxCpu    = document.getElementById('quota-max-cpu')?.value     || null;
+            const maxMem    = document.getElementById('quota-max-mem')?.value     || null;
+            const maxSto    = document.getElementById('quota-max-storage')?.value || null;
+            const expiresAt = document.getElementById('quota-expires-at')?.value  || null;
+
+            if (!userId) return;
+
+            const params = new URLSearchParams();
+            if (maxApps   !== null && maxApps   !== '') params.set('max_apps',      maxApps);
+            if (maxCpu    !== null && maxCpu    !== '') params.set('max_cpu_m',     maxCpu);
+            if (maxMem    !== null && maxMem    !== '') params.set('max_mem_mi',    maxMem);
+            if (maxSto    !== null && maxSto    !== '') params.set('max_storage_gi', maxSto);
+            if (expiresAt !== null && expiresAt !== '') params.set('expires_at',    expiresAt + ':00');
+
+            try {
+                await window.api(
+                    `/api/v1/auth/users/${userId}/quota-override?${params.toString()}`,
+                    { method: 'PUT' }
+                );
+                closeQuotaModal();
+                showSuccess('Dérogation de quota mise à jour.');
+            } catch (err) {
+                showQuotaModalError(err.message);
+            }
+        });
+    }
+
+    if (quotaDeleteBtn) {
+        quotaDeleteBtn.addEventListener('click', async () => {
+            const userId = quotaUserIdInput ? quotaUserIdInput.value : null;
+            if (!userId) return;
+            try {
+                await fetch(`/api/v1/auth/users/${userId}/quota-override`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+                closeQuotaModal();
+                showSuccess('Dérogation de quota supprimée.');
+            } catch (err) {
+                showQuotaModalError(err.message);
+            }
+        });
+    }
+
+    // Fermer les modales CSV/Quota avec Échap
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            closeCsvModal();
+            closeQuotaModal();
         }
     });
 });
