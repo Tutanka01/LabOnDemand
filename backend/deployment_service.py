@@ -2,6 +2,7 @@
 Service de déploiement Kubernetes
 Principe KISS : une classe focalisée sur la création de déploiements
 """
+
 import datetime
 import logging
 import re
@@ -10,11 +11,11 @@ from fastapi import HTTPException
 from kubernetes import client
 from sqlalchemy.orm import Session
 
-from .models import User, UserRole, RuntimeConfig
+from .models import User, UserRole, RuntimeConfig, Deployment as DeploymentRecord
 from .config import settings
 from .k8s_utils import (
-    validate_k8s_name, 
-    validate_resource_format, 
+    validate_k8s_name,
+    validate_resource_format,
     create_labondemand_labels,
     ensure_namespace_exists,
     build_user_namespace,
@@ -46,12 +47,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
     Les méthodes de création de stacks (WordPress, MySQL, LAMP) sont
     extraites dans des mixins sous backend/services/.
     """
-    
+
     def __init__(self):
         self.apps_v1 = client.AppsV1Api()
         self.core_v1 = client.CoreV1Api()
         self.networking_v1 = client.NetworkingV1Api()
-    
+
     @staticmethod
     def _ingress_supported() -> bool:
         """Retourne True si la configuration Ingress est utilisable."""
@@ -85,7 +86,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 slug = fallback
         return slug
 
-    def _build_ingress_host(self, base_name: str, current_user: User, component: Optional[str] = None) -> str:
+    def _build_ingress_host(
+        self, base_name: str, current_user: User, component: Optional[str] = None
+    ) -> str:
         label_parts = [self._dns_label(base_name)]
         if component:
             label_parts.append(self._dns_label(component))
@@ -102,9 +105,17 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         controller_hint = (settings.INGRESS_CLASS_NAME or "").lower()
         if controller_hint.startswith("traefik"):
             entrypoints = "websecure,web" if settings.INGRESS_TLS_SECRET else "web"
-            annotations.setdefault("traefik.ingress.kubernetes.io/router.entrypoints", entrypoints)
-        elif controller_hint.startswith("nginx") and settings.INGRESS_TLS_SECRET and settings.INGRESS_FORCE_TLS_REDIRECT:
-            annotations.setdefault("nginx.ingress.kubernetes.io/force-ssl-redirect", "true")
+            annotations.setdefault(
+                "traefik.ingress.kubernetes.io/router.entrypoints", entrypoints
+            )
+        elif (
+            controller_hint.startswith("nginx")
+            and settings.INGRESS_TLS_SECRET
+            and settings.INGRESS_FORCE_TLS_REDIRECT
+        ):
+            annotations.setdefault(
+                "nginx.ingress.kubernetes.io/force-ssl-redirect", "true"
+            )
         return annotations
 
     def create_ingress_manifest(
@@ -176,7 +187,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
     ) -> Tuple[Optional[client.V1Ingress], bool]:
         """Crée ou met à jour un Ingress. Retourne (objet, created)."""
         try:
-            created_ingress = self.networking_v1.create_namespaced_ingress(namespace, ingress_manifest)
+            created_ingress = self.networking_v1.create_namespaced_ingress(
+                namespace, ingress_manifest
+            )
             return created_ingress, True
         except client.exceptions.ApiException as exc:
             if exc.status == 409:
@@ -185,20 +198,33 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 body = {
                     "metadata": {
                         "labels": ingress_manifest["metadata"].get("labels", {}),
-                        "annotations": ingress_manifest["metadata"].get("annotations", {}),
+                        "annotations": ingress_manifest["metadata"].get(
+                            "annotations", {}
+                        ),
                     },
                     "spec": ingress_manifest["spec"],
                 }
-                updated = self.networking_v1.patch_namespaced_ingress(name=name, namespace=namespace, body=body)
+                updated = self.networking_v1.patch_namespaced_ingress(
+                    name=name, namespace=namespace, body=body
+                )
                 return updated, False
             raise
+
     def validate_permissions(self, user: User, deployment_type: str):
         """Valide les permissions selon le rôle utilisateur"""
         if user.role == UserRole.student:
             try:
                 from .database import SessionLocal
+
                 with SessionLocal() as db:
-                    rc = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
+                    rc = (
+                        db.query(RuntimeConfig)
+                        .filter(
+                            RuntimeConfig.key == deployment_type,
+                            RuntimeConfig.active == True,
+                        )
+                        .first()
+                    )
                     if not rc or not rc.allowed_for_students:
                         logger.warning(
                             "deployment_permission_denied",
@@ -206,31 +232,43 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                                 "extra_fields": {
                                     "user_id": getattr(user, "id", None),
                                     "deployment_type": deployment_type,
-                                    "role": getattr(getattr(user, "role", None), "value", None),
+                                    "role": getattr(
+                                        getattr(user, "role", None), "value", None
+                                    ),
                                 }
                             },
                         )
                         raise HTTPException(
                             status_code=403,
-                            detail="Type non autorisé pour les étudiants"
+                            detail="Type non autorisé pour les étudiants",
                         )
             except HTTPException:
                 raise
             except Exception:
                 # Fallback si DB inaccessible: limiter à un set sûr côté étudiant
-                if deployment_type not in {"jupyter", "vscode", "wordpress", "mysql", "netbeans"}:
+                if deployment_type not in {
+                    "jupyter",
+                    "vscode",
+                    "wordpress",
+                    "mysql",
+                    "netbeans",
+                }:
                     logger.warning(
                         "deployment_permission_denied_fallback",
                         extra={
                             "extra_fields": {
                                 "user_id": getattr(user, "id", None),
                                 "deployment_type": deployment_type,
-                                "role": getattr(getattr(user, "role", None), "value", None),
+                                "role": getattr(
+                                    getattr(user, "role", None), "value", None
+                                ),
                             }
                         },
                     )
-                    raise HTTPException(status_code=403, detail="Type non autorisé pour les étudiants")
-    
+                    raise HTTPException(
+                        status_code=403, detail="Type non autorisé pour les étudiants"
+                    )
+
     def apply_deployment_config(
         self,
         deployment_type: str,
@@ -254,8 +292,16 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             # L'appelant (router) ne fournit pas de DB session ici. Pour garder KISS, on lit via ORM avec une Session locale si disponible.
             # On évite l’overengineering; on se contente d’un get via SQLAlchemy SessionLocal si importable.
             from .database import SessionLocal  # import local pour éviter cycle
+
             with SessionLocal() as db:
-                config_db = db.query(RuntimeConfig).filter(RuntimeConfig.key == deployment_type, RuntimeConfig.active == True).first()
+                config_db = (
+                    db.query(RuntimeConfig)
+                    .filter(
+                        RuntimeConfig.key == deployment_type,
+                        RuntimeConfig.active == True,
+                    )
+                    .first()
+                )
         except Exception:
             config_db = None
 
@@ -273,20 +319,26 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             }
         else:
             config = DeploymentConfig.get_config(deployment_type)
-        
+
         if config:
             # Appliquer les valeurs par défaut
             image = config.get("image", image)
             service_target_port = config.get("target_port", service_target_port)
             create_service = True
             service_type = config.get("service_type", service_type)
-            
+
             # Appliquer les minimums de ressources
-            cpu_request = max_resource(cpu_request, config.get("min_cpu_request", cpu_request))
-            memory_request = max_resource(memory_request, config.get("min_memory_request", memory_request))
+            cpu_request = max_resource(
+                cpu_request, config.get("min_cpu_request", cpu_request)
+            )
+            memory_request = max_resource(
+                memory_request, config.get("min_memory_request", memory_request)
+            )
             cpu_limit = max_resource(cpu_limit, config.get("min_cpu_limit", cpu_limit))
-            memory_limit = max_resource(memory_limit, config.get("min_memory_limit", memory_limit))
-        
+            memory_limit = max_resource(
+                memory_limit, config.get("min_memory_limit", memory_limit)
+            )
+
         return {
             "image": image,
             "cpu_request": cpu_request,
@@ -296,7 +348,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "service_target_port": service_target_port,
             "create_service": create_service,
             "service_type": service_type,
-            "has_runtime_config": bool(config_db)
+            "has_runtime_config": bool(config_db),
         }
 
     def _get_user_usage(self, user: User) -> Dict[str, Any]:
@@ -310,9 +362,13 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         pods_used = 0
         app_keys = set()
         try:
-            dep_list = apps.list_namespaced_deployment(ns, label_selector="managed-by=labondemand")
+            dep_list = apps.list_namespaced_deployment(
+                ns, label_selector="managed-by=labondemand"
+            )
         except Exception as e:
-            raise HTTPException(status_code=503, detail=f"Mesure d'usage indisponible (K8s: {e})")
+            raise HTTPException(
+                status_code=503, detail=f"Mesure d'usage indisponible (K8s: {e})"
+            )
 
         for dep in getattr(dep_list, "items", []) or []:
             status_obj = getattr(dep, "status", None)
@@ -348,7 +404,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             gkey = labels.get("stack-name") or labels.get("app") or dep.metadata.name
             app_keys.add(gkey)
 
-            tmpl_spec = getattr(getattr(getattr(dep, "spec", None), "template", None), "spec", None)
+            tmpl_spec = getattr(
+                getattr(getattr(dep, "spec", None), "template", None), "spec", None
+            )
             containers = []
             if isinstance(tmpl_spec, dict):
                 containers = tmpl_spec.get("containers") or []
@@ -366,7 +424,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     mem_s = req.get("memory")
                 else:
                     cpu_s = getattr(req, "get", lambda x: None)("cpu") if req else None
-                    mem_s = getattr(req, "get", lambda x: None)("memory") if req else None
+                    mem_s = (
+                        getattr(req, "get", lambda x: None)("memory") if req else None
+                    )
                 if cpu_s:
                     cpu_m_total += parse_cpu_to_millicores(str(cpu_s)) * replicas
                 if mem_s:
@@ -461,10 +521,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
         # Agréger contre chaque quota; si un seul quota est violé, on refuse.
         for rq in rqs.items:
-            hard = (getattr(getattr(rq, "status", None), "hard", None) or {})
-            used = (getattr(getattr(rq, "status", None), "used", None) or {})
+            hard = getattr(getattr(rq, "status", None), "hard", None) or {}
+            used = getattr(getattr(rq, "status", None), "used", None) or {}
 
-            def chk(key: str, used_val: int, hard_val: int, add_val: int, unit: str) -> None:
+            def chk(
+                key: str, used_val: int, hard_val: int, add_val: int, unit: str
+            ) -> None:
                 if hard_val > 0 and (used_val + add_val) > hard_val:
                     violations.append(
                         f"{key}: {used_val}+{add_val}>{hard_val} {unit} (quota='{rq.metadata.name}')"
@@ -542,7 +604,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     }
                 },
             )
-            raise HTTPException(status_code=403, detail="Namespace non autorisé pour cet utilisateur")
+            raise HTTPException(
+                status_code=403, detail="Namespace non autorisé pour cet utilisateur"
+            )
 
     @staticmethod
     def _can_control_foreign_deployments(user: User) -> bool:
@@ -570,7 +634,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     }
                 },
             )
-            raise HTTPException(status_code=403, detail="Déploiement hors périmètre LabOnDemand")
+            raise HTTPException(
+                status_code=403, detail="Déploiement hors périmètre LabOnDemand"
+            )
 
         if not owner_id:
             audit_logger.warning(
@@ -583,7 +649,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     }
                 },
             )
-            raise HTTPException(status_code=403, detail="Déploiement sans propriétaire identifié")
+            raise HTTPException(
+                status_code=403, detail="Déploiement sans propriétaire identifié"
+            )
 
         if owner_id == str(getattr(current_user, "id", "")):
             return
@@ -633,7 +701,10 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 stack_mode = True
                 deployments = (
                     self.apps_v1.list_namespaced_deployment(
-                        namespace, label_selector=self._stack_label_selector(stack_name, current_user)
+                        namespace,
+                        label_selector=self._stack_label_selector(
+                            stack_name, current_user
+                        ),
                     ).items
                     or []
                 )
@@ -643,23 +714,31 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
         if not deployments:
             stack_selector = self._stack_label_selector(name, current_user)
-            stack_candidates = self.apps_v1.list_namespaced_deployment(namespace, label_selector=stack_selector)
+            stack_candidates = self.apps_v1.list_namespaced_deployment(
+                namespace, label_selector=stack_selector
+            )
             if stack_candidates.items:
                 deployments = stack_candidates.items
                 stack_name = name
                 stack_mode = True
             else:
                 app_selector = f"app={name}"
-                app_candidates = self.apps_v1.list_namespaced_deployment(namespace, label_selector=app_selector)
+                app_candidates = self.apps_v1.list_namespaced_deployment(
+                    namespace, label_selector=app_selector
+                )
                 if app_candidates.items:
                     deployments = app_candidates.items
                 else:
-                    raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+                    raise HTTPException(
+                        status_code=404, detail="Déploiement non trouvé"
+                    )
 
         filtered: List[client.V1Deployment] = []
         for dep in deployments:
             labels = dep.metadata.labels or {}
-            self._assert_deployment_access(labels, current_user, namespace, dep.metadata.name)
+            self._assert_deployment_access(
+                labels, current_user, namespace, dep.metadata.name
+            )
             filtered.append(dep)
 
         deployments = filtered
@@ -668,7 +747,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
         base_labels = deployments[0].metadata.labels or {}
         app_type = base_labels.get("app-type", "custom")
-        display_name = stack_name or base_labels.get("stack-name") or deployments[0].metadata.name
+        display_name = (
+            stack_name or base_labels.get("stack-name") or deployments[0].metadata.name
+        )
 
         return {
             "deployments": deployments,
@@ -679,11 +760,18 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "app_type": app_type,
         }
 
-    def describe_component_lifecycle(self, deployment: client.V1Deployment) -> Dict[str, Any]:
+    def describe_component_lifecycle(
+        self, deployment: client.V1Deployment
+    ) -> Dict[str, Any]:
         annotations = dict(getattr(deployment.metadata, "annotations", {}) or {})
         requested = int(getattr(getattr(deployment, "spec", None), "replicas", 0) or 0)
-        ready = int(getattr(getattr(deployment, "status", None), "ready_replicas", 0) or 0)
-        available = int(getattr(getattr(deployment, "status", None), "available_replicas", 0) or ready)
+        ready = int(
+            getattr(getattr(deployment, "status", None), "ready_replicas", 0) or 0
+        )
+        available = int(
+            getattr(getattr(deployment, "status", None), "available_replicas", 0)
+            or ready
+        )
         paused_flag = annotations.get(PAUSE_FLAG_ANNOTATION) == "true"
         state = "running"
         if paused_flag or requested == 0:
@@ -715,7 +803,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
     def summarize_lifecycle(self, components: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not components:
-            return {"state": "unknown", "paused": False, "paused_components": 0, "total_components": 0}
+            return {
+                "state": "unknown",
+                "paused": False,
+                "paused_components": 0,
+                "total_components": 0,
+            }
 
         total = len(components)
         paused_count = sum(1 for comp in components if comp.get("state") == "paused")
@@ -728,8 +821,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         else:
             state = "mixed"
 
-        paused_at_values = [comp.get("paused_at") for comp in components if comp.get("paused_at")]
-        paused_by_values = [comp.get("paused_by") for comp in components if comp.get("paused_by")]
+        paused_at_values = [
+            comp.get("paused_at") for comp in components if comp.get("paused_at")
+        ]
+        paused_by_values = [
+            comp.get("paused_by") for comp in components if comp.get("paused_by")
+        ]
 
         return {
             "state": state,
@@ -740,20 +837,26 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "paused_by": paused_by_values[0] if paused_by_values else None,
         }
 
-    async def pause_application(self, namespace: str, name: str, current_user: User) -> Dict[str, Any]:
+    async def pause_application(
+        self, namespace: str, name: str, current_user: User
+    ) -> Dict[str, Any]:
         resolved = self._resolve_target_deployments(namespace, name, current_user)
         components_payload: List[Dict[str, Any]] = []
         iso_now = datetime.datetime.utcnow().isoformat() + "Z"
-        paused_by = getattr(current_user, "username", str(getattr(current_user, "id", "unknown")))
+        paused_by = getattr(
+            current_user, "username", str(getattr(current_user, "id", "unknown"))
+        )
 
         for deployment in resolved["deployments"]:
             lifecycle_before = self.describe_component_lifecycle(deployment)
             if lifecycle_before["state"] == "paused":
-                components_payload.append({
-                    "name": deployment.metadata.name,
-                    "already_paused": True,
-                    "lifecycle": lifecycle_before,
-                })
+                components_payload.append(
+                    {
+                        "name": deployment.metadata.name,
+                        "already_paused": True,
+                        "lifecycle": lifecycle_before,
+                    }
+                )
                 continue
 
             previous_replicas = max(lifecycle_before.get("requested_replicas", 0), 1)
@@ -774,13 +877,17 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 body=patch_body,
             )
             lifecycle_after = self.describe_component_lifecycle(updated)
-            components_payload.append({
-                "name": deployment.metadata.name,
-                "previous_replicas": previous_replicas,
-                "lifecycle": lifecycle_after,
-            })
+            components_payload.append(
+                {
+                    "name": deployment.metadata.name,
+                    "previous_replicas": previous_replicas,
+                    "lifecycle": lifecycle_after,
+                }
+            )
 
-        lifecycle_summary = self.summarize_lifecycle([c["lifecycle"] for c in components_payload])
+        lifecycle_summary = self.summarize_lifecycle(
+            [c["lifecycle"] for c in components_payload]
+        )
 
         audit_logger.info(
             "deployment_paused",
@@ -805,7 +912,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "message": "Application mise en pause. Les pods seront libérés dans quelques secondes.",
         }
 
-    async def resume_application(self, namespace: str, name: str, current_user: User) -> Dict[str, Any]:
+    async def resume_application(
+        self, namespace: str, name: str, current_user: User
+    ) -> Dict[str, Any]:
         resolved = self._resolve_target_deployments(namespace, name, current_user)
         components_payload: List[Dict[str, Any]] = []
 
@@ -821,7 +930,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             target_replicas = lifecycle.get("resume_replicas") or 1
             planned_pods += target_replicas
 
-            tmpl_spec = getattr(getattr(deployment.spec, "template", None), "spec", None)
+            tmpl_spec = getattr(
+                getattr(deployment.spec, "template", None), "spec", None
+            )
             containers = []
             if tmpl_spec and getattr(tmpl_spec, "containers", None):
                 containers = tmpl_spec.containers
@@ -840,13 +951,19 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     cpu_lim = limits.get("cpu")
                     mem_lim = limits.get("memory")
                 if cpu_req:
-                    planned_cpu_m += parse_cpu_to_millicores(str(cpu_req)) * target_replicas
+                    planned_cpu_m += (
+                        parse_cpu_to_millicores(str(cpu_req)) * target_replicas
+                    )
                 if mem_req:
                     planned_mem_mi += parse_memory_to_mi(str(mem_req)) * target_replicas
                 if cpu_lim:
-                    planned_limits_cpu_m += parse_cpu_to_millicores(str(cpu_lim)) * target_replicas
+                    planned_limits_cpu_m += (
+                        parse_cpu_to_millicores(str(cpu_lim)) * target_replicas
+                    )
                 if mem_lim:
-                    planned_limits_mem_mi += parse_memory_to_mi(str(mem_lim)) * target_replicas
+                    planned_limits_mem_mi += (
+                        parse_memory_to_mi(str(mem_lim)) * target_replicas
+                    )
 
         if planned_pods == 0:
             planned_pods = len(resolved["deployments"])
@@ -901,13 +1018,17 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 body=patch_body,
             )
             lifecycle_after = self.describe_component_lifecycle(updated)
-            components_payload.append({
-                "name": deployment.metadata.name,
-                "target_replicas": target_replicas,
-                "lifecycle": lifecycle_after,
-            })
+            components_payload.append(
+                {
+                    "name": deployment.metadata.name,
+                    "target_replicas": target_replicas,
+                    "lifecycle": lifecycle_after,
+                }
+            )
 
-        lifecycle_summary = self.summarize_lifecycle([c["lifecycle"] for c in components_payload])
+        lifecycle_summary = self.summarize_lifecycle(
+            [c["lifecycle"] for c in components_payload]
+        )
 
         audit_logger.info(
             "deployment_resumed",
@@ -941,15 +1062,22 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         """S'assure qu'un PVC existe et appartient bien à l'utilisateur courant."""
         pvc_name = validate_k8s_name(pvc_name)
         try:
-            pvc = self.core_v1.read_namespaced_persistent_volume_claim(pvc_name, namespace)
+            pvc = self.core_v1.read_namespaced_persistent_volume_claim(
+                pvc_name, namespace
+            )
         except client.exceptions.ApiException as e:
             if e.status == 404:
-                raise HTTPException(status_code=404, detail=f"Volume persistant '{pvc_name}' introuvable")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Volume persistant '{pvc_name}' introuvable",
+                )
             raise
 
         labels = pvc.metadata.labels or {}
         if current_user.role == UserRole.student:
-            if labels.get("managed-by") != "labondemand" or labels.get("user-id") != str(current_user.id):
+            if labels.get("managed-by") != "labondemand" or labels.get(
+                "user-id"
+            ) != str(current_user.id):
                 raise HTTPException(status_code=403, detail="Accès refusé à ce volume")
 
         return pvc
@@ -971,7 +1099,66 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "usage": usage,
             "remaining": remaining,
         }
-    
+
+    def _track_deployment_in_db(
+        self,
+        user: User,
+        name: str,
+        deployment_type: str,
+        namespace: str,
+        stack_name: Optional[str] = None,
+        cpu_requested: Optional[str] = None,
+        mem_requested: Optional[str] = None,
+    ) -> None:
+        """Crée ou met à jour l'enregistrement Deployment en base avec expires_at calculé selon le rôle."""
+        try:
+            from .database import SessionLocal
+            from .tasks.cleanup import compute_expires_at
+
+            role_val = getattr(user.role, "value", str(user.role))
+            expires_at = compute_expires_at(role_val)
+
+            with SessionLocal() as db:
+                # Upsert : si un enregistrement actif existe déjà pour ce nom, on le met à jour
+                existing = (
+                    db.query(DeploymentRecord)
+                    .filter(
+                        DeploymentRecord.user_id == user.id,
+                        DeploymentRecord.name == name,
+                        DeploymentRecord.deleted_at.is_(None),
+                    )
+                    .first()
+                )
+                if existing:
+                    existing.status = "active"
+                    existing.namespace = namespace
+                    existing.deployment_type = deployment_type
+                    existing.stack_name = stack_name
+                    existing.expires_at = expires_at
+                    if cpu_requested:
+                        existing.cpu_requested = cpu_requested
+                    if mem_requested:
+                        existing.mem_requested = mem_requested
+                else:
+                    record = DeploymentRecord(
+                        user_id=user.id,
+                        name=name,
+                        deployment_type=deployment_type,
+                        namespace=namespace,
+                        stack_name=stack_name,
+                        status="active",
+                        expires_at=expires_at,
+                        cpu_requested=cpu_requested,
+                        mem_requested=mem_requested,
+                    )
+                    db.add(record)
+                db.commit()
+        except Exception as exc:
+            logger.warning(
+                "deployment_db_track_failed",
+                extra={"extra_fields": {"name": name, "error": str(exc)}},
+            )
+
     def create_deployment_manifest(
         self,
         name: str,
@@ -1041,7 +1228,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 },
             },
         }
-    
+
     def create_service_manifest(
         self,
         name: str,
@@ -1067,26 +1254,16 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
         if additional_ports:
             ports.extend(additional_ports)
-        
+
         # Pour NodePort, ne pas spécifier nodePort pour laisser Kubernetes l'assigner automatiquement
-        
+
         return {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {
-                "name": f"{name}-service",
-                "labels": {
-                    "app": name,
-                    **labels
-                }
-            },
-            "spec": {
-                "selector": {"app": name},
-                "type": service_type,
-                "ports": ports
-            }
+            "metadata": {"name": f"{name}-service", "labels": {"app": name, **labels}},
+            "spec": {"selector": {"app": name}, "type": service_type, "ports": ports},
         }
-    
+
     async def create_deployment(
         self,
         name: str,
@@ -1160,33 +1337,53 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         # Valider les permissions
         self.validate_permissions(current_user, deployment_type)
 
-    # Valider les types de service
+        # Valider les types de service
         valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
         if service_type not in valid_service_types:
             raise HTTPException(
                 status_code=400,
-                detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}"
+                detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}",
             )
 
         # Valider les formats de ressources
         try:
-            validate_resource_format(cpu_request, cpu_limit, memory_request, memory_limit)
+            validate_resource_format(
+                cpu_request, cpu_limit, memory_request, memory_limit
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    # Cas spécial: application multi-composants (WordPress)
+        # Cas spécial: application multi-composants (WordPress)
         if deployment_type == "wordpress":
             # Estimation des ressources planifiées (2 pods: DB + WP)
             role_val = getattr(current_user.role, "value", str(current_user.role))
-            db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-            wp_res = clamp_resources_for_role(str(role_val), "250m", "1000m", "512Mi", "1Gi", 1)
-            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(parse_cpu_to_millicores(wp_res["cpu_request"]))
-            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(parse_memory_to_mi(wp_res["memory_request"]))
-            self._assert_user_quota(current_user, planned_apps=1, planned_pods=2, planned_cpu_request_m=planned_cpu_m, planned_memory_request_mi=planned_mem_mi)
+            db_res = clamp_resources_for_role(
+                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
+            )
+            wp_res = clamp_resources_for_role(
+                str(role_val), "250m", "1000m", "512Mi", "1Gi", 1
+            )
+            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(
+                parse_cpu_to_millicores(wp_res["cpu_request"])
+            )
+            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(
+                parse_memory_to_mi(wp_res["memory_request"])
+            )
+            self._assert_user_quota(
+                current_user,
+                planned_apps=1,
+                planned_pods=2,
+                planned_cpu_request_m=planned_cpu_m,
+                planned_memory_request_mi=planned_mem_mi,
+            )
 
             # Préflight contre ResourceQuota Kubernetes (requests+limits et pods/deployments)
-            planned_limits_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_limit"])) + int(parse_cpu_to_millicores(wp_res["cpu_limit"]))
-            planned_limits_mem_mi = int(parse_memory_to_mi(db_res["memory_limit"])) + int(parse_memory_to_mi(wp_res["memory_limit"]))
+            planned_limits_cpu_m = int(
+                parse_cpu_to_millicores(db_res["cpu_limit"])
+            ) + int(parse_cpu_to_millicores(wp_res["cpu_limit"]))
+            planned_limits_mem_mi = int(
+                parse_memory_to_mi(db_res["memory_limit"])
+            ) + int(parse_memory_to_mi(wp_res["memory_limit"]))
             self._preflight_k8s_quota(
                 effective_namespace,
                 planned_requests_cpu_m=planned_cpu_m,
@@ -1213,10 +1410,19 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         "namespace": effective_namespace,
                         "user_id": getattr(current_user, "id", None),
                         "username": getattr(current_user, "username", None),
-                        "resource_summary": list((result.get("created_objects") or {}).keys()),
+                        "resource_summary": list(
+                            (result.get("created_objects") or {}).keys()
+                        ),
                         "service_type": result.get("service_info", {}).get("type"),
                     }
                 },
+            )
+            self._track_deployment_in_db(
+                user=current_user,
+                name=name,
+                deployment_type="wordpress",
+                namespace=effective_namespace,
+                stack_name=name,
             )
             return result
 
@@ -1224,14 +1430,32 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         if deployment_type == "mysql":
             role_val = getattr(current_user.role, "value", str(current_user.role))
             # Estimation des ressources planifiées (2 pods: MySQL + phpMyAdmin)
-            db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-            pma_res = clamp_resources_for_role(str(role_val), "150m", "300m", "128Mi", "256Mi", 1)
-            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(parse_cpu_to_millicores(pma_res["cpu_request"]))
-            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(parse_memory_to_mi(pma_res["memory_request"]))
-            self._assert_user_quota(current_user, planned_apps=1, planned_pods=2, planned_cpu_request_m=planned_cpu_m, planned_memory_request_mi=planned_mem_mi)
+            db_res = clamp_resources_for_role(
+                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
+            )
+            pma_res = clamp_resources_for_role(
+                str(role_val), "150m", "300m", "128Mi", "256Mi", 1
+            )
+            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(
+                parse_cpu_to_millicores(pma_res["cpu_request"])
+            )
+            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(
+                parse_memory_to_mi(pma_res["memory_request"])
+            )
+            self._assert_user_quota(
+                current_user,
+                planned_apps=1,
+                planned_pods=2,
+                planned_cpu_request_m=planned_cpu_m,
+                planned_memory_request_mi=planned_mem_mi,
+            )
 
-            planned_limits_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_limit"])) + int(parse_cpu_to_millicores(pma_res["cpu_limit"]))
-            planned_limits_mem_mi = int(parse_memory_to_mi(db_res["memory_limit"])) + int(parse_memory_to_mi(pma_res["memory_limit"]))
+            planned_limits_cpu_m = int(
+                parse_cpu_to_millicores(db_res["cpu_limit"])
+            ) + int(parse_cpu_to_millicores(pma_res["cpu_limit"]))
+            planned_limits_mem_mi = int(
+                parse_memory_to_mi(db_res["memory_limit"])
+            ) + int(parse_memory_to_mi(pma_res["memory_limit"]))
             self._preflight_k8s_quota(
                 effective_namespace,
                 planned_requests_cpu_m=planned_cpu_m,
@@ -1259,10 +1483,19 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         "namespace": effective_namespace,
                         "user_id": getattr(current_user, "id", None),
                         "username": getattr(current_user, "username", None),
-                        "resource_summary": list((result.get("created_objects") or {}).keys()),
+                        "resource_summary": list(
+                            (result.get("created_objects") or {}).keys()
+                        ),
                         "service_type": result.get("service_info", {}).get("type"),
                     }
                 },
+            )
+            self._track_deployment_in_db(
+                user=current_user,
+                name=name,
+                deployment_type="mysql",
+                namespace=effective_namespace,
+                stack_name=name,
             )
             return result
 
@@ -1270,16 +1503,44 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         if deployment_type == "lamp":
             role_val = getattr(current_user.role, "value", str(current_user.role))
             # 3 pods: web + db + pma
-            web_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-            db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-            pma_res = clamp_resources_for_role(str(role_val), "150m", "300m", "128Mi", "256Mi", 1)
+            web_res = clamp_resources_for_role(
+                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
+            )
+            db_res = clamp_resources_for_role(
+                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
+            )
+            pma_res = clamp_resources_for_role(
+                str(role_val), "150m", "300m", "128Mi", "256Mi", 1
+            )
 
-            planned_cpu_m = int(parse_cpu_to_millicores(web_res["cpu_request"])) + int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(parse_cpu_to_millicores(pma_res["cpu_request"]))
-            planned_mem_mi = int(parse_memory_to_mi(web_res["memory_request"])) + int(parse_memory_to_mi(db_res["memory_request"])) + int(parse_memory_to_mi(pma_res["memory_request"]))
-            self._assert_user_quota(current_user, planned_apps=1, planned_pods=3, planned_cpu_request_m=planned_cpu_m, planned_memory_request_mi=planned_mem_mi)
+            planned_cpu_m = (
+                int(parse_cpu_to_millicores(web_res["cpu_request"]))
+                + int(parse_cpu_to_millicores(db_res["cpu_request"]))
+                + int(parse_cpu_to_millicores(pma_res["cpu_request"]))
+            )
+            planned_mem_mi = (
+                int(parse_memory_to_mi(web_res["memory_request"]))
+                + int(parse_memory_to_mi(db_res["memory_request"]))
+                + int(parse_memory_to_mi(pma_res["memory_request"]))
+            )
+            self._assert_user_quota(
+                current_user,
+                planned_apps=1,
+                planned_pods=3,
+                planned_cpu_request_m=planned_cpu_m,
+                planned_memory_request_mi=planned_mem_mi,
+            )
 
-            planned_limits_cpu_m = int(parse_cpu_to_millicores(web_res["cpu_limit"])) + int(parse_cpu_to_millicores(db_res["cpu_limit"])) + int(parse_cpu_to_millicores(pma_res["cpu_limit"]))
-            planned_limits_mem_mi = int(parse_memory_to_mi(web_res["memory_limit"])) + int(parse_memory_to_mi(db_res["memory_limit"])) + int(parse_memory_to_mi(pma_res["memory_limit"]))
+            planned_limits_cpu_m = (
+                int(parse_cpu_to_millicores(web_res["cpu_limit"]))
+                + int(parse_cpu_to_millicores(db_res["cpu_limit"]))
+                + int(parse_cpu_to_millicores(pma_res["cpu_limit"]))
+            )
+            planned_limits_mem_mi = (
+                int(parse_memory_to_mi(web_res["memory_limit"]))
+                + int(parse_memory_to_mi(db_res["memory_limit"]))
+                + int(parse_memory_to_mi(pma_res["memory_limit"]))
+            )
             self._preflight_k8s_quota(
                 effective_namespace,
                 planned_requests_cpu_m=planned_cpu_m,
@@ -1307,10 +1568,19 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         "namespace": effective_namespace,
                         "user_id": getattr(current_user, "id", None),
                         "username": getattr(current_user, "username", None),
-                        "resource_summary": list((result.get("created_objects") or {}).keys()),
+                        "resource_summary": list(
+                            (result.get("created_objects") or {}).keys()
+                        ),
                         "service_type": result.get("service_info", {}).get("type"),
                     }
                 },
+            )
+            self._track_deployment_in_db(
+                user=current_user,
+                name=name,
+                deployment_type="lamp",
+                namespace=effective_namespace,
+                stack_name=name,
             )
             return result
 
@@ -1336,7 +1606,11 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
         # Auto-détermination des ports pour les runtimes configurés (DB) ou connus (fallback):
         # - Si has_runtime_config est vrai OU runtime est vscode/jupyter, alors service_port = target_port
-        if config.get("has_runtime_config") or deployment_type in {"vscode", "jupyter", "netbeans"}:
+        if config.get("has_runtime_config") or deployment_type in {
+            "vscode",
+            "jupyter",
+            "netbeans",
+        }:
             service_port = config["service_target_port"]
 
         # Plafonner selon le rôle (sécurité)
@@ -1351,8 +1625,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         )
 
         # Vérification des quotas logiques (apps, CPU requests, RAM requests, pods) avant création
-        planned_cpu_m = int(parse_cpu_to_millicores(clamped["cpu_request"]) * clamped["replicas"])
-        planned_mem_mi = int(parse_memory_to_mi(clamped["memory_request"]) * clamped["replicas"])
+        planned_cpu_m = int(
+            parse_cpu_to_millicores(clamped["cpu_request"]) * clamped["replicas"]
+        )
+        planned_mem_mi = int(
+            parse_memory_to_mi(clamped["memory_request"]) * clamped["replicas"]
+        )
         self._assert_user_quota(
             current_user,
             planned_apps=1,
@@ -1362,8 +1640,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         )
 
         # Vérifier aussi les ResourceQuota Kubernetes du namespace
-        planned_limits_cpu_m = int(parse_cpu_to_millicores(clamped["cpu_limit"]) * clamped["replicas"])
-        planned_limits_mem_mi = int(parse_memory_to_mi(clamped["memory_limit"]) * clamped["replicas"])
+        planned_limits_cpu_m = int(
+            parse_cpu_to_millicores(clamped["cpu_limit"]) * clamped["replicas"]
+        )
+        planned_limits_mem_mi = int(
+            parse_memory_to_mi(clamped["memory_limit"]) * clamped["replicas"]
+        )
         self._preflight_k8s_quota(
             effective_namespace,
             planned_requests_cpu_m=planned_cpu_m,
@@ -1432,7 +1714,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 pvc_obj: Optional[client.V1PersistentVolumeClaim] = None
                 # Permettre la réutilisation d'un PVC existant lorsqu'un nom identique est fourni
                 if existing_pvc_name:
-                    pvc_obj = self._validate_existing_pvc(effective_namespace, existing_pvc_name, current_user)
+                    pvc_obj = self._validate_existing_pvc(
+                        effective_namespace, existing_pvc_name, current_user
+                    )
                     pvc_name = pvc_obj.metadata.name
                 else:
                     pvc_labels = dict(labels)
@@ -1441,17 +1725,29 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         "apiVersion": "v1",
                         "kind": "PersistentVolumeClaim",
                         "metadata": {"name": pvc_name, "labels": pvc_labels},
-                        "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "2Gi"}}},
+                        "spec": {
+                            "accessModes": ["ReadWriteOnce"],
+                            "resources": {"requests": {"storage": "2Gi"}},
+                        },
                     }
                     try:
-                        self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+                        self.core_v1.create_namespaced_persistent_volume_claim(
+                            effective_namespace, pvc_manifest
+                        )
                     except client.exceptions.ApiException as e:
                         msg = (getattr(e, "body", "") or "").lower()
                         if e.status == 409:
                             # Collision de nom: réutiliser le PVC existant après validation
-                            pvc_obj = self._validate_existing_pvc(effective_namespace, pvc_name, current_user)
+                            pvc_obj = self._validate_existing_pvc(
+                                effective_namespace, pvc_name, current_user
+                            )
                             pvc_name = pvc_obj.metadata.name
-                        elif e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
+                        elif (
+                            e.status in (403, 422)
+                            or "no persistent volumes" in msg
+                            or "storageclass" in msg
+                            or "forbidden" in msg
+                        ):
                             use_pvc = False
                         else:
                             raise
@@ -1459,19 +1755,25 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 if use_pvc:
                     if pvc_obj is None:
                         try:
-                            pvc_obj = self.core_v1.read_namespaced_persistent_volume_claim(pvc_name, effective_namespace)
+                            pvc_obj = (
+                                self.core_v1.read_namespaced_persistent_volume_claim(
+                                    pvc_name, effective_namespace
+                                )
+                            )
                         except Exception:
                             pvc_obj = None
 
                     if pvc_obj is not None:
                         merged_labels = dict(pvc_obj.metadata.labels or {})
-                        merged_labels.update({
-                            "managed-by": "labondemand",
-                            "user-id": str(current_user.id),
-                            "user-role": current_user.role.value,
-                            "app-type": deployment_type,
-                            "labondemand/last-bound-app": name,
-                        })
+                        merged_labels.update(
+                            {
+                                "managed-by": "labondemand",
+                                "user-id": str(current_user.id),
+                                "user-role": current_user.role.value,
+                                "app-type": deployment_type,
+                                "labondemand/last-bound-app": name,
+                            }
+                        )
                         try:
                             self.core_v1.patch_namespaced_persistent_volume_claim(
                                 pvc_name,
@@ -1491,17 +1793,43 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             )
 
                 # Monter sur chemin de travail usuel
-                mount_path = "/home/jovyan/work" if deployment_type == "jupyter" else "/home/coder/project"
+                mount_path = (
+                    "/home/jovyan/work"
+                    if deployment_type == "jupyter"
+                    else "/home/coder/project"
+                )
                 pod_spec = deployment_manifest["spec"]["template"]["spec"]
                 # Pod security context pour permissions
-                pod_spec["securityContext"] = {**(pod_spec.get("securityContext") or {}), "fsGroup": 1000, "seccompProfile": {"type": "RuntimeDefault"}}
+                pod_spec["securityContext"] = {
+                    **(pod_spec.get("securityContext") or {}),
+                    "fsGroup": 1000,
+                    "seccompProfile": {"type": "RuntimeDefault"},
+                }
                 # VolumeMounts conteneur
                 container = pod_spec["containers"][0]
-                container.setdefault("volumeMounts", []).append({"name": "data", "mountPath": mount_path})
+                container.setdefault("volumeMounts", []).append(
+                    {"name": "data", "mountPath": mount_path}
+                )
                 # Volumes pod
-                pod_spec["volumes"] = [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}] if use_pvc else [{"name": "data", "emptyDir": {}}]
+                pod_spec["volumes"] = (
+                    [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}]
+                    if use_pvc
+                    else [{"name": "data", "emptyDir": {}}]
+                )
 
-            self.apps_v1.create_namespaced_deployment(effective_namespace, deployment_manifest)
+            self.apps_v1.create_namespaced_deployment(
+                effective_namespace, deployment_manifest
+            )
+
+            # Enregistrer en base avec expires_at calculé selon le rôle
+            self._track_deployment_in_db(
+                user=current_user,
+                name=name,
+                deployment_type=deployment_type,
+                namespace=effective_namespace,
+                cpu_requested=clamped["cpu_request"],
+                mem_requested=clamped["memory_request"],
+            )
 
             result_message = (
                 f"Deployment {name} créé dans le namespace {effective_namespace} "
@@ -1530,15 +1858,19 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     effective_namespace, service_manifest
                 )
 
-                svc_ports = list(getattr(getattr(created_service, "spec", None), "ports", []) or [])
+                svc_ports = list(
+                    getattr(getattr(created_service, "spec", None), "ports", []) or []
+                )
                 for svc_port in svc_ports:
-                    ports_details.append({
-                        "name": getattr(svc_port, "name", None),
-                        "protocol": getattr(svc_port, "protocol", None),
-                        "port": getattr(svc_port, "port", None),
-                        "target_port": getattr(svc_port, "target_port", None),
-                        "node_port": getattr(svc_port, "node_port", None),
-                    })
+                    ports_details.append(
+                        {
+                            "name": getattr(svc_port, "name", None),
+                            "protocol": getattr(svc_port, "protocol", None),
+                            "port": getattr(svc_port, "port", None),
+                            "target_port": getattr(svc_port, "target_port", None),
+                            "node_port": getattr(svc_port, "node_port", None),
+                        }
+                    )
 
                 if config["service_type"] in ["NodePort", "LoadBalancer"]:
                     # Premier NodePort disponible pour compat rétro
@@ -1575,17 +1907,23 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         service_port,
                         labels,
                     )
-                    ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
+                    ingress_obj, created_flag = self._apply_ingress(
+                        effective_namespace, ingress_manifest
+                    )
                     scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
                     ingress_details = {
-                        "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
+                        "name": getattr(
+                            getattr(ingress_obj, "metadata", None), "name", ingress_name
+                        ),
                         "host": host,
                         "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
                         "class": settings.INGRESS_CLASS_NAME,
                         "tls": bool(settings.INGRESS_TLS_SECRET),
                         "created": created_flag,
                     }
-                    result_message += f" Ingress disponible sur {ingress_details['url']}"
+                    result_message += (
+                        f" Ingress disponible sur {ingress_details['url']}"
+                    )
 
                 # Instructions d'accès spécifiques
                 if (
@@ -1599,7 +1937,10 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     )
 
                 if deployment_type == "netbeans":
-                    def _find_node_port(target_name: str, fallback_port: int) -> Optional[int]:
+
+                    def _find_node_port(
+                        target_name: str, fallback_port: int
+                    ) -> Optional[int]:
                         for detail in ports_details:
                             if detail.get("name") == target_name:
                                 return detail.get("node_port")
@@ -1612,7 +1953,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             "description": "Bureau distant via navigateur (NoVNC)",
                             "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
                             "target_port": config["service_target_port"],
-                            "node_port": _find_node_port("novnc", config["service_target_port"]),
+                            "node_port": _find_node_port(
+                                "novnc", config["service_target_port"]
+                            ),
                             "protocol": "http",
                             "secure": False,
                             "username": "kasm_user",
@@ -1644,7 +1987,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 },
                 "service_info": {
                     "created": config["create_service"],
-                    "type": config["service_type"] if config["create_service"] else None,
+                    "type": config["service_type"]
+                    if config["create_service"]
+                    else None,
                     "port": service_port if config["create_service"] else None,
                     "node_port": node_port,
                     "ports_detail": ports_details if config["create_service"] else [],
@@ -1699,7 +2044,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     }
                 },
             )
-            raise HTTPException(status_code=500, detail=f"Erreur lors de la création: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Erreur lors de la création: {str(e)}"
+            )
 
     def cleanup_user_namespace(self, user_id: int) -> Dict[str, Any]:
         """Supprime le namespace Kubernetes d'un utilisateur et toutes ses ressources.
@@ -1712,6 +2059,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             Dict avec ``deleted`` (bool), ``namespace`` (str) et ``error`` (str ou None).
         """
         from .k8s_utils import build_user_namespace
+
         namespace = build_user_namespace(user_id)
         try:
             core_v1 = client.CoreV1Api()
@@ -1722,25 +2070,49 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             )
             audit_logger.info(
                 "user_namespace_cleanup",
-                extra={"extra_fields": {"user_id": user_id, "namespace": namespace, "status": "deleted"}},
+                extra={
+                    "extra_fields": {
+                        "user_id": user_id,
+                        "namespace": namespace,
+                        "status": "deleted",
+                    }
+                },
             )
             return {"deleted": True, "namespace": namespace, "error": None}
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 logger.info(
                     "user_namespace_not_found",
-                    extra={"extra_fields": {"user_id": user_id, "namespace": namespace}},
+                    extra={
+                        "extra_fields": {"user_id": user_id, "namespace": namespace}
+                    },
                 )
-                return {"deleted": False, "namespace": namespace, "error": "namespace_not_found"}
+                return {
+                    "deleted": False,
+                    "namespace": namespace,
+                    "error": "namespace_not_found",
+                }
             logger.warning(
                 "user_namespace_delete_failed",
-                extra={"extra_fields": {"user_id": user_id, "namespace": namespace, "error": str(e)}},
+                extra={
+                    "extra_fields": {
+                        "user_id": user_id,
+                        "namespace": namespace,
+                        "error": str(e),
+                    }
+                },
             )
             return {"deleted": False, "namespace": namespace, "error": str(e)}
         except Exception as exc:
             logger.warning(
                 "user_namespace_delete_error",
-                extra={"extra_fields": {"user_id": user_id, "namespace": namespace, "error": str(exc)}},
+                extra={
+                    "extra_fields": {
+                        "user_id": user_id,
+                        "namespace": namespace,
+                        "error": str(exc),
+                    }
+                },
             )
             return {"deleted": False, "namespace": namespace, "error": str(exc)}
 

@@ -8,6 +8,7 @@ TTL par défaut (configurables via env) :
 
 La tâche tourne toutes les CLEANUP_INTERVAL_MINUTES minutes (défaut : 60).
 """
+
 import asyncio
 import logging
 import os
@@ -63,24 +64,81 @@ async def _run_cleanup_cycle() -> None:
             try:
                 user = db.query(User).filter(User.id == dep.user_id).first()
                 if user:
-                    await deployment_service.pause_application(dep.namespace, dep.name, user)
+                    await deployment_service.pause_application(
+                        dep.namespace, dep.name, user
+                    )
                 dep.status = "paused"
                 db.commit()
                 logger.info(
                     "deployment_auto_paused_expired",
-                    extra={"extra_fields": {"deployment_id": dep.id, "name": dep.name, "namespace": dep.namespace}},
+                    extra={
+                        "extra_fields": {
+                            "deployment_id": dep.id,
+                            "name": dep.name,
+                            "namespace": dep.namespace,
+                        }
+                    },
                 )
             except Exception as exc:
                 db.rollback()
                 logger.warning(
                     "deployment_auto_pause_failed",
-                    extra={"extra_fields": {"deployment_id": dep.id, "error": str(exc)}},
+                    extra={
+                        "extra_fields": {"deployment_id": dep.id, "error": str(exc)}
+                    },
                 )
 
-        # ── 2. Namespaces orphelins ──────────────────────────────────────────
+        # ── 2. Rétro-remplissage expires_at manquant ────────────────────────
+        #    Pour les enregistrements actifs sans expires_at (créés avant ce correctif),
+        #    on leur attribue une date d'expiration basée sur la date de création + TTL du rôle.
+        try:
+            orphan_expires = (
+                db.query(Deployment)
+                .filter(
+                    Deployment.status == "active",
+                    Deployment.expires_at == None,  # noqa: E711
+                )
+                .all()
+            )
+            for dep in orphan_expires:
+                user = db.query(User).filter(User.id == dep.user_id).first()
+                if user is None:
+                    continue
+                role_val = getattr(user.role, "value", str(user.role))
+                ttl = get_ttl_days_for_role(role_val)
+                if ttl is None:
+                    # admin → pas d'expiration, on laisse NULL
+                    continue
+                # Calculer depuis created_at si disponible, sinon depuis maintenant
+                base = dep.created_at if dep.created_at else now
+                # S'assurer que base est timezone-aware
+                if base.tzinfo is None:
+                    base = base.replace(tzinfo=timezone.utc)
+                dep.expires_at = base + timedelta(days=ttl)
+                logger.info(
+                    "deployment_expires_at_backfilled",
+                    extra={
+                        "extra_fields": {
+                            "deployment_id": dep.id,
+                            "name": dep.name,
+                            "expires_at": dep.expires_at.isoformat(),
+                        }
+                    },
+                )
+            if orphan_expires:
+                db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "deployment_expires_at_backfill_failed",
+                extra={"extra_fields": {"error": str(exc)}},
+            )
+
+        # ── 3. Namespaces orphelins ──────────────────────────────────────────
         #    Lister tous les namespaces labondemand-user-*, vérifier si l'user existe
         try:
             from kubernetes import client as k8s_client
+
             core_v1 = k8s_client.CoreV1Api()
             prefix = "labondemand-user-"
             ns_list = core_v1.list_namespace(label_selector=f"managed-by=labondemand")
@@ -89,7 +147,7 @@ async def _run_cleanup_cycle() -> None:
                 if not ns_name.startswith(prefix):
                     continue
                 try:
-                    user_id_str = ns_name[len(prefix):]
+                    user_id_str = ns_name[len(prefix) :]
                     user_id = int(user_id_str)
                 except ValueError:
                     continue
@@ -97,7 +155,9 @@ async def _run_cleanup_cycle() -> None:
                 if user is None:
                     logger.info(
                         "orphan_namespace_found",
-                        extra={"extra_fields": {"namespace": ns_name, "user_id": user_id}},
+                        extra={
+                            "extra_fields": {"namespace": ns_name, "user_id": user_id}
+                        },
                     )
                     try:
                         core_v1.delete_namespace(ns_name)
@@ -108,10 +168,18 @@ async def _run_cleanup_cycle() -> None:
                     except Exception as del_exc:
                         logger.warning(
                             "orphan_namespace_delete_failed",
-                            extra={"extra_fields": {"namespace": ns_name, "error": str(del_exc)}},
+                            extra={
+                                "extra_fields": {
+                                    "namespace": ns_name,
+                                    "error": str(del_exc),
+                                }
+                            },
                         )
         except Exception as k8s_exc:
-            logger.debug("orphan_ns_check_skipped", extra={"extra_fields": {"error": str(k8s_exc)}})
+            logger.debug(
+                "orphan_ns_check_skipped",
+                extra={"extra_fields": {"error": str(k8s_exc)}},
+            )
 
     finally:
         db.close()
@@ -128,5 +196,7 @@ async def run_cleanup_loop() -> None:
         try:
             await _run_cleanup_cycle()
         except Exception as exc:
-            logger.exception("cleanup_cycle_error", extra={"extra_fields": {"error": str(exc)}})
+            logger.exception(
+                "cleanup_cycle_error", extra={"extra_fields": {"error": str(exc)}}
+            )
         await asyncio.sleep(interval_seconds)

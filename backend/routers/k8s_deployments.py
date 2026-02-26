@@ -1,4 +1,5 @@
 """Endpoints CRUD déploiements, pause/resume, pods, détails, credentials."""
+
 import base64
 import logging
 from typing import List, Dict, Any, Optional
@@ -21,6 +22,7 @@ logger = logging.getLogger("labondemand.k8s")
 
 
 # ============= LISTING DES DÉPLOIEMENTS LABONDEMAND =============
+
 
 @router.get("/deployments/labondemand")
 async def get_labondemand_deployments(
@@ -56,7 +58,9 @@ async def get_labondemand_deployments(
                 "labels": labels,
                 "replicas": dep.spec.replicas,
                 "ready_replicas": dep.status.ready_replicas or 0,
-                "image": dep.spec.template.spec.containers[0].image if dep.spec.template.spec.containers else "Unknown",
+                "image": dep.spec.template.spec.containers[0].image
+                if dep.spec.template.spec.containers
+                else "Unknown",
                 "lifecycle": lifecycle,
                 "is_paused": lifecycle.get("paused", False),
             }
@@ -71,17 +75,23 @@ async def get_labondemand_deployments(
                         "labels": labels,
                         "replicas": dep.spec.replicas or 0,
                         "ready_replicas": dep.status.ready_replicas or 0,
-                        "lifecycle": deployment_service.summarize_lifecycle([lifecycle]),
+                        "lifecycle": deployment_service.summarize_lifecycle(
+                            [lifecycle]
+                        ),
                         "components": [entry],
                         "is_paused": lifecycle.get("paused", False),
                     }
                 else:
                     agg["components"].append(entry)
-                    agg["replicas"] = (agg.get("replicas", 0) or 0) + (dep.spec.replicas or 0)
-                    agg["ready_replicas"] = (agg.get("ready_replicas", 0) or 0) + (dep.status.ready_replicas or 0)
-                    agg["lifecycle"] = deployment_service.summarize_lifecycle([
-                        component.get("lifecycle") for component in agg["components"]
-                    ])
+                    agg["replicas"] = (agg.get("replicas", 0) or 0) + (
+                        dep.spec.replicas or 0
+                    )
+                    agg["ready_replicas"] = (agg.get("ready_replicas", 0) or 0) + (
+                        dep.status.ready_replicas or 0
+                    )
+                    agg["lifecycle"] = deployment_service.summarize_lifecycle(
+                        [component.get("lifecycle") for component in agg["components"]]
+                    )
                     agg["is_paused"] = agg["lifecycle"].get("paused", False)
             else:
                 singles.append(entry)
@@ -89,15 +99,43 @@ async def get_labondemand_deployments(
         deployments = list(stacks.values()) + singles
 
         # Enrichir avec les métadonnées DB (expires_at, created_at)
-        db_records = db.query(DeploymentModel).filter(
-            DeploymentModel.user_id == current_user.id,
-            DeploymentModel.deleted_at.is_(None),
-        ).all()
+        # et créer les enregistrements manquants avec expires_at calculé selon le rôle
+        from ..tasks.cleanup import compute_expires_at
+
+        db_records = (
+            db.query(DeploymentModel)
+            .filter(
+                DeploymentModel.user_id == current_user.id,
+                DeploymentModel.deleted_at.is_(None),
+            )
+            .all()
+        )
         db_index = {r.name: r for r in db_records}
         for dep in deployments:
-            rec = db_index.get(dep["name"])
-            dep["expires_at"] = rec.expires_at.isoformat() if rec and rec.expires_at else None
-            dep["created_at"] = rec.created_at.isoformat() if rec and rec.created_at else None
+            dep_name = dep["name"]
+            rec = db_index.get(dep_name)
+            if rec is None:
+                # Créer l'enregistrement manquant avec expires_at
+                role_val = getattr(current_user.role, "value", str(current_user.role))
+                new_rec = DeploymentModel(
+                    user_id=current_user.id,
+                    name=dep_name,
+                    deployment_type=dep.get("type", "custom"),
+                    namespace=dep.get("namespace", ""),
+                    stack_name=dep.get("labels", {}).get("stack-name"),
+                    status="active",
+                    expires_at=compute_expires_at(role_val),
+                )
+                db.add(new_rec)
+                db.commit()
+                db.refresh(new_rec)
+                rec = new_rec
+            dep["expires_at"] = (
+                rec.expires_at.isoformat() if rec and rec.expires_at else None
+            )
+            dep["created_at"] = (
+                rec.created_at.isoformat() if rec and rec.created_at else None
+            )
 
         return {"deployments": deployments, "k8s_available": True}
     except Exception:
@@ -106,11 +144,10 @@ async def get_labondemand_deployments(
 
 # ============= DÉTAILS D'UN DÉPLOIEMENT =============
 
+
 @router.get("/deployments/{namespace}/{name}/details")
 async def get_deployment_details(
-    namespace: str,
-    name: str,
-    current_user: User = Depends(get_current_user)
+    namespace: str, name: str, current_user: User = Depends(get_current_user)
 ):
     """Obtenir les détails d'un déploiement."""
     namespace = validate_k8s_name(namespace)
@@ -125,25 +162,39 @@ async def get_deployment_details(
         try:
             deployment = apps_v1.read_namespaced_deployment(name, namespace)
         except client.exceptions.ApiException:
-            label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
-            lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+            label_selector = (
+                f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
+            )
+            lst = apps_v1.list_namespaced_deployment(
+                namespace, label_selector=label_selector
+            )
             if lst.items:
-                wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
+                wp = [
+                    d
+                    for d in lst.items
+                    if (d.metadata.labels or {}).get("component") == "wordpress"
+                ]
                 deployment = wp[0] if wp else lst.items[0]
                 name = deployment.metadata.name
             else:
-                lst2 = apps_v1.list_namespaced_deployment(namespace, label_selector=f"app={name}")
+                lst2 = apps_v1.list_namespaced_deployment(
+                    namespace, label_selector=f"app={name}"
+                )
                 if lst2.items:
                     deployment = lst2.items[0]
                     name = deployment.metadata.name
                 else:
-                    raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+                    raise HTTPException(
+                        status_code=404, detail="Déploiement non trouvé"
+                    )
 
         if current_user.role == UserRole.student:
             labels = deployment.metadata.labels or {}
             owner_id = labels.get("user-id")
             if owner_id != str(current_user.id):
-                raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
+                raise HTTPException(
+                    status_code=403, detail="Accès refusé à ce déploiement"
+                )
 
         dep_labels = deployment.metadata.labels or {}
         stack_name = dep_labels.get("stack-name")
@@ -153,7 +204,7 @@ async def get_deployment_details(
             try:
                 comp_list = apps_v1.list_namespaced_deployment(
                     namespace,
-                    label_selector=f"managed-by=labondemand,stack-name={stack_name}"
+                    label_selector=f"managed-by=labondemand,stack-name={stack_name}",
                 )
                 component_deployments = comp_list.items or []
             except Exception:
@@ -161,18 +212,29 @@ async def get_deployment_details(
         if not component_deployments:
             component_deployments = [deployment]
 
-        lifecycle_components = [deployment_service.describe_component_lifecycle(dep) for dep in component_deployments]
+        lifecycle_components = [
+            deployment_service.describe_component_lifecycle(dep)
+            for dep in component_deployments
+        ]
         lifecycle_summary = deployment_service.summarize_lifecycle(lifecycle_components)
 
         if stack_name:
-            pods = core_v1.list_namespaced_pod(namespace, label_selector=f"managed-by=labondemand,stack-name={stack_name}")
+            pods = core_v1.list_namespaced_pod(
+                namespace,
+                label_selector=f"managed-by=labondemand,stack-name={stack_name}",
+            )
         else:
             pods = core_v1.list_namespaced_pod(namespace, label_selector=f"app={name}")
 
         if stack_name:
-            services = core_v1.list_namespaced_service(namespace, label_selector=f"managed-by=labondemand,stack-name={stack_name}")
+            services = core_v1.list_namespaced_service(
+                namespace,
+                label_selector=f"managed-by=labondemand,stack-name={stack_name}",
+            )
         else:
-            services = core_v1.list_namespaced_service(namespace, label_selector=f"app={name}")
+            services = core_v1.list_namespaced_service(
+                namespace, label_selector=f"app={name}"
+            )
 
         # Build node IP cache
         node_ip_cache: Dict[str, str] = {}
@@ -191,7 +253,9 @@ async def get_deployment_details(
                     if external_ip or internal_ip:
                         node_ip_cache[node_name] = external_ip or internal_ip
         except Exception as e:
-            logger.warning("node_list_failed", extra={"extra_fields": {"error": str(e)}})
+            logger.warning(
+                "node_list_failed", extra={"extra_fields": {"error": str(e)}}
+            )
 
         def get_node_external_ip(node_name: str) -> Optional[str]:
             if not node_name:
@@ -208,7 +272,10 @@ async def get_deployment_details(
                             internal_ip = address.address
                     return external_ip or internal_ip
             except Exception as e:
-                logger.warning("node_ip_resolution_failed", extra={"extra_fields": {"node_name": node_name, "error": str(e)}})
+                logger.warning(
+                    "node_ip_resolution_failed",
+                    extra={"extra_fields": {"node_name": node_name, "error": str(e)}},
+                )
             return None
 
         def get_cluster_external_ip():
@@ -222,7 +289,11 @@ async def get_deployment_details(
                         host = getattr(cfg, "host", None)
                         if not host:
                             return None
-                        parsed = urlparse(host) if "://" in host else urlparse(f"https://{host}")
+                        parsed = (
+                            urlparse(host)
+                            if "://" in host
+                            else urlparse(f"https://{host}")
+                        )
                         hostname = parsed.hostname
                         if not hostname:
                             return None
@@ -255,14 +326,18 @@ async def get_deployment_details(
                 return None
             for pod in pods.items:
                 pod_labels = pod.metadata.labels or {}
-                matches = all(pod_labels.get(k) == v for k, v in (svc_labels or {}).items())
+                matches = all(
+                    pod_labels.get(k) == v for k, v in (svc_labels or {}).items()
+                )
                 if matches and pod.spec.node_name:
                     pod_phase = pod.status.phase if pod.status else None
                     if pod_phase == "Running":
                         return pod.spec.node_name
             for pod in pods.items:
                 pod_labels = pod.metadata.labels or {}
-                matches = all(pod_labels.get(k) == v for k, v in (svc_labels or {}).items())
+                matches = all(
+                    pod_labels.get(k) == v for k, v in (svc_labels or {}).items()
+                )
                 if matches and pod.spec.node_name:
                     return pod.spec.node_name
             return None
@@ -287,14 +362,20 @@ async def get_deployment_details(
                 ingress_selector = f"managed-by=labondemand,stack-name={stack_name}"
             else:
                 ingress_selector = f"managed-by=labondemand,app={name}"
-            ingress_list = networking_v1.list_namespaced_ingress(namespace, label_selector=ingress_selector)
+            ingress_list = networking_v1.list_namespaced_ingress(
+                namespace, label_selector=ingress_selector
+            )
         except Exception:
             ingress_list = client.V1IngressList(items=[])
 
         for ingress in getattr(ingress_list, "items", []) or []:
             ingress_meta = getattr(ingress, "metadata", None)
             ingress_spec = getattr(ingress, "spec", None)
-            ingress_class = getattr(ingress_spec, "ingress_class_name", None) if ingress_spec else None
+            ingress_class = (
+                getattr(ingress_spec, "ingress_class_name", None)
+                if ingress_spec
+                else None
+            )
             tls_hosts = set()
             if ingress_spec and getattr(ingress_spec, "tls", None):
                 for tls_block in ingress_spec.tls:
@@ -310,14 +391,24 @@ async def get_deployment_details(
                 for path in getattr(http_block, "paths", []) or []:
                     backend = getattr(path, "backend", None)
                     service_ref = getattr(backend, "service", None) if backend else None
-                    service_name = getattr(service_ref, "name", None) if service_ref else None
+                    service_name = (
+                        getattr(service_ref, "name", None) if service_ref else None
+                    )
                     if not service_name:
                         continue
-                    service_port_ref = getattr(service_ref, "port", None) if service_ref else None
-                    service_port = getattr(service_port_ref, "number", None) if service_port_ref else None
+                    service_port_ref = (
+                        getattr(service_ref, "port", None) if service_ref else None
+                    )
+                    service_port = (
+                        getattr(service_port_ref, "number", None)
+                        if service_port_ref
+                        else None
+                    )
                     if service_port is None:
                         service_port = getattr(service_port_ref, "name", None)
-                    path_value = getattr(path, "path", None) or settings.INGRESS_DEFAULT_PATH
+                    path_value = (
+                        getattr(path, "path", None) or settings.INGRESS_DEFAULT_PATH
+                    )
                     tls_enabled = host in tls_hosts or bool(settings.INGRESS_TLS_SECRET)
                     scheme = "https" if tls_enabled else "http"
                     entry = {
@@ -328,20 +419,24 @@ async def get_deployment_details(
                         "service_port": service_port,
                         "class": ingress_class,
                         "tls": tls_enabled,
-                        "annotations": dict(getattr(ingress_meta, "annotations", {}) or {}),
+                        "annotations": dict(
+                            getattr(ingress_meta, "annotations", {}) or {}
+                        ),
                         "url": f"{scheme}://{host}{path_value}",
                     }
                     ingress_entries.append(entry)
                     ingress_by_service.setdefault(service_name, []).append(entry)
-                    ingress_access_entries.append({
-                        "url": entry["url"],
-                        "service": service_name,
-                        "ingress": entry["ingress"],
-                        "host": host,
-                        "protocol": scheme,
-                        "secure": tls_enabled,
-                        "path": path_value,
-                    })
+                    ingress_access_entries.append(
+                        {
+                            "url": entry["url"],
+                            "service": service_name,
+                            "ingress": entry["ingress"],
+                            "host": host,
+                            "protocol": scheme,
+                            "secure": tls_enabled,
+                            "path": path_value,
+                        }
+                    )
 
         # Build access URLs
         access_urls = []
@@ -361,8 +456,10 @@ async def get_deployment_details(
                 port_info = {
                     "name": port.name,
                     "port": port.port,
-                    "target_port": str(port.target_port) if port.target_port else str(port.port),
-                    "protocol": port.protocol
+                    "target_port": str(port.target_port)
+                    if port.target_port
+                    else str(port.port),
+                    "protocol": port.protocol,
                 }
 
                 if port.node_port:
@@ -384,17 +481,19 @@ async def get_deployment_details(
                         nodeport_ip = get_nodeport_ip(svc.metadata.name)
                         node_name_for_svc = get_node_for_service(svc.metadata.name)
 
-                        access_urls.append({
-                            "url": f"{scheme}://{nodeport_ip}:{port.node_port}",
-                            "service": svc.metadata.name,
-                            "node_port": port.node_port,
-                            "node_ip": nodeport_ip,
-                            "node_name": node_name_for_svc,
-                            "cluster_ip": cluster_ip,
-                            "label": label or None,
-                            "protocol": scheme,
-                            "secure": False,
-                        })
+                        access_urls.append(
+                            {
+                                "url": f"{scheme}://{nodeport_ip}:{port.node_port}",
+                                "service": svc.metadata.name,
+                                "node_port": port.node_port,
+                                "node_ip": nodeport_ip,
+                                "node_name": node_name_for_svc,
+                                "cluster_ip": cluster_ip,
+                                "label": label or None,
+                                "protocol": scheme,
+                                "secure": False,
+                            }
+                        )
 
                 service_info["ports"].append(port_info)
 
@@ -409,8 +508,12 @@ async def get_deployment_details(
                 "replicas": deployment.spec.replicas,
                 "ready_replicas": deployment.status.ready_replicas or 0,
                 "available_replicas": deployment.status.available_replicas or 0,
-                "image": deployment.spec.template.spec.containers[0].image if deployment.spec.template.spec.containers else None,
-                "labels": dict(deployment.metadata.labels) if deployment.metadata.labels else {},
+                "image": deployment.spec.template.spec.containers[0].image
+                if deployment.spec.template.spec.containers
+                else None,
+                "labels": dict(deployment.metadata.labels)
+                if deployment.metadata.labels
+                else {},
                 "state": lifecycle_summary.get("state"),
                 "paused": lifecycle_summary.get("paused", False),
             },
@@ -426,13 +529,13 @@ async def get_deployment_details(
                     "name": pod.metadata.name,
                     "status": pod.status.phase,
                     "pod_ip": pod.status.pod_ip,
-                    "node_name": pod.spec.node_name
+                    "node_name": pod.spec.node_name,
                 }
                 for pod in pods.items
             ],
             "services": service_data,
             "ingresses": ingress_entries,
-            "access_urls": access_urls
+            "access_urls": access_urls,
         }
 
     except HTTPException:
@@ -440,18 +543,24 @@ async def get_deployment_details(
     except Exception as e:
         logger.exception(
             "api_deployment_details_error",
-            extra={"extra_fields": {"namespace": namespace, "name": name, "user_id": getattr(current_user, "id", None), "error": str(e)}},
+            extra={
+                "extra_fields": {
+                    "namespace": namespace,
+                    "name": name,
+                    "user_id": getattr(current_user, "id", None),
+                    "error": str(e),
+                }
+            },
         )
         raise_k8s_http(e)
 
 
 # ============= CREDENTIALS (SECRETS) =============
 
+
 @router.get("/deployments/{namespace}/{name}/credentials")
 async def get_deployment_credentials(
-    namespace: str,
-    name: str,
-    current_user: User = Depends(get_current_user)
+    namespace: str, name: str, current_user: User = Depends(get_current_user)
 ):
     """Récupère les identifiants (secrets) associés à un déploiement LabOnDemand."""
     namespace = validate_k8s_name(namespace)
@@ -467,23 +576,38 @@ async def get_deployment_credentials(
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
-                lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+                lst = apps_v1.list_namespaced_deployment(
+                    namespace, label_selector=label_selector
+                )
                 if not lst.items:
-                    raise HTTPException(status_code=404, detail="Application introuvable pour récupérer les identifiants")
-                wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Application introuvable pour récupérer les identifiants",
+                    )
+                wp = [
+                    d
+                    for d in lst.items
+                    if (d.metadata.labels or {}).get("component") == "wordpress"
+                ]
                 deployment = wp[0] if wp else lst.items[0]
             else:
                 raise
         labels = deployment.metadata.labels or {}
         owner_id = labels.get("user-id")
         app_type = labels.get("app-type", "custom")
-        stack_name = labels.get("stack-name") or requested_name or deployment.metadata.name
+        stack_name = (
+            labels.get("stack-name") or requested_name or deployment.metadata.name
+        )
 
         if current_user.role == UserRole.student and owner_id != str(current_user.id):
-            raise HTTPException(status_code=403, detail="Accès refusé à ces identifiants")
+            raise HTTPException(
+                status_code=403, detail="Accès refusé à ces identifiants"
+            )
 
         selector = f"managed-by=labondemand,stack-name={stack_name}"
-        secrets_list = core_v1.list_namespaced_secret(namespace, label_selector=selector)
+        secrets_list = core_v1.list_namespaced_secret(
+            namespace, label_selector=selector
+        )
         secret_obj = None
         if secrets_list.items:
             secret_obj = secrets_list.items[0]
@@ -497,7 +621,10 @@ async def get_deployment_credentials(
                     secret_obj = core_v1.read_namespaced_secret(wp_secret, namespace)
             except client.exceptions.ApiException as e:
                 if e.status == 404:
-                    raise HTTPException(status_code=404, detail="Aucun identifiant trouvé pour cette application")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Aucun identifiant trouvé pour cette application",
+                    )
                 raise
 
         data = secret_obj.data or {}
@@ -515,7 +642,9 @@ async def get_deployment_credentials(
             wp_url = None
             if deployment_service._should_attach_ingress("wordpress"):
                 try:
-                    host = deployment_service._build_ingress_host(stack_name, current_user)
+                    host = deployment_service._build_ingress_host(
+                        stack_name, current_user
+                    )
                     scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
                     wp_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
                 except Exception:
@@ -531,8 +660,10 @@ async def get_deployment_credentials(
                     "host": f"{stack_name}-mariadb-service",
                     "port": 3306,
                     "username": dec("MARIADB_USER") or dec("WORDPRESS_DATABASE_USER"),
-                    "password": dec("MARIADB_PASSWORD") or dec("WORDPRESS_DATABASE_PASSWORD"),
-                    "database": dec("MARIADB_DATABASE") or dec("WORDPRESS_DATABASE_NAME"),
+                    "password": dec("MARIADB_PASSWORD")
+                    or dec("WORDPRESS_DATABASE_PASSWORD"),
+                    "database": dec("MARIADB_DATABASE")
+                    or dec("WORDPRESS_DATABASE_NAME"),
                 },
             }
             if wp_url:
@@ -543,7 +674,9 @@ async def get_deployment_credentials(
             pma_url_hint = "http://<NODE_IP>:<NODE_PORT>/"
             if deployment_service._should_attach_ingress("mysql"):
                 try:
-                    host = deployment_service._build_ingress_host(stack_name, current_user, component="pma")
+                    host = deployment_service._build_ingress_host(
+                        stack_name, current_user, component="pma"
+                    )
                     scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
                     pma_url_hint = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
                 except Exception:
@@ -565,11 +698,19 @@ async def get_deployment_credentials(
             lamp_web_url = None
             if deployment_service._should_attach_ingress("lamp"):
                 try:
-                    host_pma = deployment_service._build_ingress_host(stack_name, current_user, component="pma")
-                    host_web = deployment_service._build_ingress_host(stack_name, current_user, component="web")
+                    host_pma = deployment_service._build_ingress_host(
+                        stack_name, current_user, component="pma"
+                    )
+                    host_web = deployment_service._build_ingress_host(
+                        stack_name, current_user, component="web"
+                    )
                     scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    lamp_pma_hint = f"{scheme}://{host_pma}{settings.INGRESS_DEFAULT_PATH}"
-                    lamp_web_url = f"{scheme}://{host_web}{settings.INGRESS_DEFAULT_PATH}"
+                    lamp_pma_hint = (
+                        f"{scheme}://{host_pma}{settings.INGRESS_DEFAULT_PATH}"
+                    )
+                    lamp_web_url = (
+                        f"{scheme}://{host_web}{settings.INGRESS_DEFAULT_PATH}"
+                    )
                 except Exception:
                     pass
             response = {
@@ -596,6 +737,7 @@ async def get_deployment_credentials(
 
 # ============= CRÉATION =============
 
+
 @router.post("/pods")
 @limiter.limit("10/5minute")
 async def create_pod(
@@ -604,7 +746,7 @@ async def create_pod(
     image: str,
     namespace: str = "default",
     current_user: User = Depends(get_current_user),
-    _: bool = Depends(is_admin)
+    _: bool = Depends(is_admin),
 ):
     """Créer un pod (admin uniquement)."""
     name = validate_k8s_name(name)
@@ -617,12 +759,10 @@ async def create_pod(
             "kind": "Pod",
             "metadata": {"name": name},
             "spec": {
-                "containers": [{
-                    "name": name,
-                    "image": image,
-                    "ports": [{"containerPort": 80}]
-                }]
-            }
+                "containers": [
+                    {"name": name, "image": image, "ports": [{"containerPort": 80}]}
+                ]
+            },
         }
         v1.create_namespaced_pod(namespace, pod_manifest)
         return {"message": f"Pod {name} créé avec succès dans le namespace {namespace}"}
@@ -648,12 +788,20 @@ async def create_deployment(
     memory_limit: str = "512Mi",
     additional_labels: Optional[Dict[str, str]] = None,
     existing_pvc_name: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Créer un déploiement avec service optionnel."""
     logger.debug(
         "api_create_deployment_request",
-        extra={"extra_fields": {"name": name, "image": image, "replicas": replicas, "deployment_type": deployment_type, "user_id": getattr(current_user, "id", None)}},
+        extra={
+            "extra_fields": {
+                "name": name,
+                "image": image,
+                "replicas": replicas,
+                "deployment_type": deployment_type,
+                "user_id": getattr(current_user, "id", None),
+            }
+        },
     )
     return await deployment_service.create_deployment(
         name=name,
@@ -676,6 +824,7 @@ async def create_deployment(
 
 
 # ============= PAUSE / RESUME =============
+
 
 @router.post("/deployments/{namespace}/{name}/pause")
 async def pause_deployment(
@@ -702,7 +851,9 @@ async def resume_deployment(
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.resume_application(namespace, name, current_user)
+        return await deployment_service.resume_application(
+            namespace, name, current_user
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -711,12 +862,13 @@ async def resume_deployment(
 
 # ============= SUPPRESSION =============
 
+
 @router.delete("/pods/{namespace}/{name}")
 async def delete_pod(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
-    _: bool = Depends(is_admin)
+    _: bool = Depends(is_admin),
 ):
     """Supprimer un pod (admin uniquement)."""
     namespace = validate_k8s_name(namespace)
@@ -743,7 +895,16 @@ async def delete_deployment(
     name = validate_k8s_name(name)
     logger.info(
         "api_delete_deployment_request",
-        extra={"extra_fields": {"namespace": namespace, "name": name, "user_id": getattr(current_user, "id", None), "username": getattr(current_user, "username", None), "delete_service": delete_service, "delete_persistent": delete_persistent}},
+        extra={
+            "extra_fields": {
+                "namespace": namespace,
+                "name": name,
+                "user_id": getattr(current_user, "id", None),
+                "username": getattr(current_user, "username", None),
+                "delete_service": delete_service,
+                "delete_persistent": delete_persistent,
+            }
+        },
     )
 
     try:
@@ -774,21 +935,31 @@ async def delete_deployment(
                         label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
                     else:
                         label_selector = f"managed-by=labondemand,stack-name={name}"
-                    lst = apps_v1.list_namespaced_deployment(namespace, label_selector=label_selector)
+                    lst = apps_v1.list_namespaced_deployment(
+                        namespace, label_selector=label_selector
+                    )
                 except Exception:
                     lst = client.V1DeploymentList(items=[])
                 if lst and lst.items:
-                    wp = [d for d in lst.items if (d.metadata.labels or {}).get("component") == "wordpress"]
+                    wp = [
+                        d
+                        for d in lst.items
+                        if (d.metadata.labels or {}).get("component") == "wordpress"
+                    ]
                     dep = wp[0] if wp else lst.items[0]
                     stack_mode = True
                     name = dep.metadata.name
                 else:
-                    lst2 = apps_v1.list_namespaced_deployment(namespace, label_selector=f"app={name}")
+                    lst2 = apps_v1.list_namespaced_deployment(
+                        namespace, label_selector=f"app={name}"
+                    )
                     if lst2.items:
                         dep = lst2.items[0]
                         name = dep.metadata.name
                     else:
-                        raise HTTPException(status_code=404, detail="Déploiement non trouvé")
+                        raise HTTPException(
+                            status_code=404, detail="Déploiement non trouvé"
+                        )
             else:
                 raise
 
@@ -799,11 +970,19 @@ async def delete_deployment(
             owner_id = labels.get("user-id")
             managed = labels.get("managed-by")
             if owner_id != str(current_user.id) or managed != "labondemand":
-                raise HTTPException(status_code=403, detail="Accès refusé à ce déploiement")
+                raise HTTPException(
+                    status_code=403, detail="Accès refusé à ce déploiement"
+                )
 
         deleted = []
 
-        if app_type == "wordpress" or (stack_mode and (labels.get("app-type") == "wordpress" or labels.get("component") == "wordpress")):
+        if app_type == "wordpress" or (
+            stack_mode
+            and (
+                labels.get("app-type") == "wordpress"
+                or labels.get("component") == "wordpress"
+            )
+        ):
             stack_name = labels.get("stack-name") or name
             wp_name = stack_name
             db_name = f"{stack_name}-mariadb"
@@ -827,7 +1006,9 @@ async def delete_deployment(
 
             if delete_persistent:
                 try:
-                    core_v1.delete_namespaced_persistent_volume_claim(f"{db_name}-pvc", namespace)
+                    core_v1.delete_namespaced_persistent_volume_claim(
+                        f"{db_name}-pvc", namespace
+                    )
                 except client.exceptions.ApiException:
                     pass
                 try:
@@ -835,10 +1016,32 @@ async def delete_deployment(
                 except client.exceptions.ApiException:
                     pass
 
-            audit_logger.info("deployment_deleted", extra={"extra_fields": {"namespace": namespace, "name": stack_name, "user_id": getattr(current_user, "id", None), "deployment_type": "wordpress", "components_deleted": deleted, "delete_service": delete_service, "delete_persistent": delete_persistent}})
-            return {"message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"}
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": stack_name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": "wordpress",
+                        "components_deleted": deleted,
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
+            return {
+                "message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"
+            }
 
-        elif app_type == "mysql" or stack_mode and (labels.get("app-type") == "mysql" or labels.get("component") in {"database", "phpmyadmin"}):
+        elif (
+            app_type == "mysql"
+            or stack_mode
+            and (
+                labels.get("app-type") == "mysql"
+                or labels.get("component") in {"database", "phpmyadmin"}
+            )
+        ):
             stack_name = labels.get("stack-name") or name
             db_name = f"{stack_name}-mysql"
             pma_name = f"{stack_name}-phpmyadmin"
@@ -862,16 +1065,35 @@ async def delete_deployment(
 
             if delete_persistent:
                 try:
-                    core_v1.delete_namespaced_persistent_volume_claim(f"{db_name}-pvc", namespace)
+                    core_v1.delete_namespaced_persistent_volume_claim(
+                        f"{db_name}-pvc", namespace
+                    )
                 except client.exceptions.ApiException:
                     pass
                 try:
-                    core_v1.delete_namespaced_secret(f"{stack_name}-db-secret", namespace)
+                    core_v1.delete_namespaced_secret(
+                        f"{stack_name}-db-secret", namespace
+                    )
                 except client.exceptions.ApiException:
                     pass
 
-            audit_logger.info("deployment_deleted", extra={"extra_fields": {"namespace": namespace, "name": stack_name, "user_id": getattr(current_user, "id", None), "deployment_type": "mysql", "components_deleted": deleted, "delete_service": delete_service, "delete_persistent": delete_persistent}})
-            return {"message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"}
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": stack_name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": "mysql",
+                        "components_deleted": deleted,
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
+            return {
+                "message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"
+            }
 
         elif app_type == "lamp" or stack_mode and labels.get("app-type") == "lamp":
             stack_name = labels.get("stack-name") or name
@@ -888,7 +1110,11 @@ async def delete_deployment(
                         raise
 
             if delete_service:
-                for svc_name in [f"{web_name}-service", f"{db_name}-service", f"{pma_name}-service"]:
+                for svc_name in [
+                    f"{web_name}-service",
+                    f"{db_name}-service",
+                    f"{pma_name}-service",
+                ]:
                     try:
                         core_v1.delete_namespaced_service(svc_name, namespace)
                     except client.exceptions.ApiException as exc:
@@ -898,16 +1124,35 @@ async def delete_deployment(
 
             if delete_persistent:
                 try:
-                    core_v1.delete_namespaced_persistent_volume_claim(f"{db_name}-pvc", namespace)
+                    core_v1.delete_namespaced_persistent_volume_claim(
+                        f"{db_name}-pvc", namespace
+                    )
                 except client.exceptions.ApiException:
                     pass
                 try:
-                    core_v1.delete_namespaced_secret(f"{stack_name}-db-secret", namespace)
+                    core_v1.delete_namespaced_secret(
+                        f"{stack_name}-db-secret", namespace
+                    )
                 except client.exceptions.ApiException:
                     pass
 
-            audit_logger.info("deployment_deleted", extra={"extra_fields": {"namespace": namespace, "name": stack_name, "user_id": getattr(current_user, "id", None), "deployment_type": "lamp", "components_deleted": deleted, "delete_service": delete_service, "delete_persistent": delete_persistent}})
-            return {"message": f"Stack LAMP '{stack_name}' supprimée: {', '.join(deleted)}"}
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": stack_name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": "lamp",
+                        "components_deleted": deleted,
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
+            return {
+                "message": f"Stack LAMP '{stack_name}' supprimée: {', '.join(deleted)}"
+            }
 
         else:
             apps_v1.delete_namespaced_deployment(name, namespace)
@@ -918,7 +1163,19 @@ async def delete_deployment(
                     if exc.status != 404:
                         raise
                 delete_associated_ingress(f"{name}-service")
-            audit_logger.info("deployment_deleted", extra={"extra_fields": {"namespace": namespace, "name": name, "user_id": getattr(current_user, "id", None), "deployment_type": labels.get("app-type", "custom"), "delete_service": delete_service, "delete_persistent": delete_persistent}})
+            audit_logger.info(
+                "deployment_deleted",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "name": name,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_type": labels.get("app-type", "custom"),
+                        "delete_service": delete_service,
+                        "delete_persistent": delete_persistent,
+                    }
+                },
+            )
             return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
     except Exception as e:
         raise_k8s_http(e)
