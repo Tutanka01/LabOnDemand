@@ -1,3 +1,12 @@
+---
+title: Ressources et quotas LabOnDemand
+summary: Architecture des gardes-fous de ressources Kubernetes — clamp applicatif, vérification des quotas par rôle, préflight K8s et LimitRange par namespace.
+read_when: |
+  - Tu travailles sur k8s_utils.py ou DeploymentService et touches aux quotas ou limites
+  - Tu veux comprendre pourquoi un déploiement est refusé (quota dépassé, ressources insuffisantes)
+  - Tu configures des limites personnalisées via UserQuotaOverride pour un utilisateur
+---
+
 # Ressources et quotas LabOnDemand
 
 ## Architecture des gardes-fous

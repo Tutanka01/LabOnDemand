@@ -1,3 +1,12 @@
+---
+title: Stack LAMP (Apache + PHP + MySQL + phpMyAdmin)
+summary: Déploiement et gestion de la stack LAMP dans LabOnDemand — composants Kubernetes créés, URLs d'accès, identifiants MySQL et persistance des données.
+read_when: |
+  - Tu travailles sur le déploiement ou la logique backend de la stack LAMP
+  - Tu veux connaître les identifiants MySQL ou les URLs générées pour une stack LAMP
+  - Tu dépannes un problème lié au pod Apache/PHP, MySQL ou phpMyAdmin
+---
+
 # Stack LAMP (Apache + PHP + MySQL + phpMyAdmin)
 
 Cette stack fournit un environnement LAMP prêt à l’emploi pour les travaux pratiques: un serveur web Apache+PHP, une base MySQL, et une interface phpMyAdmin. Elle est déployée et gérée automatiquement par LabOnDemand avec des bonnes pratiques de sécurité et de persistance.

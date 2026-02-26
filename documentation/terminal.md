@@ -1,3 +1,12 @@
+---
+title: Terminal Web intégré (sans SSH)
+summary: Terminal shell interactif dans le navigateur via WebSocket et Xterm.js — fonctionnement, sécurité par rôle et dépannage des problèmes courants.
+read_when: |
+  - Tu travailles sur le WebSocket terminal (backend/routers ou frontend Xterm.js)
+  - Tu dépannes un problème de terminal (double écho, déconnexion, redimensionnement)
+  - Tu veux comprendre les restrictions d'accès au terminal selon le rôle utilisateur
+---
+
 # Terminal Web intégré (sans SSH)
 
 Le terminal intégré de LabOnDemand permet d’ouvrir une session shell interactive vers un pod Kubernetes directement depuis le navigateur, sans SSH. Il s’appuie sur Xterm.js et un WebSocket exec côté backend FastAPI.

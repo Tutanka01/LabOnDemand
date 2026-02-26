@@ -1,3 +1,12 @@
+---
+title: Authentification LabOnDemand
+summary: Mécanismes d'authentification — sessions Redis, mode local (login/mot de passe) et mode SSO/OIDC — avec les flux utilisateur, les endpoints et la gestion des rôles.
+read_when: |
+  - Tu configures ou dépannes le SSO/OIDC (connexion via IdP universitaire)
+  - Tu travailles sur le code d'authentification (security.py, sso.py, auth_router.py)
+  - Tu veux comprendre comment les sessions et les rôles fonctionnent
+---
+
 # Authentification LabOnDemand
 
 L'authentification repose sur des sessions serveur conservées dans Redis. Trois rôles sont pris en charge (`student`, `teacher`, `admin`) avec des capacités croissantes.

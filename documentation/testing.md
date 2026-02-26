@@ -1,3 +1,12 @@
+---
+title: Tests
+summary: Guide des tests automatisés de LabOnDemand — installation, lancement de la suite pytest, organisation des fichiers de test et configuration des mocks.
+read_when: |
+  - Tu écris ou modifies des tests dans backend/tests/
+  - Tu veux lancer la suite de tests et interpréter les résultats
+  - Tu ajoutes une nouvelle fonctionnalité et dois créer les tests correspondants
+---
+
 # Tests
 
 ## Installation rapide

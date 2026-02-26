@@ -1,3 +1,12 @@
+---
+title: Stockage persistant (PVC)
+summary: Configuration du stockage persistant pour LabOnDemand — StorageClass k3s, création de PVC, intégration avec l'UI et comportement de fallback en emptyDir.
+read_when: |
+  - Tu configures la persistance des données sur un nouveau cluster (StorageClass, NFS, Ceph)
+  - Tu dépannes un PVC bloqué en Pending ou des données perdues après redémarrage
+  - Tu veux comprendre comment LabOnDemand gère les volumes réutilisables pour les utilisateurs
+---
+
 # Stockage persistant (PVC)
 
 Cette page centralise la manière d'exposer du stockage durable à LabOnDemand : configuration des StorageClass sur k3s, création d'un PVC générique et intégration avec l'UI (volumes réutilisables).

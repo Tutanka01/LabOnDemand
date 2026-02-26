@@ -1,3 +1,12 @@
+---
+title: Observabilité et journalisation
+summary: Pile de logging LabOnDemand — format JSON structuré, organisation des fichiers app.log/access.log/audit.log, rotation, variables d'environnement et collecte en production.
+read_when: |
+  - Tu configures ou intègres la collecte de logs (Loki, ELK, etc.)
+  - Tu veux comprendre le format des entrées de log ou ajouter un nouveau log applicatif
+  - Tu dépannes un problème et cherches dans quels fichiers de logs regarder
+---
+
 # Observabilite et journalisation
 
 Ce document decrit la pile de logging de LabOnDemand. Il couvre le format des journaux, l organisation du dossier `logs/`, la configuration via variables d environnement et les bonnes pratiques pour la collecte en production.

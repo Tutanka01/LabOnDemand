@@ -1,3 +1,12 @@
+---
+title: Mise en place de la plateforme (k3s + Ingress)
+summary: Installation d'un cluster k3s production-ready pour LabOnDemand — ingress-nginx, MetalLB, DNS wildcard, certificats TLS et configuration réseau.
+read_when: |
+  - Tu déploies LabOnDemand sur une nouvelle infrastructure (serveur bare-metal ou VM)
+  - Tu configures l'Ingress Controller, le LoadBalancer ou les certificats TLS
+  - Tu ajoutes des nœuds worker à un cluster k3s existant
+---
+
 # Mise en place de la plateforme (k3s + Ingress)
 
 Ce guide décrit la marche recommandée pour préparer un cluster k3s propre à LabOnDemand : installation du cluster, déploiement d`ingress-nginx`, option MetalLB, DNS wildcard et certificats TLS.

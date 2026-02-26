@@ -1,3 +1,12 @@
+---
+title: Sécurité LabOnDemand
+summary: Modèle de sécurité complet — sessions serveur, CSRF, isolation Kubernetes par namespace, headers HTTP, RBAC et recommandations pour la production.
+read_when: |
+  - Tu audites ou renforces la sécurité de la plateforme
+  - Tu travailles sur l'authentification, les sessions Redis ou la protection CSRF
+  - Tu prépares un déploiement en production et veux appliquer les bonnes pratiques de sécurité
+---
+
 # Sécurité LabOnDemand
 
 ## Authentification

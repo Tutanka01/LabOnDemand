@@ -1,3 +1,12 @@
+---
+title: Guide administrateur LabOnDemand
+summary: Référence complète des fonctionnalités réservées au rôle admin — gestion des utilisateurs, quotas, import CSV, supervision du cluster et logs d'audit.
+read_when: |
+  - Tu dois créer, modifier ou supprimer des comptes utilisateurs
+  - Tu veux accorder des dérogations de quotas à un utilisateur spécifique
+  - Tu supervises l'état du cluster ou consultes les logs d'audit via l'UI admin
+---
+
 # Guide administrateur LabOnDemand
 
 Ce guide couvre toutes les fonctionnalités réservées au rôle `admin` :
