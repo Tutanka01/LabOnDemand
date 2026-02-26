@@ -239,7 +239,7 @@
             }
           }
         } catch (err) {
-          alert('Erreur: ' + err.message);
+          showRcToast(err.message, 'error');
           e.currentTarget.checked = !allowed; // revert
         }
       }));
@@ -292,10 +292,25 @@
         closeModal();
         await refreshRCs();
       } catch (err) {
-        alert('Erreur: ' + err.message);
+        const errEl = document.createElement('div');
+        errEl.className = 'notification error';
+        errEl.style.cssText = 'display:flex; margin-bottom:12px;';
+        errEl.innerHTML = `<i class="fas fa-exclamation-circle"></i> <span>${err.message}</span>`;
+        const rcForm = document.getElementById('rc-form');
+        if (rcForm) rcForm.prepend(errEl);
+        setTimeout(() => errEl.remove(), 5000);
       }
     }
   });
+
+  function showRcToast(message, type = 'error') {
+    const toast = document.createElement('div');
+    toast.className = `notification ${type}`;
+    toast.style.cssText = 'display:flex; position:fixed; bottom:24px; right:24px; z-index:9999; min-width:280px; max-width:420px; box-shadow:0 8px 24px rgba(0,0,0,0.12);';
+    toast.innerHTML = `<i class="fas fa-exclamation-circle"></i> <span>${message}</span>`;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 4000);
+  }
 
   // Initial load
   refreshRCs();
