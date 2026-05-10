@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Vérifier que les mots de passe correspondent
         if (password !== confirmPassword) {
-            errorText.textContent = "Les mots de passe ne correspondent pas";
+            errorText.textContent = window.t ? window.t('register.password_mismatch') : "Les mots de passe ne correspondent pas";
             errorMessage.style.display = 'block';
             return;
         }
@@ -53,11 +53,11 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.detail || 'Erreur lors de l\'inscription');
+                throw new Error(error.detail || (window.t ? window.t('register.error') : 'Erreur lors de l\'inscription'));
             }
             
             // Inscription réussie
-            successText.textContent = "Inscription réussie ! Vous allez être redirigé vers la page de connexion...";
+            successText.textContent = window.t ? window.t('register.success_redirect') : "Inscription réussie ! Vous allez être redirigé vers la page de connexion...";
             successMessage.style.display = 'block';
             
             // Réinitialiser le formulaire
@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ssoEnabled) {
             if (registerForm) registerForm.style.display = 'none';
             if (ssoRegister) ssoRegister.style.display = 'flex';
-            if (registerInfo) registerInfo.innerHTML = '<i class="fas fa-user-plus"></i> Inscription désactivée (SSO activé)';
+            if (registerInfo) registerInfo.innerHTML = '<i class="fas fa-user-plus"></i> ' + (window.t ? window.t('register.disabled_sso') : 'Inscription désactivée (SSO activé)');
             if (ssoRegisterBtn) ssoRegisterBtn.focus();
         } else {
             if (registerForm) registerForm.style.display = 'flex';

@@ -62,7 +62,7 @@
     SUPPORTED.forEach(function (lang) {
       const opt = document.createElement('option');
       opt.value = lang;
-      opt.textContent = lang === 'fr' ? '🇫🇷 FR' : '🇬🇧 EN';
+      opt.textContent = lang.toUpperCase();
       if (lang === _lang) opt.selected = true;
       sel.appendChild(opt);
     });
@@ -83,6 +83,7 @@
       })
       .then(function (data) {
         _strings = data;
+        document.documentElement.lang = _lang;
         applyToDOM();
         injectLangSwitcher();
         window._i18nLoaded = true;

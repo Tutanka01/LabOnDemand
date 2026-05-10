@@ -102,13 +102,16 @@ def _require_owner_or_admin(cls: Classroom, current_user: User) -> None:
         raise HTTPException(status_code=403, detail="Accès refusé : vous n'êtes pas propriétaire de cette classe")
 
 
-def _require_enrolled_or_teacher(cid: int, current_user: User, db: Session) -> None:
-    if current_user.role in (UserRole.admin, UserRole.teacher):
+def _require_classroom_access(cls: Classroom, current_user: User, db: Session) -> None:
+    if current_user.role == UserRole.admin:
+        return
+    if current_user.role == UserRole.teacher:
+        _require_owner_or_admin(cls, current_user)
         return
     enrolled = (
         db.query(Enrollment)
         .filter(
-            Enrollment.classroom_id == cid,
+            Enrollment.classroom_id == cls.id,
             Enrollment.user_id == current_user.id,
             Enrollment.removed_at.is_(None),
         )
@@ -162,7 +165,7 @@ def create_classroom(
 @classrooms_router.get("/{cid}", response_model=ClassroomResponse)
 def get_classroom(cid: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     cls = _get_classroom_or_404(cid, db)
-    _require_enrolled_or_teacher(cid, current_user, db)
+    _require_classroom_access(cls, current_user, db)
     return _enrich_classroom(cls, db)
 
 
@@ -206,7 +209,7 @@ def list_students(
     db: Session = Depends(get_db),
 ):
     cls = _get_classroom_or_404(cid, db)
-    _require_enrolled_or_teacher(cid, current_user, db)
+    _require_classroom_access(cls, current_user, db)
 
     enrollments = (
         db.query(Enrollment)
@@ -251,9 +254,13 @@ def enroll_students(
 
     results = []
     for uid in payload.user_ids:
-        student = db.query(User).filter(User.id == uid, User.is_active == True).first()  # noqa: E712
+        student = (
+            db.query(User)
+            .filter(User.id == uid, User.is_active == True, User.role == UserRole.student)  # noqa: E712
+            .first()
+        )
         if not student:
-            results.append({"user_id": uid, "status": "error", "detail": "Utilisateur introuvable ou inactif"})
+            results.append({"user_id": uid, "status": "error", "detail": "Utilisateur introuvable, inactif ou non etudiant"})
             continue
         existing = db.query(Enrollment).filter(Enrollment.classroom_id == cid, Enrollment.user_id == uid).first()
         if existing:
@@ -310,6 +317,14 @@ async def import_students_csv(
         if not student.is_active:
             results.append({"line": line_num, "username": username, "status": "error", "detail": "Compte inactif"})
             continue
+        if student.role != UserRole.student:
+            results.append({
+                "line": line_num,
+                "username": username,
+                "status": "error",
+                "detail": "Seuls les comptes etudiants peuvent etre inscrits",
+            })
+            continue
         existing = db.query(Enrollment).filter(Enrollment.classroom_id == cid, Enrollment.user_id == student.id).first()
         if existing:
             if existing.removed_at is not None:
@@ -357,8 +372,8 @@ def list_assignments(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _get_classroom_or_404(cid, db)
-    _require_enrolled_or_teacher(cid, current_user, db)
+    cls = _get_classroom_or_404(cid, db)
+    _require_classroom_access(cls, current_user, db)
     assignments = (
         db.query(Assignment)
         .filter(Assignment.classroom_id == cid, Assignment.status == "active")

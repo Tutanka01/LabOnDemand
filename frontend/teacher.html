@@ -109,7 +109,7 @@
                         <h1><i class="fas fa-users"></i> <span data-i18n="students.title">Étudiants</span></h1>
                         <div class="page-header-actions">
                             <button id="add-student-btn" class="action-btn" disabled>
-                                <i class="fas fa-user-plus"></i> <span>Ajouter un étudiant</span>
+                                <i class="fas fa-user-plus"></i> <span data-i18n="students.add">Ajouter un étudiant</span>
                             </button>
                             <button id="import-students-csv-btn" class="action-btn action-btn--secondary" disabled>
                                 <i class="fas fa-file-csv"></i> <span data-i18n="students.import_csv">Importer CSV</span>
@@ -137,7 +137,7 @@
                             <i class="fas fa-file-csv"></i> <span data-i18n="students.import_csv">Importer CSV</span>
                         </button>
                     </div>
-                    <div id="students-table-wrap" style="display:none;">
+                    <div id="students-table-wrap" class="students-table-container" style="display:none;">
                         <table class="users-table">
                             <thead>
                                 <tr>
@@ -222,7 +222,7 @@
                     <div id="overview-grid" class="overview-grid" style="display:none;"></div>
                     <div id="overview-empty" class="empty-state" style="display:none;">
                         <i class="fas fa-th"></i>
-                        <h3>Aucune donnée disponible</h3>
+                        <h3 data-i18n="overview.empty">Aucune donnée disponible</h3>
                     </div>
                 </div>
             </div>
@@ -254,9 +254,9 @@
                             <label for="classroom-desc-input" data-i18n="classroom.description">Description (optionnel)</label>
                             <textarea id="classroom-desc-input" rows="3" data-i18n-placeholder="classroom.description_placeholder" placeholder="Brève description du cours..." maxlength="500" style="resize:vertical;"></textarea>
                         </div>
-                        <div class="form-group" style="display:flex;align-items:center;gap:10px;">
-                            <input type="checkbox" id="classroom-import-toggle" style="width:auto;">
-                            <label for="classroom-import-toggle" style="margin:0;" data-i18n="classroom.import_csv_now">Importer des étudiants depuis un CSV maintenant</label>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="classroom-import-toggle">
+                            <label for="classroom-import-toggle" data-i18n="classroom.import_csv_now">Importer des étudiants depuis un CSV maintenant</label>
                         </div>
                     </div>
                     <!-- Étape 2 : import CSV (conditionnel) -->
@@ -265,18 +265,18 @@
                             <div class="step-dot"></div>
                             <div class="step-dot active"></div>
                         </div>
-                        <p style="font-size:0.85rem;color:var(--text-secondary,#6b7280);" data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
+                        <p style="font-size:0.83rem;color:var(--gray-500);margin:0 0 12px;" data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
                         <div class="form-group">
-                            <label for="classroom-csv-input">Fichier CSV</label>
-                            <input type="file" id="classroom-csv-input" accept=".csv" style="padding:8px;">
+                            <label for="classroom-csv-input" data-i18n="common.csv_file">Fichier CSV</label>
+                            <input type="file" id="classroom-csv-input" accept=".csv">
                         </div>
-                        <div id="csv-preview" style="font-size:0.82rem;color:var(--text-secondary,#6b7280);"></div>
+                        <div id="csv-preview" style="font-size:0.82rem;color:var(--gray-500);"></div>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button id="classroom-modal-back" class="action-btn action-btn--secondary" style="display:none;">
-                    <i class="fas fa-arrow-left"></i> Retour
+                    <i class="fas fa-arrow-left"></i> <span data-i18n="common.back">Retour</span>
                 </button>
                 <button id="classroom-modal-cancel" class="action-btn action-btn--secondary" data-i18n="classroom.cancel">Annuler</button>
                 <button id="classroom-modal-submit" class="action-btn">
@@ -306,7 +306,7 @@
                         <option value="" data-i18n="assignment.template_placeholder">Choisir un template...</option>
                     </select>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-row">
                     <div class="form-group">
                         <label for="assignment-cpu-select" data-i18n="assignment.cpu">Ressources CPU</label>
                         <select id="assignment-cpu-select">
@@ -334,7 +334,7 @@
                 </div>
                 <div class="form-group">
                     <label for="assignment-instructions-input" data-i18n="assignment.instructions">Instructions (Markdown)</label>
-                    <textarea id="assignment-instructions-input" rows="5" placeholder="## Objectifs&#10;&#10;..." style="resize:vertical;font-family:monospace;font-size:0.85rem;"></textarea>
+                    <textarea id="assignment-instructions-input" rows="5" placeholder="## Objectifs&#10;&#10;..." style="resize:vertical;font-family:var(--font-code);font-size:0.83rem;"></textarea>
                 </div>
             </div>
             <div class="modal-footer">
@@ -352,23 +352,24 @@
     <div id="add-student-modal" class="modal" style="display:none;" role="dialog" aria-modal="true">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>Ajouter un étudiant</h2>
+                <h2 data-i18n="students.add">Ajouter un étudiant</h2>
                 <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label for="add-student-search">Rechercher par nom d'utilisateur ou email</label>
-                    <input type="text" id="add-student-search" placeholder="Ex : jean.dupont ou jean@univ.fr" autocomplete="off">
+                    <label for="add-student-search" data-i18n="students.search_label">Rechercher par nom d'utilisateur ou email</label>
+                    <input type="text" id="add-student-search" data-i18n-placeholder="students.search_placeholder" placeholder="Ex : jean.dupont ou jean@univ.fr" autocomplete="off">
                 </div>
                 <div id="add-student-results" style="max-height:260px;overflow-y:auto;margin-top:8px;"></div>
-                <div id="add-student-selected" style="display:none;margin-top:12px;padding:10px;background:var(--bg-secondary,#f3f4f6);border-radius:8px;font-size:0.9rem;">
-                    <strong>Sélectionné :</strong> <span id="add-student-selected-name"></span>
+                <div id="add-student-selected" style="display:none;margin-top:12px;padding:10px 14px;background:var(--blue-tint);border:1px solid var(--blue-mid);border-radius:8px;font-size:0.875rem;color:var(--blue);">
+                    <i class="fas fa-user-check" style="margin-right:6px;"></i>
+                    <strong data-i18n="students.selected">Sélectionné :</strong> <span id="add-student-selected-name"></span>
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="add-student-cancel" class="action-btn action-btn--secondary">Annuler</button>
+                <button id="add-student-cancel" class="action-btn action-btn--secondary" data-i18n="classroom.cancel">Annuler</button>
                 <button id="add-student-submit" class="action-btn" disabled>
-                    <i class="fas fa-user-plus"></i> Inscrire
+                    <i class="fas fa-user-plus"></i> <span data-i18n="students.enroll">Inscrire</span>
                 </button>
             </div>
         </div>
@@ -384,16 +385,16 @@
                 <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <p style="font-size:0.85rem;color:var(--text-secondary,#6b7280);" data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
+                <p style="font-size:0.83rem;color:var(--gray-500);margin:0 0 12px;" data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
                 <div class="form-group">
-                    <input type="file" id="csv-import-file" accept=".csv" style="padding:8px;">
+                    <input type="file" id="csv-import-file" accept=".csv">
                 </div>
                 <div id="csv-import-result" style="display:none;"></div>
             </div>
             <div class="modal-footer">
                 <button id="csv-import-cancel" class="action-btn action-btn--secondary" data-i18n="common.close">Fermer</button>
                 <button id="csv-import-submit" class="action-btn">
-                    <i class="fas fa-upload"></i> Importer
+                    <i class="fas fa-upload"></i> <span data-i18n="common.import">Importer</span>
                 </button>
             </div>
         </div>

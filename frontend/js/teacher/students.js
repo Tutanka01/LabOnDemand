@@ -188,11 +188,9 @@ window.TeacherStudents = (function () {
       resultsEl.innerHTML = '';
       users.forEach(u => {
         const row = document.createElement('div');
-        row.style.cssText = 'padding:8px 12px;cursor:pointer;border-radius:6px;display:flex;align-items:center;gap:10px;font-size:0.9rem;';
-        row.innerHTML = `<i class="fas fa-user-graduate" style="color:var(--primary,#6366f1);width:16px;"></i>
-          <span><strong>${_esc(u.username)}</strong> <span style="color:var(--text-secondary,#6b7280);">${_esc(u.email)}</span></span>`;
-        row.addEventListener('mouseenter', () => row.style.background = 'var(--bg-secondary,#f3f4f6)');
-        row.addEventListener('mouseleave', () => row.style.background = '');
+        row.className = 'student-search-result-item';
+        row.innerHTML = `<i class="fas fa-user-graduate"></i>
+          <span><strong>${_esc(u.username)}</strong> <span style="color:var(--gray-500);">${_esc(u.email)}</span></span>`;
         row.addEventListener('click', () => _selectUser(u));
         resultsEl.appendChild(row);
       });
