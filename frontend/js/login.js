@@ -35,23 +35,23 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (!response.ok) {
                 // Essayer de parser le JSON d'erreur
-                let errorMessage = 'Erreur de connexion';
+                let errorMessage = window.t ? window.t('login.error') : 'Erreur de connexion';
                 try {
                     const error = await response.json();
-                    errorMessage = error.message || error.detail || 'Erreur de connexion';
+                    errorMessage = error.message || error.detail || (window.t ? window.t('login.error') : 'Erreur de connexion');
                 } catch (parseError) {
                     // Si ce n'est pas du JSON, récupérer le texte brut
                     try {
                         const errorText = await response.text();
                         if (errorText.includes('Table') && errorText.includes('doesn\'t exist')) {
-                            errorMessage = 'Base de données non initialisée. Contactez l\'administrateur.';
+                            errorMessage = window.t ? window.t('login.error_db') : 'Base de données non initialisée. Contactez l\'administrateur.';
                         } else if (errorText.includes('Traceback')) {
-                            errorMessage = 'Erreur serveur. Consultez les logs.';
+                            errorMessage = window.t ? window.t('login.error_server') : 'Erreur serveur. Consultez les logs.';
                         } else {
-                            errorMessage = 'Erreur de connexion';
+                            errorMessage = window.t ? window.t('login.error') : 'Erreur de connexion';
                         }
                     } catch (textError) {
-                        errorMessage = 'Erreur de connexion';
+                        errorMessage = window.t ? window.t('login.error') : 'Erreur de connexion';
                     }
                 }
                 throw new Error(errorMessage);
@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (loginForm) loginForm.style.display = 'flex';
             if (ssoSection) ssoSection.classList.remove('hidden');
             if (loginDivider) loginDivider.classList.remove('hidden');
-            if (loginInfo) loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> Connectez-vous avec votre compte ou via SSO';
+            if (loginInfo) loginInfo.innerHTML = '<i class="fas fa-info-circle"></i> ' + (window.t ? window.t('login.info_sso') : 'Connectez-vous avec votre compte ou via SSO');
         } else {
             if (loginForm) loginForm.style.display = 'flex';
             if (ssoSection) ssoSection.classList.add('hidden');

@@ -138,7 +138,7 @@ async def test_update_own_profile_unauthenticated(client):
 async def test_change_password_success(admin_client):
     r = await admin_client.post(
         f"{BASE}/change-password",
-        params={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!"},
+        json={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!"},
     )
     assert r.status_code == 200
 
@@ -146,7 +146,7 @@ async def test_change_password_success(admin_client):
 async def test_change_password_wrong_current(admin_client):
     r = await admin_client.post(
         f"{BASE}/change-password",
-        params={"old_password": "WrongPass!", "new_password": "NewAdmin@5678!"},
+        json={"old_password": "WrongPass!", "new_password": "NewAdmin@5678!"},
     )
     assert r.status_code in (400, 401, 403)
 
@@ -154,7 +154,7 @@ async def test_change_password_wrong_current(admin_client):
 async def test_change_password_weak_new(admin_client):
     r = await admin_client.post(
         f"{BASE}/change-password",
-        params={"old_password": "TestAdmin@1234!", "new_password": "weak"},
+        json={"old_password": "TestAdmin@1234!", "new_password": "weak"},
     )
     assert r.status_code in (400, 422)
 
@@ -162,6 +162,6 @@ async def test_change_password_weak_new(admin_client):
 async def test_change_password_unauthenticated(client):
     r = await client.post(
         f"{BASE}/change-password",
-        params={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!"},
+        json={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!"},
     )
     assert r.status_code == 401

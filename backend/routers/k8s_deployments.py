@@ -1290,6 +1290,17 @@ async def delete_deployment(
                     if exc.status != 404:
                         raise
                 delete_associated_ingress(f"{name}-service")
+            if delete_persistent:
+                try:
+                    core_v1.delete_namespaced_persistent_volume_claim(
+                        f"{name}-pvc", namespace
+                    )
+                except client.exceptions.ApiException:
+                    pass
+                try:
+                    core_v1.delete_namespaced_secret(f"{name}-secret", namespace)
+                except client.exceptions.ApiException:
+                    pass
             audit_logger.info(
                 "deployment_deleted",
                 extra={
@@ -1303,7 +1314,6 @@ async def delete_deployment(
                     }
                 },
             )
-            # Soft delete en base pour garder l'historique
             _soft_delete_deployment(db, current_user.id, name)
             return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
     except Exception as e:

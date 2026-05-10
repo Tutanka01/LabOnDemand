@@ -25,6 +25,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-attach/lib/xterm-addon-attach.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-webgl/lib/xterm-addon-webgl.min.js"></script>
     <script src="js/darkmode.js"></script>
+    <script src="js/i18n.js"></script>
     <script type="module" src="index-auth.js"></script>
     <script type="module" src="script.js"></script>
 </head>
@@ -37,9 +38,11 @@
             </div>
             <div class="user-info">
                 <span id="api-status">Vérification de l'API...</span>
+                <a href="teacher.html" id="nav-teacher" class="nav-link teacher-only" style="display:none;" data-i18n="header.my_classes">Mes Classes</a>
+                <a href="admin.html" id="nav-admin" class="nav-link admin-only" style="display:none;" data-i18n="header.admin">Administration</a>
                 <span id="user-greeting">Chargement... <i class="fas fa-user-circle"></i></span>
                 <button id="dark-mode-toggle" class="dark-mode-toggle" onclick="toggleDarkMode()" title="Basculer le mode sombre" aria-label="Basculer le mode sombre">🌙</button>
-                <button id="logout-btn" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Déconnexion</button>
+                <button id="logout-btn" class="logout-btn"><i class="fas fa-sign-out-alt"></i> <span data-i18n="header.logout">Déconnexion</span></button>
             </div>
         </div>
     </header>

@@ -120,7 +120,7 @@ async def test_inactive_user_cannot_login(client, inactive_user):
 async def test_change_password_requires_old_password(admin_client, admin_user):
     r = await admin_client.post(
         "/api/v1/auth/change-password",
-        params={"old_password": "WrongOld@1!", "new_password": "NewAdmin@1234!"},
+        json={"old_password": "WrongOld@1!", "new_password": "NewAdmin@1234!"},
     )
     assert r.status_code in (400, 403)
 

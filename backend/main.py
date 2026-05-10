@@ -200,6 +200,8 @@ from .routers import (
     monitoring_router,
     quotas_router,
     audit_router,
+    classrooms_router,
+    teacher_router,
 )
 
 app.include_router(auth_router)
@@ -211,6 +213,8 @@ app.include_router(runtime_configs_router)
 app.include_router(monitoring_router)
 app.include_router(quotas_router)
 app.include_router(audit_router)
+app.include_router(classrooms_router)
+app.include_router(teacher_router)
 
 # ============= ENDPOINTS DE BASE =============
 

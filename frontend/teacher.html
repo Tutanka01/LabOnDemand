@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mes Classes — LabOnDemand</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <link rel="stylesheet" href="css/teacher.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Dark mode — avant le rendu pour éviter le flash -->
+    <script>
+      (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
+    </script>
+    <script src="js/darkmode.js"></script>
+    <script src="js/i18n.js"></script>
+</head>
+<body>
+    <div class="main-container">
+        <header>
+            <div class="logo">
+                <i class="fas fa-cubes"></i> LabOnDemand
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="index.html"><i class="fas fa-home"></i> <span data-i18n="header.home">Accueil</span></a></li>
+                    <li class="active"><a href="teacher.html"><i class="fas fa-chalkboard-teacher"></i> <span data-i18n="header.my_classes">Mes Classes</span></a></li>
+                    <li class="admin-only" style="display:none;"><a href="admin.html"><i class="fas fa-users-cog"></i> <span data-i18n="header.admin">Administration</span></a></li>
+                    <li class="admin-only" style="display:none;"><a href="admin-stats.html"><i class="fas fa-chart-line"></i> <span data-i18n="header.stats">Statistiques</span></a></li>
+                </ul>
+            </nav>
+            <div class="user-info">
+                <span id="username-display"><i class="fas fa-user-circle"></i> <span id="current-username">Utilisateur</span></span>
+                <div class="user-role" id="user-role"><span class="role-badge">Rôle</span></div>
+                <button id="dark-mode-toggle" class="dark-mode-toggle" onclick="toggleDarkMode()" title="Basculer le mode sombre" aria-label="Basculer le mode sombre">🌙</button>
+                <button id="logout-btn" class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i> <span data-i18n="header.logout">Déconnexion</span>
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <!-- ── Notifications ──────────────────────────────────────────── -->
+            <div class="notification-container">
+                <div id="error-message" class="notification error" style="display:none;">
+                    <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
+                    <button class="close-btn" onclick="this.parentElement.style.display='none'"><i class="fas fa-times"></i></button>
+                </div>
+                <div id="success-message" class="notification success" style="display:none;">
+                    <i class="fas fa-check-circle"></i> <span id="success-text"></span>
+                    <button class="close-btn" onclick="this.parentElement.style.display='none'"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+
+            <!-- ── Tabs ───────────────────────────────────────────────────── -->
+            <div class="admin-tabs">
+                <nav class="tabs-nav" role="tablist">
+                    <button class="tab-btn active" role="tab" data-tab="classrooms" aria-selected="true">
+                        <i class="fas fa-chalkboard"></i> <span data-i18n="classroom.title">Mes Classes</span>
+                    </button>
+                    <button class="tab-btn" role="tab" data-tab="students" aria-selected="false">
+                        <i class="fas fa-users"></i> <span data-i18n="students.title">Étudiants</span>
+                    </button>
+                    <button class="tab-btn" role="tab" data-tab="assignments" aria-selected="false">
+                        <i class="fas fa-tasks"></i> <span data-i18n="assignment.title">Devoirs</span>
+                    </button>
+                    <button class="tab-btn" role="tab" data-tab="overview" aria-selected="false">
+                        <i class="fas fa-th"></i> <span data-i18n="overview.title">Vue d'ensemble</span>
+                    </button>
+                </nav>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Mes Classes
+                ══════════════════════════════════════════════════ -->
+                <div class="tab-panel active" id="tab-classrooms" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-chalkboard"></i> <span data-i18n="classroom.title">Mes Classes</span></h1>
+                        <div class="page-header-actions">
+                            <button id="new-classroom-btn" class="action-btn">
+                                <i class="fas fa-plus"></i> <span data-i18n="classroom.new">+ Nouvelle classe</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="classrooms-loading" class="classrooms-grid">
+                        <div class="skeleton skeleton-card"></div>
+                        <div class="skeleton skeleton-card"></div>
+                        <div class="skeleton skeleton-card"></div>
+                    </div>
+                    <div id="classrooms-grid" class="classrooms-grid" style="display:none;"></div>
+                    <div id="classrooms-empty" class="empty-state" style="display:none;">
+                        <i class="fas fa-chalkboard"></i>
+                        <h3 data-i18n="classroom.empty">Vous n'avez pas encore de classe</h3>
+                        <p data-i18n="classroom.empty_hint">Créez votre première classe pour commencer</p>
+                        <button class="action-btn" onclick="document.getElementById('new-classroom-btn').click()">
+                            <i class="fas fa-plus"></i> <span data-i18n="classroom.new">+ Nouvelle classe</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Étudiants
+                ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-students" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-users"></i> <span data-i18n="students.title">Étudiants</span></h1>
+                        <div class="page-header-actions">
+                            <button id="add-student-btn" class="action-btn" disabled>
+                                <i class="fas fa-user-plus"></i> <span data-i18n="students.add">Ajouter un étudiant</span>
+                            </button>
+                            <button id="import-students-csv-btn" class="action-btn action-btn--secondary" disabled>
+                                <i class="fas fa-file-csv"></i> <span data-i18n="students.import_csv">Importer CSV</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="class-selector">
+                        <label for="students-class-select"><i class="fas fa-chalkboard"></i></label>
+                        <select id="students-class-select">
+                            <option value="" data-i18n="students.select_class">Sélectionner une classe</option>
+                        </select>
+                    </div>
+
+                    <div id="students-loading" style="display:none;">
+                        <div class="skeleton" style="height:40px;margin-bottom:8px;"></div>
+                        <div class="skeleton" style="height:40px;margin-bottom:8px;"></div>
+                        <div class="skeleton" style="height:40px;"></div>
+                    </div>
+                    <div id="students-empty" class="empty-state" style="display:none;">
+                        <i class="fas fa-user-graduate"></i>
+                        <h3 data-i18n="students.empty">Aucun étudiant inscrit dans cette classe</h3>
+                        <p data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
+                        <button class="action-btn" onclick="document.getElementById('import-students-csv-btn').click()">
+                            <i class="fas fa-file-csv"></i> <span data-i18n="students.import_csv">Importer CSV</span>
+                        </button>
+                    </div>
+                    <div id="students-table-wrap" class="students-table-container" style="display:none;">
+                        <table class="users-table">
+                            <thead>
+                                <tr>
+                                    <th data-i18n="students.username">Nom d'utilisateur</th>
+                                    <th data-i18n="students.email">Email</th>
+                                    <th data-i18n="students.lab_status">Lab actuel</th>
+                                    <th data-i18n="students.last_activity">Dernière activité</th>
+                                    <th data-i18n="students.actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="students-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Devoirs
+                ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-assignments" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-tasks"></i> <span data-i18n="assignment.title">Devoirs</span></h1>
+                        <div class="page-header-actions">
+                            <button id="new-assignment-btn" class="action-btn" disabled>
+                                <i class="fas fa-plus"></i> <span data-i18n="assignment.new">+ Nouveau devoir</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="class-selector">
+                        <label for="assignments-class-select"><i class="fas fa-chalkboard"></i></label>
+                        <select id="assignments-class-select">
+                            <option value="" data-i18n="students.select_class">Sélectionner une classe</option>
+                        </select>
+                    </div>
+
+                    <div id="assignments-loading" style="display:none;">
+                        <div class="skeleton" style="height:80px;margin-bottom:10px;border-radius:10px;"></div>
+                        <div class="skeleton" style="height:80px;border-radius:10px;"></div>
+                    </div>
+                    <div id="assignments-empty" class="empty-state" style="display:none;">
+                        <i class="fas fa-tasks"></i>
+                        <h3 data-i18n="assignment.empty">Aucun devoir pour cette classe</h3>
+                        <button class="action-btn" onclick="document.getElementById('new-assignment-btn').click()">
+                            <i class="fas fa-plus"></i> <span data-i18n="assignment.new">+ Nouveau devoir</span>
+                        </button>
+                    </div>
+                    <div id="assignments-list" class="assignment-list"></div>
+                </div>
+
+                <!-- ══════════════════════════════════════════════════
+                     Onglet : Vue d'ensemble
+                ══════════════════════════════════════════════════ -->
+                <div class="tab-panel" id="tab-overview" role="tabpanel">
+                    <div class="tab-panel-header">
+                        <h1><i class="fas fa-th"></i> <span data-i18n="overview.title">Vue d'ensemble</span></h1>
+                        <div class="page-header-actions">
+                            <button id="overview-refresh-btn" class="action-btn action-btn--secondary">
+                                <i class="fas fa-sync-alt"></i> <span data-i18n="overview.refresh">Actualiser</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="class-selector">
+                        <label for="overview-class-select"><i class="fas fa-chalkboard"></i></label>
+                        <select id="overview-class-select">
+                            <option value="" data-i18n="overview.all_classes">Toutes les classes</option>
+                        </select>
+                        <label for="overview-status-select"><i class="fas fa-filter"></i></label>
+                        <select id="overview-status-select">
+                            <option value="" data-i18n="overview.all_statuses">Tous les statuts</option>
+                            <option value="active" data-i18n="dashboard.status_active">Actif</option>
+                            <option value="paused" data-i18n="dashboard.status_paused">En pause</option>
+                            <option value="none" data-i18n="students.lab_none">Pas de lab</option>
+                        </select>
+                    </div>
+
+                    <div id="overview-loading" class="classrooms-grid">
+                        <div class="skeleton" style="height:56px;border-radius:8px;"></div>
+                        <div class="skeleton" style="height:56px;border-radius:8px;"></div>
+                        <div class="skeleton" style="height:56px;border-radius:8px;"></div>
+                    </div>
+                    <div id="overview-grid" class="overview-grid" style="display:none;"></div>
+                    <div id="overview-empty" class="empty-state" style="display:none;">
+                        <i class="fas fa-th"></i>
+                        <h3 data-i18n="overview.empty">Aucune donnée disponible</h3>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         Modal : Créer / Modifier une classe
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="classroom-modal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="classroom-modal-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="classroom-modal-title" data-i18n="classroom.create_title">Créer une classe</h2>
+                <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-steps">
+                    <!-- Étape 1 : infos classe -->
+                    <div class="step active" id="step-classroom-info">
+                        <div class="step-indicator">
+                            <div class="step-dot active"></div>
+                            <div class="step-dot"></div>
+                        </div>
+                        <div class="form-group">
+                            <label for="classroom-name-input" data-i18n="classroom.name">Nom de la classe</label>
+                            <input type="text" id="classroom-name-input" data-i18n-placeholder="classroom.name_placeholder" placeholder="Ex: Algorithmique L1 2026" maxlength="100" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="classroom-desc-input" data-i18n="classroom.description">Description (optionnel)</label>
+                            <textarea id="classroom-desc-input" rows="3" data-i18n-placeholder="classroom.description_placeholder" placeholder="Brève description du cours..." maxlength="500" style="resize:vertical;"></textarea>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="classroom-import-toggle">
+                            <label for="classroom-import-toggle" data-i18n="classroom.import_csv_now">Importer des étudiants depuis un CSV maintenant</label>
+                        </div>
+                    </div>
+                    <!-- Étape 2 : import CSV (conditionnel) -->
+                    <div class="step" id="step-csv-import">
+                        <div class="step-indicator">
+                            <div class="step-dot"></div>
+                            <div class="step-dot active"></div>
+                        </div>
+                        <p style="font-size:0.83rem;color:var(--gray-500);margin:0 0 12px;" data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
+                        <div class="form-group">
+                            <label for="classroom-csv-input" data-i18n="common.csv_file">Fichier CSV</label>
+                            <input type="file" id="classroom-csv-input" accept=".csv">
+                        </div>
+                        <div id="csv-preview" style="font-size:0.82rem;color:var(--gray-500);"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="classroom-modal-back" class="action-btn action-btn--secondary" style="display:none;">
+                    <i class="fas fa-arrow-left"></i> <span data-i18n="common.back">Retour</span>
+                </button>
+                <button id="classroom-modal-cancel" class="action-btn action-btn--secondary" data-i18n="classroom.cancel">Annuler</button>
+                <button id="classroom-modal-submit" class="action-btn">
+                    <i class="fas fa-save"></i> <span data-i18n="classroom.save">Créer la classe</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         Modal : Créer un devoir
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="assignment-modal" class="modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="assignment-modal-title">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="assignment-modal-title" data-i18n="assignment.create_title">Créer un devoir</h2>
+                <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="assignment-title-input" data-i18n="assignment.name">Titre du devoir</label>
+                    <input type="text" id="assignment-title-input" data-i18n-placeholder="assignment.name_placeholder" placeholder="Ex: TP1 — Tri par insertion" maxlength="200" required>
+                </div>
+                <div class="form-group">
+                    <label for="assignment-template-select" data-i18n="assignment.template">Template de lab</label>
+                    <select id="assignment-template-select">
+                        <option value="" data-i18n="assignment.template_placeholder">Choisir un template...</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="assignment-cpu-select" data-i18n="assignment.cpu">Ressources CPU</label>
+                        <select id="assignment-cpu-select">
+                            <option value="very-low">Très faible (100m)</option>
+                            <option value="low" selected>Faible (200m)</option>
+                            <option value="medium">Moyen (500m)</option>
+                            <option value="high">Élevé (1 vCPU)</option>
+                            <option value="very-high">Très élevé (2 vCPU)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignment-ram-select" data-i18n="assignment.ram">Ressources RAM</label>
+                        <select id="assignment-ram-select">
+                            <option value="very-low">Très faible (128Mi)</option>
+                            <option value="low" selected>Faible (256Mi)</option>
+                            <option value="medium">Moyenne (512Mi)</option>
+                            <option value="high">Élevée (1Gi)</option>
+                            <option value="very-high">Très élevée (2Gi)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="assignment-due-input" data-i18n="assignment.due_date">Date limite</label>
+                    <input type="datetime-local" id="assignment-due-input">
+                </div>
+                <div class="form-group">
+                    <label for="assignment-instructions-input" data-i18n="assignment.instructions">Instructions (Markdown)</label>
+                    <textarea id="assignment-instructions-input" rows="5" placeholder="## Objectifs&#10;&#10;..." style="resize:vertical;font-family:var(--font-code);font-size:0.83rem;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="assignment-modal-cancel" class="action-btn action-btn--secondary" data-i18n="assignment.cancel">Annuler</button>
+                <button id="assignment-modal-submit" class="action-btn">
+                    <i class="fas fa-save"></i> <span data-i18n="assignment.save">Enregistrer</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         Modal : Ajouter un étudiant manuellement
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="add-student-modal" class="modal" style="display:none;" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 data-i18n="students.add">Ajouter un étudiant</h2>
+                <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="add-student-search" data-i18n="students.search_label">Rechercher par nom d'utilisateur ou email</label>
+                    <input type="text" id="add-student-search" data-i18n-placeholder="students.search_placeholder" placeholder="Ex : jean.dupont ou jean@univ.fr" autocomplete="off">
+                </div>
+                <div id="add-student-results" style="max-height:260px;overflow-y:auto;margin-top:8px;"></div>
+                <div id="add-student-selected" style="display:none;margin-top:12px;padding:10px 14px;background:var(--blue-tint);border:1px solid var(--blue-mid);border-radius:8px;font-size:0.875rem;color:var(--blue);">
+                    <i class="fas fa-user-check" style="margin-right:6px;"></i>
+                    <strong data-i18n="students.selected">Sélectionné :</strong> <span id="add-student-selected-name"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="add-student-cancel" class="action-btn action-btn--secondary" data-i18n="classroom.cancel">Annuler</button>
+                <button id="add-student-submit" class="action-btn" disabled>
+                    <i class="fas fa-user-plus"></i> <span data-i18n="students.enroll">Inscrire</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         Modal : Import CSV étudiants (hors création classe)
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="csv-import-modal" class="modal" style="display:none;" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 data-i18n="students.import_csv">Importer CSV</h2>
+                <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:0.83rem;color:var(--gray-500);margin:0 0 12px;" data-i18n="students.csv_format">Format CSV : une colonne username par ligne</p>
+                <div class="form-group">
+                    <input type="file" id="csv-import-file" accept=".csv">
+                </div>
+                <div id="csv-import-result" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="csv-import-cancel" class="action-btn action-btn--secondary" data-i18n="common.close">Fermer</button>
+                <button id="csv-import-submit" class="action-btn">
+                    <i class="fas fa-upload"></i> <span data-i18n="common.import">Importer</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         Modal : Distribuer le devoir (confirm + progress)
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="deploy-modal" class="modal" style="display:none;" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 data-i18n="assignment.confirm_deploy_title">Distribuer le devoir</h2>
+                <button class="close-btn modal-close" aria-label="Fermer"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="deploy-confirm-text" style="font-weight:500;"></p>
+                <div id="deploy-progress-wrap" style="display:none;">
+                    <p id="deploy-progress-label" style="font-size:0.85rem;" data-i18n="assignment.deploying">Déploiement en cours...</p>
+                    <div class="progress-bar-wrap">
+                        <div class="progress-bar-fill" id="deploy-progress-bar" style="width:0%;"></div>
+                    </div>
+                </div>
+                <div id="deploy-report" class="deploy-report" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="deploy-cancel-btn" class="action-btn action-btn--secondary" data-i18n="common.close">Fermer</button>
+                <button id="deploy-confirm-btn" class="action-btn">
+                    <i class="fas fa-rocket"></i> <span data-i18n="common.confirm">Confirmer</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Scripts ────────────────────────────────────────────────────── -->
+    <script src="js/api.js"></script>
+    <script src="js/teacher/state.js"></script>
+    <script src="js/teacher/api.js"></script>
+    <script src="js/teacher/classrooms.js"></script>
+    <script src="js/teacher/students.js"></script>
+    <script src="js/teacher/assignments.js"></script>
+    <script src="js/teacher/overview.js"></script>
+    <script src="js/teacher/main.js"></script>
+</body>
+</html>

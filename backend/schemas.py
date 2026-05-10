@@ -172,3 +172,118 @@ class PVCInfo(BaseModel):
 
 class PVCListResponse(BaseModel):
     items: List[PVCInfo]
+
+
+# ====== Change Password ======
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=12)
+
+
+# ====== Classroom / Enrollment / Assignment ======
+class ClassroomBase(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+
+
+class ClassroomCreate(ClassroomBase):
+    pass
+
+
+class ClassroomUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    archived: Optional[bool] = None
+
+
+class ClassroomResponse(ClassroomBase):
+    id: int
+    owner_id: int
+    archived: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    student_count: Optional[int] = None
+    active_assignment_count: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EnrollmentResponse(BaseModel):
+    id: int
+    classroom_id: int
+    user_id: int
+    username: Optional[str] = None
+    email: Optional[str] = None
+    enrolled_at: datetime
+    removed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EnrollStudentsRequest(BaseModel):
+    user_ids: List[int]
+
+
+class AssignmentBase(BaseModel):
+    title: str = Field(..., min_length=2, max_length=200)
+    instructions: Optional[str] = None
+    template_key: Optional[str] = Field(None, max_length=50)
+    cpu_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
+    ram_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
+    due_at: Optional[datetime] = None
+
+
+class AssignmentCreate(AssignmentBase):
+    pass
+
+
+class AssignmentUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=2, max_length=200)
+    instructions: Optional[str] = None
+    template_key: Optional[str] = Field(None, max_length=50)
+    cpu_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
+    ram_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
+    due_at: Optional[datetime] = None
+    status: Optional[str] = Field(None, pattern=r"^(active|archived)$")
+
+
+class AssignmentResponse(AssignmentBase):
+    id: int
+    classroom_id: int
+    status: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BulkSpawnResult(BaseModel):
+    user_id: int
+    username: str
+    status: str  # ok | skipped | error
+    error: Optional[str] = None
+    deployment_name: Optional[str] = None
+
+
+class BulkSpawnReport(BaseModel):
+    assignment_id: int
+    classroom_id: int
+    total: int
+    ok: int
+    skipped: int
+    errors: int
+    results: List[BulkSpawnResult]
+
+
+class StudentLabStatus(BaseModel):
+    user_id: int
+    username: str
+    email: str
+    lab_name: Optional[str] = None
+    lab_status: Optional[str] = None
+    lab_expires_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    enrolled_at: datetime

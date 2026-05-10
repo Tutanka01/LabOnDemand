@@ -80,6 +80,74 @@ MIGRATIONS: list[tuple[str, str]] = [
         "add_users_external_id_unique",
         "ALTER TABLE users ADD UNIQUE INDEX idx_users_external_id_unique (external_id)",
     ),
+    # Classroom system (P0)
+    (
+        "create_classrooms",
+        "CREATE TABLE IF NOT EXISTS classrooms ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "name VARCHAR(100) NOT NULL,"
+        "description VARCHAR(500) NULL,"
+        "owner_id INTEGER NOT NULL,"
+        "archived BOOLEAN NOT NULL DEFAULT FALSE,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "updated_at DATETIME NULL,"
+        "INDEX idx_cl_owner (owner_id),"
+        "INDEX idx_cl_archived (archived),"
+        "INDEX idx_cl_name (name),"
+        "CONSTRAINT fk_cl_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE"
+        ")",
+    ),
+    (
+        "create_enrollments",
+        "CREATE TABLE IF NOT EXISTS enrollments ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "classroom_id INTEGER NOT NULL,"
+        "user_id INTEGER NOT NULL,"
+        "enrolled_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "removed_at DATETIME NULL,"
+        "INDEX idx_enr_classroom (classroom_id),"
+        "INDEX idx_enr_user (user_id),"
+        "UNIQUE KEY uq_enrollment_classroom_user (classroom_id, user_id),"
+        "CONSTRAINT fk_enr_classroom FOREIGN KEY (classroom_id) REFERENCES classrooms(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_enr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+        ")",
+    ),
+    (
+        "create_assignments",
+        "CREATE TABLE IF NOT EXISTS assignments ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "classroom_id INTEGER NOT NULL,"
+        "title VARCHAR(200) NOT NULL,"
+        "instructions TEXT NULL,"
+        "template_key VARCHAR(50) NULL,"
+        "cpu_preset VARCHAR(20) NULL,"
+        "ram_preset VARCHAR(20) NULL,"
+        "due_at DATETIME NULL,"
+        "status VARCHAR(20) NOT NULL DEFAULT 'active',"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "updated_at DATETIME NULL,"
+        "INDEX idx_asgn_classroom (classroom_id),"
+        "CONSTRAINT fk_asgn_classroom FOREIGN KEY (classroom_id) REFERENCES classrooms(id) ON DELETE CASCADE"
+        ")",
+    ),
+    (
+        "create_assignment_deployments",
+        "CREATE TABLE IF NOT EXISTS assignment_deployments ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "assignment_id INTEGER NOT NULL,"
+        "user_id INTEGER NOT NULL,"
+        "deployment_id INTEGER NULL,"
+        "spawn_status VARCHAR(20) NOT NULL,"
+        "spawn_error VARCHAR(500) NULL,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "INDEX idx_ad_assignment (assignment_id),"
+        "INDEX idx_ad_user (user_id),"
+        "INDEX idx_ad_deployment (deployment_id),"
+        "CONSTRAINT fk_ad_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_ad_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_ad_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
+        ")",
+    ),
     # IMP-3 — dérogations de quota par utilisateur
     (
         "create_user_quota_overrides",

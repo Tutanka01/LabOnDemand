@@ -70,6 +70,13 @@ function initAuthUI() {
             section.style.display = 'none';
         });
     }
+
+    // Navigation contextuelle selon le rôle
+    const role = authManager.getUserRole();
+    const navTeacher = document.getElementById('nav-teacher');
+    const navAdmin = document.getElementById('nav-admin');
+    if (navTeacher && (role === 'teacher' || role === 'admin')) navTeacher.style.display = 'inline-flex';
+    if (navAdmin && role === 'admin') navAdmin.style.display = 'inline-flex';
 }
 
 function loadMainScript() {

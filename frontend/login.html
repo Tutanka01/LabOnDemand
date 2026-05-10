@@ -15,6 +15,7 @@
     <script>
       (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
     </script>
+    <script src="js/i18n.js"></script>
 </head>
 <body>
     <div class="container">
@@ -28,42 +29,42 @@
             </div>
             
             <div class="info-message" id="login-info">
-                <i class="fas fa-info-circle"></i> Connectez-vous pour accéder à vos laboratoires
+                <i class="fas fa-info-circle"></i> <span data-i18n="login.info">Connectez-vous pour accéder à vos laboratoires</span>
             </div>
             
             <form id="login-form" class="login-form">
                 <div class="form-group">
-                    <label for="username"><i class="fas fa-user"></i> Nom d'utilisateur</label>
+                    <label for="username"><i class="fas fa-user"></i> <span data-i18n="login.username">Nom d'utilisateur</span></label>
                     <input type="text" id="username" name="username" required autocomplete="username">
                 </div>
                 
                 <div class="form-group">
-                    <label for="password"><i class="fas fa-lock"></i> Mot de passe</label>
+                    <label for="password"><i class="fas fa-lock"></i> <span data-i18n="login.password">Mot de passe</span></label>
                     <input type="password" id="password" name="password" required autocomplete="current-password">
                 </div>
                       <button type="submit" class="btn-login">
-                <i class="fas fa-sign-in-alt"></i> Connexion
+                <i class="fas fa-sign-in-alt"></i> <span data-i18n="login.submit">Connexion</span>
             </button>
         </form>
 
         <div class="login-divider hidden" id="login-divider">
-            <span>ou</span>
+            <span data-i18n="common.or">ou</span>
         </div>
 
         <div class="sso-section hidden" id="sso-section">
             <button type="button" class="btn-login btn-sso" id="sso-login-btn">
-                <i class="fas fa-shield-alt"></i> Continuer avec SSO
+                <i class="fas fa-shield-alt"></i> <span data-i18n="login.sso_continue">Continuer avec SSO</span>
             </button>
-            <p class="sso-note" id="sso-note">Authentification via votre fournisseur OIDC</p>
+            <p class="sso-note" id="sso-note" data-i18n="login.sso_note">Authentification via votre fournisseur OIDC</p>
         </div>
         
         <div class="login-links">
-            <a href="register.html">Pas encore inscrit ? Créer un compte</a>
+            <a href="register.html" data-i18n="login.register_link">Pas encore inscrit ? Créer un compte</a>
         </div>
             
         <div class="login-footer">
             LabOnDemand &copy; 2026 | Développé par @makhal_01
-            <button onclick="toggleDarkMode()" class="dark-mode-toggle" style="margin-top:10px;" title="Basculer le thème">
+            <button onclick="toggleDarkMode()" class="dark-mode-toggle" style="margin-top:10px;" title="Basculer le thème" data-i18n-title="header.dark_mode">
                 <i class="fas fa-moon"></i>
             </button>
         </div>
