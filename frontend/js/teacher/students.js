@@ -34,6 +34,7 @@ window.TeacherStudents = (function () {
   async function render(classroomId) {
     const loading = document.getElementById('students-loading');
     const empty = document.getElementById('students-empty');
+    const unselected = document.getElementById('students-unselected');
     const wrap = document.getElementById('students-table-wrap');
     const tbody = document.getElementById('students-tbody');
     const importBtn = document.getElementById('import-students-csv-btn');
@@ -42,6 +43,7 @@ window.TeacherStudents = (function () {
     if (!classroomId) {
       if (loading) loading.style.display = 'none';
       if (empty) empty.style.display = 'none';
+      if (unselected) unselected.style.display = 'flex';
       if (wrap) wrap.style.display = 'none';
       if (importBtn) importBtn.disabled = true;
       if (addBtn) addBtn.disabled = true;
@@ -50,6 +52,7 @@ window.TeacherStudents = (function () {
 
     if (importBtn) importBtn.disabled = false;
     if (addBtn) addBtn.disabled = false;
+    if (unselected) unselected.style.display = 'none';
     if (loading) loading.style.display = 'block';
     if (empty) empty.style.display = 'none';
     if (wrap) wrap.style.display = 'none';

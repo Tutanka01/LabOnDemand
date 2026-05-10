@@ -3,74 +3,119 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LabOnDemand - Connexion</title>
+    <title>LabOnDemand — Connexion</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="css/login.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Ajout de Font Awesome pour les icônes -->
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Dark mode — appliqué avant le rendu pour éviter le flash -->
     <script>
       (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
     </script>
     <script src="js/i18n.js"></script>
 </head>
 <body>
-    <div class="container">
-        <div class="login-container">
-            <div class="login-logo">
-                <i class="fas fa-cubes logo-icon"></i> LabOnDemand
-            </div>
-            
-            <div id="error-message" class="error-message">
-                <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
-            </div>
-            
-            <div class="info-message" id="login-info">
-                <i class="fas fa-info-circle"></i> <span data-i18n="login.info">Connectez-vous pour accéder à vos laboratoires</span>
-            </div>
-            
-            <form id="login-form" class="login-form">
-                <div class="form-group">
-                    <label for="username"><i class="fas fa-user"></i> <span data-i18n="login.username">Nom d'utilisateur</span></label>
-                    <input type="text" id="username" name="username" required autocomplete="username">
-                </div>
-                
-                <div class="form-group">
-                    <label for="password"><i class="fas fa-lock"></i> <span data-i18n="login.password">Mot de passe</span></label>
-                    <input type="password" id="password" name="password" required autocomplete="current-password">
-                </div>
-                      <button type="submit" class="btn-login">
-                <i class="fas fa-sign-in-alt"></i> <span data-i18n="login.submit">Connexion</span>
-            </button>
-        </form>
+    <div class="auth-wrapper">
 
-        <div class="login-divider hidden" id="login-divider">
-            <span data-i18n="common.or">ou</span>
-        </div>
+        <!-- ── Panneau de marque (gauche) ───────────────────────────────── -->
+        <aside class="auth-brand-panel">
+            <div class="auth-brand-inner">
+                <div class="auth-brand-logo">
+                    <i class="fas fa-flask"></i>
+                    <span>LabOnDemand</span>
+                </div>
+                <h2 class="auth-brand-tagline">L'environnement pédagogique pour vos laboratoires numériques.</h2>
+                <ul class="auth-brand-features">
+                    <li>
+                        <span class="feature-icon"><i class="fas fa-chalkboard"></i></span>
+                        <span>Créez et gérez vos classes facilement</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon"><i class="fas fa-terminal"></i></span>
+                        <span>Déployez des labs Kubernetes en un clic</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon"><i class="fas fa-chart-line"></i></span>
+                        <span>Suivez la progression de chaque étudiant</span>
+                    </li>
+                </ul>
+            </div>
+            <p class="auth-brand-copy">© 2026 LabOnDemand · Développé par @makhal_01</p>
+        </aside>
 
-        <div class="sso-section hidden" id="sso-section">
-            <button type="button" class="btn-login btn-sso" id="sso-login-btn">
-                <i class="fas fa-shield-alt"></i> <span data-i18n="login.sso_continue">Continuer avec SSO</span>
-            </button>
-            <p class="sso-note" id="sso-note" data-i18n="login.sso_note">Authentification via votre fournisseur OIDC</p>
-        </div>
-        
-        <div class="login-links">
-            <a href="register.html" data-i18n="login.register_link">Pas encore inscrit ? Créer un compte</a>
-        </div>
-            
-        <div class="login-footer">
-            LabOnDemand &copy; 2026 | Développé par @makhal_01
-            <button onclick="toggleDarkMode()" class="dark-mode-toggle" style="margin-top:10px;" title="Basculer le thème" data-i18n-title="header.dark_mode">
-                <i class="fas fa-moon"></i>
-            </button>
-        </div>
-        </div>
+        <!-- ── Panneau formulaire (droite) ──────────────────────────────── -->
+        <main class="auth-form-panel">
+            <div class="login-container">
+                <div class="login-logo">
+                    <i class="fas fa-flask logo-icon"></i> Connexion
+                </div>
+
+                <div id="error-message" class="error-message">
+                    <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
+                </div>
+
+                <div class="info-message" id="login-info">
+                    <i class="fas fa-info-circle"></i>
+                    <span data-i18n="login.info">Connectez-vous pour accéder à vos laboratoires</span>
+                </div>
+
+                <form id="login-form" class="login-form">
+                    <div class="form-group">
+                        <label for="username">
+                            <i class="fas fa-user"></i>
+                            <span data-i18n="login.username">Nom d'utilisateur</span>
+                        </label>
+                        <input type="text" id="username" name="username" required autocomplete="username"
+                               placeholder="ex. jean.dupont">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">
+                            <i class="fas fa-lock"></i>
+                            <span data-i18n="login.password">Mot de passe</span>
+                        </label>
+                        <input type="password" id="password" name="password" required autocomplete="current-password"
+                               placeholder="••••••••">
+                    </div>
+
+                    <button type="submit" class="btn-login">
+                        <i class="fas fa-sign-in-alt"></i>
+                        <span data-i18n="login.submit">Se connecter</span>
+                    </button>
+                </form>
+
+                <div class="login-divider hidden" id="login-divider">
+                    <span data-i18n="common.or">ou</span>
+                </div>
+
+                <div class="sso-section hidden" id="sso-section">
+                    <button type="button" class="btn-login btn-sso" id="sso-login-btn">
+                        <i class="fas fa-shield-alt"></i>
+                        <span data-i18n="login.sso_continue">Continuer avec SSO</span>
+                    </button>
+                    <p class="sso-note" id="sso-note" data-i18n="login.sso_note">
+                        Authentification via votre fournisseur OIDC
+                    </p>
+                </div>
+
+                <div class="login-links">
+                    <a href="register.html" data-i18n="login.register_link">
+                        Pas encore inscrit ? Créer un compte
+                    </a>
+                </div>
+
+                <div class="login-footer">
+                    <button onclick="toggleDarkMode()" class="dark-mode-toggle"
+                            title="Basculer le thème" data-i18n-title="header.dark_mode">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                </div>
+            </div>
+        </main>
+
     </div>
-      <!-- Charger le script de login -->
+
     <script src="js/api.js"></script>
     <script src="js/darkmode.js"></script>
     <script src="js/login.js"></script>

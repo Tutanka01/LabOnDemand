@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="icon" href="Images/banner-projet.jpeg" type="image/jpeg">
     <link rel="stylesheet" href="css/admin.css">
@@ -68,16 +68,16 @@
                         <i class="fas fa-users"></i> Utilisateurs
                     </button>
                     <button class="tab-btn" role="tab" data-tab="templates" aria-selected="false">
-                        <i class="fas fa-th-large"></i> Templates
+                        <i class="fas fa-th-large"></i> Catalogue
                     </button>
                     <button class="tab-btn" role="tab" data-tab="runtimes" aria-selected="false">
-                        <i class="fas fa-cogs"></i> Runtimes
+                        <i class="fas fa-cogs"></i> Accès aux apps
                     </button>
                     <button class="tab-btn" role="tab" data-tab="labs" aria-selected="false">
-                        <i class="fas fa-layer-group"></i> Parc des Labs
+                        <i class="fas fa-layer-group"></i> Labs étudiants
                     </button>
                     <button class="tab-btn" role="tab" data-tab="audit" aria-selected="false">
-                        <i class="fas fa-shield-halved"></i> Logs d'Audit
+                        <i class="fas fa-shield-halved"></i> Journal
                     </button>
                 </nav>
 
@@ -86,7 +86,10 @@
                      ══════════════════════════════════════════════════ -->
                 <div class="tab-panel active" id="tab-users" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-users"></i> Utilisateurs</h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-users"></i> Utilisateurs</h1>
+                            <p>Comptes étudiants, enseignants et administrateurs</p>
+                        </div>
                         <div class="page-header-actions">
                             <button id="import-csv-btn" class="action-btn action-btn--secondary">
                                 <i class="fas fa-file-csv"></i> Importer CSV
@@ -158,7 +161,10 @@
                      ══════════════════════════════════════════════════ -->
                 <div class="tab-panel" id="tab-templates" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-th-large"></i> Templates d'applications</h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-th-large"></i> Catalogue d'applications</h1>
+                            <p>Applications proposées aux étudiants</p>
+                        </div>
                         <button id="add-template-btn" class="action-btn">
                             <i class="fas fa-plus"></i> Nouveau template
                         </button>
@@ -173,7 +179,10 @@
                      ══════════════════════════════════════════════════ -->
                 <div class="tab-panel" id="tab-runtimes" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-cogs"></i> Runtimes &amp; accès étudiants</h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-cogs"></i> Accès aux applications</h1>
+                            <p>Runtimes et règles d'accès étudiants</p>
+                        </div>
                         <button id="add-rc-btn" class="action-btn">
                             <i class="fas fa-plus"></i> Nouveau runtime
                         </button>
@@ -188,7 +197,10 @@
                      ══════════════════════════════════════════════════ -->
                 <div class="tab-panel" id="tab-labs" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-layer-group"></i> Parc des Labs</h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-layer-group"></i> Labs étudiants</h1>
+                            <p>Environnements actifs, en pause ou expirés</p>
+                        </div>
                         <button id="refresh-labs-btn" class="action-btn action-btn--secondary">
                             <i class="fas fa-sync-alt"></i> Actualiser
                         </button>
@@ -276,7 +288,10 @@
 
                     <!-- En-tête -->
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-shield-halved"></i> Logs d'Audit</h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-shield-halved"></i> Journal d'audit</h1>
+                            <p>Connexions, utilisateurs, déploiements et alertes</p>
+                        </div>
                         <div class="page-header-actions">
                             <button id="audit-refresh-btn" class="action-btn action-btn--secondary">
                                 <i class="fas fa-sync-alt"></i> Actualiser

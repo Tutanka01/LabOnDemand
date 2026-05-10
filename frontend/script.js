@@ -464,7 +464,7 @@ function createDashboardApp() {
                     if (deploymentType === 'wordpress') { plannedPods = 2; plannedCpuM = toMillicores('250m') + toMillicores('250m'); plannedMemMi = toMi('256Mi') + toMi('512Mi'); }
                     if (deploymentType === 'mysql') { plannedPods = 2; plannedCpuM = toMillicores('250m') + toMillicores('150m'); plannedMemMi = toMi('256Mi') + toMi('128Mi'); }
                     const over = [];
-                    if (q.usage.apps_used + plannedApps > q.limits.max_apps) over.push('Applications');
+                    if (q.usage.apps_used + plannedApps > q.limits.max_apps) over.push('Labs');
                     if (q.usage.cpu_m_used + plannedCpuM > q.limits.max_requests_cpu_m) over.push('CPU');
                     if (q.usage.mem_mi_used + plannedMemMi > q.limits.max_requests_mem_mi) over.push('Mémoire');
                     const btn = configForm.querySelector('.btn-launch');
@@ -561,11 +561,11 @@ function createDashboardApp() {
             if (!resp.ok) throw new Error('Erreur de chargement des templates');
             const data = await resp.json();
             const templates = data.templates || [];
-            // Laisser le backend décider des apps visibles selon RuntimeConfig.allowed_for_students
+            // Laisser le backend décider des labs visibles selon RuntimeConfig.allowed_for_students
             const filteredTemplates = templates;
             if (!serviceCatalog) return;
             if (filteredTemplates.length === 0) {
-                serviceCatalog.innerHTML = '<div class="no-items-message">Aucune application disponible</div>';
+                serviceCatalog.innerHTML = '<div class="no-items-message">Aucun lab disponible</div>';
                 return;
             }
 
@@ -779,8 +779,8 @@ function createDashboardApp() {
             state.currentStatusDeployment = null;
             statusContent.innerHTML = `
                 <i class="fas fa-spinner fa-spin status-icon loading"></i>
-                <h2>Lancement de l'application ${serviceName} en cours...</h2>
-                <p>Votre application est en cours de préparation. Veuillez patienter.</p>
+                <h2>Lancement du lab ${serviceName} en cours...</h2>
+                <p>Votre environnement est en cours de préparation. Veuillez patienter.</p>
             `;
             statusActions.style.display = 'none'; // Cacher le bouton "Terminé" pendant le chargement
 
@@ -1154,7 +1154,7 @@ function createDashboardApp() {
                             
                             // Déterminer l'icône et le nom du service selon le type
                             let serviceIcon = "fa-cube"; // Icône par défaut
-                            let serviceName = "Application"; // Nom par défaut
+                            let serviceName = "Lab"; // Nom par défaut
                             
                             if (deployment.type === "jupyter") {
                                 serviceIcon = "fa-brands fa-python";
