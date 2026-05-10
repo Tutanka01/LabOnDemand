@@ -5,7 +5,6 @@ Principe KISS : configuration simple et routage centralisé
 
 import asyncio
 import logging
-import os
 import time
 import uuid
 import uvicorn
@@ -33,16 +32,6 @@ from .migrations import run_migrations
 from .seed import seed_admin, seed_templates, seed_runtime_configs
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-
-# When running in debug inside a Docker volume on Windows, watchfiles can fail
-# with "Invalid argument" unless it falls back to polling. Force this behaviour
-# before we initialise logging and start uvicorn.
-if settings.DEBUG_MODE and os.getenv("WATCHFILES_FORCE_POLLING", "").lower() not in {
-    "true",
-    "1",
-    "yes",
-}:
-    os.environ["WATCHFILES_FORCE_POLLING"] = "true"
 
 setup_logging()
 logger = logging.getLogger("labondemand.main")

@@ -19,7 +19,6 @@ services:
       - CLUSTER_EXTERNAL_IP=${CLUSTER_EXTERNAL_IP:-}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - SECURE_COOKIES=${SECURE_COOKIES:-False}
-      - WATCHFILES_FORCE_POLLING=true
     restart: unless-stopped
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:

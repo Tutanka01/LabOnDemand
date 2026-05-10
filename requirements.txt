@@ -1,5 +1,5 @@
 fastapi==0.115.12
-uvicorn[standard]==0.34.2
+uvicorn==0.34.2
 kubernetes==32.0.1
 python-dotenv==1.1.0
 sqlalchemy==2.0.40
