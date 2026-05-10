@@ -37,6 +37,28 @@ setup_logging()
 logger = logging.getLogger("labondemand.main")
 access_logger = logging.getLogger("labondemand.access")
 
+
+def _request_user_log_context(request: Request) -> dict:
+    """Return user metadata for logs without refreshing detached ORM instances."""
+    user_id = getattr(request.state, "user_id", None)
+    user_role = getattr(request.state, "user_role", None)
+    if user_id is not None or user_role is not None:
+        return {"user_id": user_id, "user_role": user_role}
+
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return {"user_id": None, "user_role": None}
+
+    try:
+        user_id = getattr(user, "id", None)
+        role = getattr(user, "role", None)
+        user_role = getattr(role, "value", None) or (str(role) if role else None)
+    except Exception:
+        user_id = None
+        user_role = None
+
+    return {"user_id": user_id, "user_role": user_role}
+
 # Initialiser Kubernetes
 settings.init_kubernetes()
 
@@ -68,7 +90,7 @@ async def log_requests(request: Request, call_next):
         response = await call_next(request)
     except Exception as exc:
         duration_ms = round((time.perf_counter() - start_time) * 1000, 3)
-        user = getattr(request.state, "user", None)
+        user_context = _request_user_log_context(request)
         session_data = getattr(request.state, "session", None)
         session_id_preview = shorten_token(getattr(request.state, "session_id", None))
         status_code = getattr(exc, "status_code", 500)
@@ -84,8 +106,8 @@ async def log_requests(request: Request, call_next):
                     "duration_ms": duration_ms,
                     "client_ip": client_host,
                     "client_port": client_port,
-                    "user_id": getattr(user, "id", None),
-                    "user_role": getattr(getattr(user, "role", None), "value", None),
+                    "user_id": user_context["user_id"],
+                    "user_role": user_context["user_role"],
                     "session_role": getattr(session_data, "role", None),
                     "session_id": session_id_preview,
                     "user_agent": request.headers.get("user-agent"),
@@ -98,7 +120,7 @@ async def log_requests(request: Request, call_next):
         raise
 
     duration_ms = round((time.perf_counter() - start_time) * 1000, 3)
-    user = getattr(request.state, "user", None)
+    user_context = _request_user_log_context(request)
     session_data = getattr(request.state, "session", None)
     session_id_preview = shorten_token(getattr(request.state, "session_id", None))
 
@@ -113,8 +135,8 @@ async def log_requests(request: Request, call_next):
                 "duration_ms": duration_ms,
                 "client_ip": client_host,
                 "client_port": client_port,
-                "user_id": getattr(user, "id", None),
-                "user_role": getattr(getattr(user, "role", None), "value", None),
+                "user_id": user_context["user_id"],
+                "user_role": user_context["user_role"],
                 "session_role": getattr(session_data, "role", None),
                 "session_id": session_id_preview,
                 "user_agent": request.headers.get("user-agent"),
