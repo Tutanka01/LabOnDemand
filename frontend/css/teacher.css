@@ -7,19 +7,18 @@
   --text:           var(--gray-800);
   --text-secondary: var(--gray-500);
   --bg-secondary:   var(--gray-100);
+  /* Refresh classroom card palette — more refined with indigo as base */
+  --cls-0: #3730A3;
+  --cls-1: #7C3AED;
+  --cls-2: #0369A1;
+  --cls-3: #15803D;
+  --cls-4: #C2770A;
+  --cls-5: #B91C1C;
+  --cls-6: #0F766E;
+  --cls-7: #C2410C;
 }
 
-/* ── Classroom color palette (indexed by id % 8) ──────────────────────── */
-:root {
-  --cls-0: #2563EB;
-  --cls-1: #7C3AED;
-  --cls-2: #0891B2;
-  --cls-3: #16A34A;
-  --cls-4: #D97706;
-  --cls-5: #DC2626;
-  --cls-6: #0D9488;
-  --cls-7: #EA580C;
-}
+/* ── Classroom color palette is defined above in :root ─────────────────── */
 
 /* ══════════════════════════════════════════════════════════════════════════
    Classroom Cards
@@ -76,11 +75,13 @@
 }
 
 .classroom-card__name {
-  font-size: 1rem;
-  font-weight: 700;
+  font-family: var(--font-display, 'DM Serif Display', serif);
+  font-size: 1.05rem;
+  font-weight: 400;
   color: var(--gray-900);
   margin: 0;
   line-height: 1.3;
+  letter-spacing: -0.01em;
 }
 
 .classroom-card__desc {

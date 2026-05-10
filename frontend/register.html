@@ -3,88 +3,150 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LabOnDemand - Inscription</title>
+    <title>LabOnDemand — Inscription</title>
     <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="css/login.css"> <!-- On réutilise les styles de login -->
+    <link rel="stylesheet" href="css/login.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Ajout de Font Awesome pour les icônes -->
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Dark mode — appliqué avant le rendu pour éviter le flash -->
     <script>
       (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
     </script>
     <script src="js/i18n.js"></script>
 </head>
 <body>
-    <div class="container">
-        <div class="login-container">
-            <div class="login-logo">
-                <i class="fas fa-cubes logo-icon"></i> LabOnDemand
-            </div>
-            
-            <div id="error-message" class="error-message">
-                <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
-            </div>
+    <div class="auth-wrapper">
 
-            <div id="success-message" class="success-message hidden">
-                <i class="fas fa-check-circle"></i> <span id="success-text"></span>
+        <!-- ── Panneau de marque (gauche) ───────────────────────────────── -->
+        <aside class="auth-brand-panel">
+            <div class="auth-brand-inner">
+                <div class="auth-brand-logo">
+                    <i class="fas fa-flask"></i>
+                    <span>LabOnDemand</span>
+                </div>
+                <h2 class="auth-brand-tagline">Rejoignez la plateforme pédagogique de vos laboratoires.</h2>
+                <ul class="auth-brand-features">
+                    <li>
+                        <span class="feature-icon"><i class="fas fa-user-graduate"></i></span>
+                        <span>Accédez à vos labs depuis n'importe où</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon"><i class="fas fa-tasks"></i></span>
+                        <span>Réalisez vos devoirs dans un environnement isolé</span>
+                    </li>
+                    <li>
+                        <span class="feature-icon"><i class="fas fa-shield-alt"></i></span>
+                        <span>Environnement sécurisé et dédié à l'apprentissage</span>
+                    </li>
+                </ul>
             </div>
-            
-            <div class="info-message" id="register-info">
-                <i class="fas fa-user-plus"></i> <span data-i18n="register.info">Créez votre compte</span>
-            </div>
-            
-            <form id="register-form" class="login-form">
-                <div class="form-group">
-                    <label for="username"><i class="fas fa-user"></i> <span data-i18n="register.username">Nom d'utilisateur</span></label>
-                    <input type="text" id="username" name="username" required autocomplete="username" minlength="3" maxlength="50">
-                </div>
-                
-                <div class="form-group">
-                    <label for="email"><i class="fas fa-envelope"></i> <span data-i18n="register.email">Adresse e-mail</span></label>
-                    <input type="email" id="email" name="email" required autocomplete="email">
-                </div>
-                
-                <div class="form-group">
-                    <label for="full_name"><i class="fas fa-id-card"></i> <span data-i18n="register.full_name">Nom complet</span></label>
-                    <input type="text" id="full_name" name="full_name">
-                </div>
-                
-                <div class="form-group">
-                    <label for="password"><i class="fas fa-lock"></i> <span data-i18n="register.password">Mot de passe</span></label>
-                    <input type="password" id="password" name="password" required autocomplete="new-password" minlength="8">
-                </div>
-                
-                <div class="form-group">
-                    <label for="confirm_password"><i class="fas fa-lock"></i> <span data-i18n="register.confirm_password">Confirmez le mot de passe</span></label>
-                    <input type="password" id="confirm_password" name="confirm_password" required autocomplete="new-password" minlength="8">
-                </div>
-                
-                <button type="submit" class="btn-login">
-                    <i class="fas fa-user-plus"></i> <span data-i18n="register.submit">S'inscrire</span>
-                </button>
-            </form>
+            <p class="auth-brand-copy">© 2026 LabOnDemand · Développé par @makhal_01</p>
+        </aside>
 
-            <div class="sso-section hidden" id="sso-register">
-                <p class="sso-note" data-i18n="register.sso_managed">L'inscription est gérée par le SSO.</p>
-                <button type="button" class="btn-login btn-sso" id="sso-register-btn">
-                    <i class="fas fa-shield-alt"></i> <span data-i18n="login.sso_continue">Continuer avec SSO</span>
-                </button>
-            </div>
+        <!-- ── Panneau formulaire (droite) ──────────────────────────────── -->
+        <main class="auth-form-panel">
+            <div class="login-container">
+                <div class="login-logo">
+                    <i class="fas fa-user-plus logo-icon"></i> Inscription
+                </div>
 
-            <div class="login-links">
-                <a href="login.html" data-i18n="register.login">Déjà inscrit ? Connectez-vous</a>
+                <div id="error-message" class="error-message">
+                    <i class="fas fa-exclamation-circle"></i> <span id="error-text"></span>
+                </div>
+
+                <div id="success-message" class="success-message hidden">
+                    <i class="fas fa-check-circle"></i> <span id="success-text"></span>
+                </div>
+
+                <div class="info-message" id="register-info">
+                    <i class="fas fa-user-plus"></i>
+                    <span data-i18n="register.info">Créez votre compte pour accéder à la plateforme</span>
+                </div>
+
+                <form id="register-form" class="login-form">
+                    <div class="form-group">
+                        <label for="username">
+                            <i class="fas fa-user"></i>
+                            <span data-i18n="register.username">Nom d'utilisateur</span>
+                        </label>
+                        <input type="text" id="username" name="username" required
+                               autocomplete="username" minlength="3" maxlength="50"
+                               placeholder="ex. jean.dupont">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">
+                            <i class="fas fa-envelope"></i>
+                            <span data-i18n="register.email">Adresse e-mail</span>
+                        </label>
+                        <input type="email" id="email" name="email" required
+                               autocomplete="email"
+                               placeholder="ex. jean.dupont@ecole.fr">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="full_name">
+                            <i class="fas fa-id-card"></i>
+                            <span data-i18n="register.full_name">Nom complet</span>
+                        </label>
+                        <input type="text" id="full_name" name="full_name"
+                               placeholder="ex. Jean Dupont">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">
+                            <i class="fas fa-lock"></i>
+                            <span data-i18n="register.password">Mot de passe</span>
+                        </label>
+                        <input type="password" id="password" name="password" required
+                               autocomplete="new-password" minlength="8"
+                               placeholder="8 caractères minimum">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirm_password">
+                            <i class="fas fa-lock"></i>
+                            <span data-i18n="register.confirm_password">Confirmer le mot de passe</span>
+                        </label>
+                        <input type="password" id="confirm_password" name="confirm_password" required
+                               autocomplete="new-password" minlength="8"
+                               placeholder="••••••••">
+                    </div>
+
+                    <button type="submit" class="btn-login">
+                        <i class="fas fa-user-plus"></i>
+                        <span data-i18n="register.submit">Créer mon compte</span>
+                    </button>
+                </form>
+
+                <div class="sso-section hidden" id="sso-register">
+                    <p class="sso-note" data-i18n="register.sso_managed">
+                        L'inscription est gérée par le SSO.
+                    </p>
+                    <button type="button" class="btn-login btn-sso" id="sso-register-btn">
+                        <i class="fas fa-shield-alt"></i>
+                        <span data-i18n="login.sso_continue">Continuer avec SSO</span>
+                    </button>
+                </div>
+
+                <div class="login-links">
+                    <a href="login.html" data-i18n="register.login">
+                        Déjà inscrit ? Se connecter
+                    </a>
+                </div>
+
+                <div class="login-footer">
+                    <button onclick="toggleDarkMode()" class="dark-mode-toggle"
+                            title="Basculer le thème">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                </div>
             </div>
-            
-            <div class="login-footer">
-                LabOnDemand &copy; 2023-2025 | Développé avec <i class="fas fa-heart"></i>
-            </div>
-        </div>
+        </main>
+
     </div>
-      
-    <!-- Charger le script d'inscription -->
+
     <script src="js/api.js"></script>
     <script src="js/darkmode.js"></script>
     <script src="js/register.js"></script>
