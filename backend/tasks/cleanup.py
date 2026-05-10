@@ -119,22 +119,15 @@ async def _run_cleanup_cycle() -> None:
         )
         for dep in grace_expired:
             try:
-                from kubernetes import client as k8s_client
-
-                apps_v1 = k8s_client.AppsV1Api()
-                core_v1 = k8s_client.CoreV1Api()
-                # Suppression du déploiement K8s (best-effort, ignorer 404)
-                try:
-                    apps_v1.delete_namespaced_deployment(dep.name, dep.namespace)
-                except Exception:
-                    pass
-                # Suppression du service associé (best-effort)
-                try:
-                    core_v1.delete_namespaced_service(
-                        f"{dep.name}-service", dep.namespace
+                user = db.query(User).filter(User.id == dep.user_id).first()
+                if user:
+                    deployment_service.delete_labondemand_resources(
+                        namespace=dep.namespace,
+                        name=dep.stack_name or dep.name,
+                        current_user=user,
+                        delete_services=True,
+                        delete_persistent=False,
                     )
-                except Exception:
-                    pass
                 # Soft delete : on conserve l'historique
                 dep.status = "deleted"
                 dep.deleted_at = now

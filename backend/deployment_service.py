@@ -451,7 +451,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         Lève HTTPException 403/400 en cas de dépassement.
         """
         role_val = getattr(current_user.role, "value", str(current_user.role))
-        limits = get_role_limits(str(role_val))
+        limits = get_role_limits(str(role_val), getattr(current_user, "id", None))
         usage = self._get_user_usage(current_user)
 
         apps_total = usage["apps_used"] + planned_apps
@@ -674,7 +674,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
 
     def _stack_label_selector(self, stack_name: str, current_user: User) -> str:
         selector = f"managed-by=labondemand,stack-name={stack_name}"
-        if current_user.role == UserRole.student:
+        if not self._can_control_foreign_deployments(current_user):
             selector += f",user-id={current_user.id}"
         return selector
 
@@ -759,6 +759,207 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "namespace": namespace,
             "app_type": app_type,
         }
+
+    @staticmethod
+    def _record_lifecycle_status(
+        user: User,
+        name: str,
+        namespace: str,
+        status: str,
+        mark_seen: bool = False,
+        deleted: bool = False,
+    ) -> None:
+        try:
+            from .database import SessionLocal
+
+            with SessionLocal() as db:
+                query = db.query(DeploymentRecord).filter(
+                    DeploymentRecord.name == name,
+                    DeploymentRecord.namespace == namespace,
+                    DeploymentRecord.deleted_at.is_(None),
+                )
+                if user.role != UserRole.admin:
+                    query = query.filter(DeploymentRecord.user_id == user.id)
+                rec = query.first()
+                if not rec:
+                    return
+                rec.status = status
+                now = datetime.datetime.now(datetime.timezone.utc)
+                if mark_seen:
+                    rec.last_seen_at = now
+                if deleted:
+                    rec.deleted_at = now
+                db.commit()
+        except Exception as exc:
+            logger.warning(
+                "deployment_db_status_update_failed",
+                extra={
+                    "extra_fields": {
+                        "name": name,
+                        "namespace": namespace,
+                        "status": status,
+                        "error": str(exc),
+                    }
+                },
+            )
+
+    def delete_labondemand_resources(
+        self,
+        namespace: str,
+        name: str,
+        current_user: User,
+        delete_services: bool = True,
+        delete_persistent: bool = False,
+    ) -> Dict[str, Any]:
+        """Supprime une application LabOnDemand entière via labels, après contrôle d'accès."""
+        resolved = self._resolve_target_deployments(namespace, name, current_user)
+        display_name = resolved["display_name"]
+        stack_name = resolved["stack_name"]
+        selector_name = stack_name or display_name
+        label_selector = (
+            f"managed-by=labondemand,stack-name={selector_name}"
+            if stack_name
+            else f"managed-by=labondemand,app={display_name}"
+        )
+        if not self._can_control_foreign_deployments(current_user):
+            label_selector += f",user-id={current_user.id}"
+
+        deleted: Dict[str, List[str]] = {
+            "deployments": [],
+            "services": [],
+            "ingresses": [],
+            "pvcs": [],
+            "secrets": [],
+        }
+
+        def ignore_404(call, resource_name: str, bucket: str) -> None:
+            try:
+                call()
+                deleted[bucket].append(resource_name)
+            except client.exceptions.ApiException as exc:
+                if exc.status != 404:
+                    raise
+
+        for dep in resolved["deployments"]:
+            dep_name = dep.metadata.name
+            ignore_404(
+                lambda dep_name=dep_name: self.apps_v1.delete_namespaced_deployment(
+                    dep_name, resolved["namespace"]
+                ),
+                dep_name,
+                "deployments",
+            )
+
+        if delete_services:
+            services = self.core_v1.list_namespaced_service(
+                resolved["namespace"], label_selector=label_selector
+            )
+            for svc in services.items or []:
+                svc_name = svc.metadata.name
+                ignore_404(
+                    lambda svc_name=svc_name: self.core_v1.delete_namespaced_service(
+                        svc_name, resolved["namespace"]
+                    ),
+                    svc_name,
+                    "services",
+                )
+
+            ingresses = self.networking_v1.list_namespaced_ingress(
+                resolved["namespace"], label_selector=label_selector
+            )
+            for ing in ingresses.items or []:
+                ing_name = ing.metadata.name
+                ignore_404(
+                    lambda ing_name=ing_name: self.networking_v1.delete_namespaced_ingress(
+                        ing_name, resolved["namespace"]
+                    ),
+                    ing_name,
+                    "ingresses",
+                )
+
+        if delete_persistent:
+            pvcs = self.core_v1.list_namespaced_persistent_volume_claim(
+                resolved["namespace"], label_selector=label_selector
+            )
+            for pvc in pvcs.items or []:
+                pvc_name = pvc.metadata.name
+                ignore_404(
+                    lambda pvc_name=pvc_name: self.core_v1.delete_namespaced_persistent_volume_claim(
+                        pvc_name, resolved["namespace"]
+                    ),
+                    pvc_name,
+                    "pvcs",
+                )
+
+            secrets = self.core_v1.list_namespaced_secret(
+                resolved["namespace"], label_selector=label_selector
+            )
+            for secret in secrets.items or []:
+                secret_name = secret.metadata.name
+                ignore_404(
+                    lambda secret_name=secret_name: self.core_v1.delete_namespaced_secret(
+                        secret_name, resolved["namespace"]
+                    ),
+                    secret_name,
+                    "secrets",
+                )
+
+        self._record_lifecycle_status(
+            current_user,
+            display_name,
+            resolved["namespace"],
+            "deleted",
+            deleted=True,
+        )
+        return {
+            "name": display_name,
+            "namespace": resolved["namespace"],
+            "deployment_type": resolved["app_type"],
+            "deleted": deleted,
+        }
+
+    def _rollback_created_objects(
+        self, namespace: str, created: List[Tuple[str, str]]
+    ) -> None:
+        for kind, resource_name in reversed(created):
+            try:
+                if kind == "ingress":
+                    self.networking_v1.delete_namespaced_ingress(resource_name, namespace)
+                elif kind == "deployment":
+                    self.apps_v1.delete_namespaced_deployment(resource_name, namespace)
+                elif kind == "service":
+                    self.core_v1.delete_namespaced_service(resource_name, namespace)
+                elif kind == "pvc":
+                    self.core_v1.delete_namespaced_persistent_volume_claim(
+                        resource_name, namespace
+                    )
+                elif kind == "secret":
+                    self.core_v1.delete_namespaced_secret(resource_name, namespace)
+            except client.exceptions.ApiException as exc:
+                if exc.status != 404:
+                    logger.warning(
+                        "deployment_create_rollback_item_failed",
+                        extra={
+                            "extra_fields": {
+                                "namespace": namespace,
+                                "kind": kind,
+                                "name": resource_name,
+                                "error": str(exc),
+                            }
+                        },
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "deployment_create_rollback_item_failed",
+                    extra={
+                        "extra_fields": {
+                            "namespace": namespace,
+                            "kind": kind,
+                            "name": resource_name,
+                            "error": str(exc),
+                        }
+                    },
+                )
 
     def describe_component_lifecycle(
         self, deployment: client.V1Deployment
@@ -902,6 +1103,14 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             },
         )
 
+        self._record_lifecycle_status(
+            current_user,
+            resolved["display_name"],
+            resolved["namespace"],
+            "paused",
+            mark_seen=True,
+        )
+
         return {
             "action": "paused",
             "name": resolved["display_name"],
@@ -1043,6 +1252,14 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             },
         )
 
+        self._record_lifecycle_status(
+            current_user,
+            resolved["display_name"],
+            resolved["namespace"],
+            "active",
+            mark_seen=True,
+        )
+
         return {
             "action": "resumed",
             "name": resolved["display_name"],
@@ -1085,7 +1302,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
     def get_user_quota_summary(self, user: User) -> Dict[str, Any]:
         """Retourne un résumé des quotas: role, usage courant, limites et restants."""
         role_val = getattr(user.role, "value", str(user.role))
-        limits = get_role_limits(str(role_val))
+        limits = get_role_limits(str(role_val), getattr(user, "id", None))
         usage = self._get_user_usage(user)
         remaining = {
             "apps": max(limits["max_apps"] - usage["apps_used"], 0),
@@ -1208,7 +1425,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "kind": "Deployment",
             "metadata": {
                 "name": name,
-                "labels": labels,
+                "labels": {"app": name, **labels},
             },
             "spec": {
                 "replicas": replicas,
@@ -1690,6 +1907,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 {"name": "VNC_VIEW_ONLY_PW", "value": "password"},
             ]
 
+        created_objects: List[Tuple[str, str]] = []
         try:
             # Créer le déploiement
             deployment_manifest = self.create_deployment_manifest(
@@ -1734,6 +1952,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         self.core_v1.create_namespaced_persistent_volume_claim(
                             effective_namespace, pvc_manifest
                         )
+                        created_objects.append(("pvc", pvc_name))
                     except client.exceptions.ApiException as e:
                         msg = (getattr(e, "body", "") or "").lower()
                         if e.status == 409:
@@ -1820,16 +2039,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             self.apps_v1.create_namespaced_deployment(
                 effective_namespace, deployment_manifest
             )
-
-            # Enregistrer en base avec expires_at calculé selon le rôle
-            self._track_deployment_in_db(
-                user=current_user,
-                name=name,
-                deployment_type=deployment_type,
-                namespace=effective_namespace,
-                cpu_requested=clamped["cpu_request"],
-                mem_requested=clamped["memory_request"],
-            )
+            created_objects.append(("deployment", name))
 
             result_message = (
                 f"Deployment {name} créé dans le namespace {effective_namespace} "
@@ -1857,6 +2067,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 created_service = self.core_v1.create_namespaced_service(
                     effective_namespace, service_manifest
                 )
+                created_objects.append(("service", f"{name}-service"))
 
                 svc_ports = list(
                     getattr(getattr(created_service, "spec", None), "ports", []) or []
@@ -1910,6 +2121,8 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     ingress_obj, created_flag = self._apply_ingress(
                         effective_namespace, ingress_manifest
                     )
+                    if created_flag:
+                        created_objects.append(("ingress", ingress_name))
                     scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
                     ingress_details = {
                         "name": getattr(
@@ -2014,9 +2227,19 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 },
             )
 
+            self._track_deployment_in_db(
+                user=current_user,
+                name=name,
+                deployment_type=deployment_type,
+                namespace=effective_namespace,
+                cpu_requested=clamped["cpu_request"],
+                mem_requested=clamped["memory_request"],
+            )
+
             return result
 
         except client.exceptions.ApiException as e:
+            self._rollback_created_objects(effective_namespace, created_objects)
             logger.exception(
                 "deployment_k8s_error",
                 extra={
@@ -2034,6 +2257,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 detail=f"Erreur lors de la création: {e.reason} - {e.body}",
             )
         except Exception as e:
+            self._rollback_created_objects(effective_namespace, created_objects)
             logger.exception(
                 "deployment_unexpected_error",
                 extra={

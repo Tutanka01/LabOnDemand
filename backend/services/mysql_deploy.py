@@ -122,9 +122,11 @@ class MySQLDeployMixin:
             },
         }
 
+        created_objects = []
         try:
             try:
                 self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+                created_objects.append(("secret", secret_name))
             except client.exceptions.ApiException as e:
                 if e.status == 409:
                     try:
@@ -137,6 +139,7 @@ class MySQLDeployMixin:
             use_pvc = True
             try:
                 self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+                created_objects.append(("pvc", pvc_db))
             except client.exceptions.ApiException as e:
                 msg = (getattr(e, "body", "") or "").lower()
                 if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
@@ -145,12 +148,16 @@ class MySQLDeployMixin:
                     raise
 
             self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
+            created_objects.append(("service", svc_db))
             if not use_pvc:
                 dep_db_manifest["spec"]["template"]["spec"]["volumes"] = [{"name": "data", "emptyDir": {}}]
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_db_manifest)
+            created_objects.append(("deployment", db_name))
 
             created_pma_svc = self.core_v1.create_namespaced_service(effective_namespace, svc_pma_manifest)
+            created_objects.append(("service", svc_pma))
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_pma_manifest)
+            created_objects.append(("deployment", pma_name))
 
             node_port = None
             ingress_details: Optional[Dict[str, Any]] = None
@@ -168,6 +175,8 @@ class MySQLDeployMixin:
                 host = self._build_ingress_host(name, current_user, component="pma")
                 ingress_manifest = self.create_ingress_manifest(ingress_name, host, svc_pma, service_port, labels_pma)
                 ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
+                if created_flag:
+                    created_objects.append(("ingress", ingress_name))
                 scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
                 ingress_details = {
                     "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
@@ -187,6 +196,8 @@ class MySQLDeployMixin:
                 "credentials": {"database": {"host": svc_db, "port": 3306, "username": db_user, "password": db_pass, "database": db_default}, "phpmyadmin": {"url_hint": "http://<NODE_IP>:<NODE_PORT>/"}},
             }
         except client.exceptions.ApiException as e:
+            self._rollback_created_objects(effective_namespace, created_objects)
             raise HTTPException(status_code=e.status or 500, detail=f"Erreur MySQL/phpMyAdmin: {e.reason} - {e.body}")
         except Exception as e:
+            self._rollback_created_objects(effective_namespace, created_objects)
             raise HTTPException(status_code=500, detail=f"Erreur MySQL/phpMyAdmin inattendue: {e}")

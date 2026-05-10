@@ -19,11 +19,13 @@ read_when: |
    healthcheck MariaDB sain. Si MariaDB met trop de temps à démarrer, augmenter
    `start_period` dans le healthcheck.
 
-2. **Redis inaccessible** — Vérifier `REDIS_URL`. En l'absence de Redis,
-   les sessions tombent en mode mémoire (pas de persistance entre redémarrages).
+2. **Redis inaccessible** — Vérifier `REDIS_URL` et `REDIS_PASSWORD`. Redis
+   doit rester non exposé publiquement; une URL sans mot de passe ou un mot de
+   passe incorrect empêchera la création des sessions.
 
 3. **Kubeconfig manquant** — L'API a besoin d'un kubeconfig valide. En développement,
-   monter `~/.kube:/root/.kube:ro` dans le conteneur.
+   monter `~/.kube:/root/.kube:ro` dans le conteneur. Le kubeconfig est un secret
+   local et ne doit pas être versionné.
 
 ## Déploiement échoue avec "Forbidden" ou 403
 
@@ -151,7 +153,12 @@ kubectl delete deployment <name> -n <namespace>
 1. Vérifier que le pod est en état `Running`.
 2. L'endpoint WebSocket (`/api/v1/k8s/terminal`) requiert que le pod ait un shell
    disponible (`/bin/sh` ou `/bin/bash`).
-3. Vérifier que le proxy (Nginx / Traefik) est configuré pour passer les headers
+3. Un code `403` indique généralement que l'utilisateur n'est pas propriétaire
+   du pod, n'est pas admin, ou que les labels LabOnDemand (`managed-by`,
+   `user-id`, `app-type`) sont absents ou incohérents.
+4. Les pods de base de données des stacks MySQL/WordPress/LAMP ne sont pas
+   ouverts au terminal.
+5. Vérifier que le proxy (Nginx / Traefik) est configuré pour passer les headers
    `Upgrade` et `Connection` WebSocket.
 
 ## Réinitialiser le mot de passe admin

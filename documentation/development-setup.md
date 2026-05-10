@@ -70,12 +70,16 @@ USER_NAMESPACE_PREFIX=labondemand-user
 ### Sessions Redis
 
 ```env
-REDIS_URL=redis://redis:6379/0
+REDIS_PASSWORD=change-me
+REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
 SESSION_EXPIRY_HOURS=24
 SECURE_COOKIES=false      # false en HTTP local, true en HTTPS production
 SESSION_SAMESITE=Strict
 COOKIE_DOMAIN=            # Laisser vide en local
 ```
+
+Dans Docker Compose, Redis reste sur le réseau interne et n'est pas publié sur
+l'hôte. L'API y accède avec le mot de passe défini par `REDIS_PASSWORD`.
 
 ### Admin par défaut
 
@@ -126,7 +130,8 @@ source .venv/bin/activate
 pip install -r ../requirements.txt
 
 # Variables d'environnement minimales
-export REDIS_URL=redis://localhost:6379/0
+export REDIS_PASSWORD=change-me
+export REDIS_URL=redis://:${REDIS_PASSWORD}@localhost:6379/0
 export ADMIN_DEFAULT_PASSWORD=ChangeMe123!
 export DB_URL=mysql+pymysql://labondemand:password@localhost/labondemand
 
@@ -218,6 +223,7 @@ La migration sera appliquée au prochain démarrage.
 La tâche `backend/tasks/cleanup.py` est démarrée automatiquement lors du
 bootstrap de l'application. Elle :
 - Expire et met en pause les labs dont `expires_at ≤ now()`
+- Supprime les labs en pause après la période de grâce par labels Kubernetes
 - Supprime les namespaces Kubernetes orphelins
 
 Elle ne nécessite pas de service externe. Pour vérifier son bon fonctionnement :
@@ -231,7 +237,7 @@ grep deployment_auto_paused_expired logs/app.log
 
 ## Accès Kubernetes en développement
 
-Monter le kubeconfig local dans le conteneur API :
+Monter le kubeconfig local en lecture seule dans le conteneur API :
 
 ```yaml
 # compose.yaml — service api
@@ -241,6 +247,7 @@ volumes:
 
 L'application détecte automatiquement le kubeconfig via `config.load_kube_config()`.
 En production (in-cluster), utiliser `config.load_incluster_config()`.
+Le kubeconfig local est un secret : ne le versionnez pas et limitez ses droits.
 
 ---
 

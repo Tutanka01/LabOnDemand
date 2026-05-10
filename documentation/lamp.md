@@ -58,7 +58,7 @@ Le pod web initialise un fichier index.php par défaut (style by makhal) via un 
 
 ## Suppression de la stack
 
-La suppression via l’UI supprime les Deployments et Services. Par défaut, le Secret et le PVC de la DB peuvent être supprimés pour éviter les conflits lors d’une réinstallation (AlreadyExists). Un paramètre delete_persistent=false peut être fourni via l’API pour garder ces ressources.
+La suppression via l’UI supprime les Deployments, Services et Ingress de la stack via les labels LabOnDemand. Par défaut (`delete_persistent=false`), les Secrets et PVC sont conservés pour préserver les données. Passez `delete_persistent=true` via l’API pour supprimer aussi les ressources persistantes.
 
 ## Dépannage
 

@@ -8,6 +8,10 @@ export function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
+export function escapeAttr(str) {
+    return escapeHtml(String(str ?? ''));
+}
+
 export function mapPhaseToClass(phase) {
     const value = (phase || '').toLowerCase();
     if (value === 'bound') return 'bound';

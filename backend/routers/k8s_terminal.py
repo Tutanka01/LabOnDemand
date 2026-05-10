@@ -9,8 +9,10 @@ from kubernetes.stream import stream as k8s_stream
 
 from ..security import get_current_user
 from ..session_store import session_store
-from ..models import UserRole
+from ..models import User, UserRole
 from ..k8s_utils import validate_k8s_name
+from ..database import SessionLocal
+from ..deployment_service import deployment_service
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
@@ -37,22 +39,27 @@ async def _ws_authenticate_and_authorize_terminal(websocket: WebSocket, namespac
     labels = pod.metadata.labels or {}
     managed = labels.get("managed-by")
     owner_id = labels.get("user-id")
-    role = sess.get("role")
     user_id = sess.get("user_id")
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.is_active:
+            await websocket.close(code=4401)
+            raise WebSocketDisconnect(code=4401)
+        role = user.role.value if hasattr(user.role, "value") else str(user.role)
 
-    if role == UserRole.student.value:
-        if managed != "labondemand" or owner_id != str(user_id):
-            await websocket.close(code=4403)
-            raise WebSocketDisconnect(code=4403)
-        comp = (pod.metadata.labels or {}).get("component", "")
-        app_type = (pod.metadata.labels or {}).get("app-type", "")
-        if comp == "database" and app_type in {"mysql", "wordpress", "lamp"}:
-            await websocket.close(code=4403)
-            raise WebSocketDisconnect(code=4403)
-    else:
-        if managed != "labondemand":
-            await websocket.close(code=4403)
-            raise WebSocketDisconnect(code=4403)
+    try:
+        deployment_service._assert_deployment_access(
+            labels, user, namespace, pod_name
+        )
+    except Exception:
+        await websocket.close(code=4403)
+        raise WebSocketDisconnect(code=4403)
+
+    comp = labels.get("component", "")
+    app_type = labels.get("app-type", "")
+    if comp == "database" and app_type in {"mysql", "wordpress", "lamp"}:
+        await websocket.close(code=4403)
+        raise WebSocketDisconnect(code=4403)
 
     return {"user_id": user_id, "role": role}
 

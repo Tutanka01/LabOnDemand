@@ -5,7 +5,7 @@ import { createNovncModule } from './js/dashboard/novnc.js';
 import { createStatusView } from './js/dashboard/statusView.js';
 import { createResourceModule } from './js/dashboard/resources.js';
 import { createDeploymentsModule } from './js/dashboard/deployments.js';
-import { escapeHtml } from './js/dashboard/utils.js';
+import { escapeAttr, escapeHtml } from './js/dashboard/utils.js';
 
 function createDashboardApp() {
     const API_V1 = '/api/v1';
@@ -576,7 +576,7 @@ function createDashboardApp() {
 
             // Rendu des filtres de tags
             if (tagFiltersEl) {
-                tagFiltersEl.innerHTML = allTags.map(tag => `<span class="tag-chip" data-tag="${tag}"><i class="fas fa-tag"></i> ${tag}</span>`).join('');
+                tagFiltersEl.innerHTML = allTags.map(tag => `<span class="tag-chip" data-tag="${escapeAttr(tag)}"><i class="fas fa-tag"></i> ${escapeHtml(tag)}</span>`).join('');
             }
 
             // Fonction de rendu en appliquant recherche + tags actifs
@@ -594,29 +594,29 @@ function createDashboardApp() {
 
                 serviceCatalog.innerHTML = matches.map(t => {
                     const rawIcon = (t.icon || '').trim();
-                    const isFA = rawIcon.includes('fa-');
-                    const faClass = isFA ? rawIcon : 'fa-solid fa-cube';
+                    const isFA = /^fa[srbl]?(?: fa-[a-z0-9-]+)+$/i.test(rawIcon);
+                    const faClass = isFA ? escapeAttr(rawIcon) : 'fa-solid fa-cube';
                     const iconInner = isFA
                         ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
                         : (rawIcon
-                            ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${rawIcon}</span>`
+                            ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${escapeHtml(rawIcon)}</span>`
                             : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
                     const iconHtml = `<div class="service-icon-wrap">${iconInner}</div>`;
                     const title = t.name || t.id;
                     const desc = t.description || '';
                     const deploymentType = t.deployment_type || (t.id === 'custom' ? 'custom' : t.id);
-                    const tagsHtml = (t.tags || []).map(tag => `<span class="tag-chip" role="listitem">${tag}</span>`).join(' ');
+                    const tagsHtml = (t.tags || []).map(tag => `<span class="tag-chip" role="listitem">${escapeHtml(tag)}</span>`).join(' ');
                     return `
                         <div class="card service-card" 
-                            data-service="${title}"
-                            data-icon="${rawIcon}"
-                            data-deployment-type="${deploymentType}"
-                            data-default-image="${t.default_image || ''}"
-                            data-default-port="${t.default_port || ''}"
-                            data-default-service-type="${t.default_service_type || 'NodePort'}">
+                            data-service="${escapeAttr(title)}"
+                            data-icon="${escapeAttr(rawIcon)}"
+                            data-deployment-type="${escapeAttr(deploymentType)}"
+                            data-default-image="${escapeAttr(t.default_image || '')}"
+                            data-default-port="${escapeAttr(t.default_port || '')}"
+                            data-default-service-type="${escapeAttr(t.default_service_type || 'NodePort')}">
                             ${iconHtml}
-                            <h3>${title}</h3>
-                            <p>${desc}</p>
+                            <h3>${escapeHtml(title)}</h3>
+                            <p>${escapeHtml(desc)}</p>
                             ${tagsHtml ? `<div class=\"card-tags\" role=\"list\">${tagsHtml}</div>` : ''}
                         </div>
                     `;

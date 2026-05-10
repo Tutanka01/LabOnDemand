@@ -12,8 +12,8 @@
 
 ```bash
 git clone <repo> && cd LabOnDemand
-cp .env.example .env          # adapter ADMIN_DEFAULT_PASSWORD et CLUSTER_EXTERNAL_IP
-nano kubeconfig.yaml            # ajouter le server API Kubernetes
+cp .env.example .env          # adapter ADMIN_DEFAULT_PASSWORD, REDIS_PASSWORD et CLUSTER_EXTERNAL_IP
+nano kubeconfig.yaml          # secret local: ne pas versionner
 docker compose up --build
 # → API sur http://localhost:8000  |  Frontend sur http://localhost:80
 # → Compte admin: admin / valeur de ADMIN_DEFAULT_PASSWORD
@@ -28,7 +28,7 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 - **Terminal web** intégré (Xterm.js, WebSocket) — accès shell aux pods sans SSH
 - **Ingress automatique** : sous-domaine par déploiement avec TLS optionnel (cert-manager)
 - **SSO / OIDC** : intégration avec les IdP universitaires (CAS, Keycloak, etc.)
-- **Sessions Redis** distribuées — cookie HttpOnly, SameSite, Secure
+- **Sessions Redis** distribuées — mot de passe, réseau interne, cookie HttpOnly, SameSite, Secure
 - **Logging structuré JSON** avec rotation (`logs/app.log`, `access.log`, `audit.log`)
 - **Volumes persistants** : PVC automatiques avec fallback `emptyDir` si pas de StorageClass
 - **Templates dynamiques** : bibliothèque de déploiements configurable depuis l'interface admin

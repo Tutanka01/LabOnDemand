@@ -24,9 +24,10 @@ les guides spécialisés selon votre profil.
 2. **Préparer la configuration**
    ```bash
    cp .env.example .env
-   # Renseigner : DB_PASSWORD, DB_ROOT_PASSWORD, ADMIN_DEFAULT_PASSWORD
+   # Renseigner : DB_PASSWORD, DB_ROOT_PASSWORD, REDIS_PASSWORD, ADMIN_DEFAULT_PASSWORD
    # Optionnel  : INGRESS_*, SSO/OIDC, LAB_TTL_*
    ```
+   Le kubeconfig utilisé en développement est un secret local et ne doit pas être versionné.
 
 3. **Lancer**
    ```bash
@@ -122,6 +123,7 @@ les guides spécialisés selon votre profil.
 
 ### Pour les administrateurs
 - RBAC 3 niveaux : student / teacher / admin
+- Accès aux labs limité au propriétaire ou aux admins
 - Import CSV d'utilisateurs (création en masse)
 - Dérogations de quota individuelles et temporaires
 - SSO/OIDC avec mapping automatique des rôles

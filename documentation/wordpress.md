@@ -40,7 +40,7 @@ Cette fonctionnalité permet à chaque utilisateur de déployer une instance Wor
 
 Les secrets sont stockés dans un objet Secret Kubernetes nommé `<name>-secret` dans votre namespace.
 
-Note sur la suppression: lorsque vous supprimez une stack WordPress via l'API de LabOnDemand, le Secret `<name>-secret` et le PVC de la base de données (`<name>-mariadb-pvc`) sont supprimés par défaut afin d'éviter les conflits lors d'une réinstallation (erreur AlreadyExists). Vous pouvez garder ces ressources persistantes en passant le paramètre de requête `delete_persistent=false` à l'endpoint de suppression.
+Note sur la suppression: lorsque vous supprimez une stack WordPress via l'API de LabOnDemand, les Deployments, Services et Ingress de la stack sont supprimés par labels. Le Secret `<name>-secret` et le PVC de la base de données (`<name>-mariadb-pvc`) sont conservés par défaut (`delete_persistent=false`). Pour supprimer aussi ces ressources persistantes, passez `delete_persistent=true`.
 
 Idempotence: si un Secret `<name>-secret` existe déjà (par exemple après une suppression partielle), le déploiement ne renverra plus d'erreur 409. Le Secret existant sera réutilisé et ses labels seront mis à jour si nécessaire.
 
@@ -63,8 +63,8 @@ Idempotence: si un Secret `<name>-secret` existe déjà (par exemple après une 
 
 ## Suppression
 
-- Depuis le tableau de bord, cliquez « Arrêter » sur l’application pour supprimer les déploiements WordPress et le service WordPress.
-- Le PVC et le service DB seront supprimés uniquement si vous supprimez manuellement ces ressources (préservation des données). Ajout d’un bouton « suppression complète » pourra être envisagé.
+- Depuis le tableau de bord, cliquez « Arrêter » sur l’application pour supprimer les composants Kubernetes actifs de la stack.
+- Les PVC et Secrets restent disponibles par défaut pour préserver les données. Utilisez `delete_persistent=true` via l'API pour une suppression complète.
 
 ---
 

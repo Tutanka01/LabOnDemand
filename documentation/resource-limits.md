@@ -72,6 +72,8 @@ Source : `backend/k8s_utils.py` → `get_role_limits(role, user_id)`
 Un admin peut accorder une dérogation à un utilisateur spécifique, sans modifier
 les valeurs globales par rôle. La dérogation peut être temporaire (avec `expires_at`)
 ou permanente.
+Les dérogations sont prises en compte par la vérification serveur avant création
+ou reprise d'un lab.
 
 ```
 get_role_limits("student", user_id=42)

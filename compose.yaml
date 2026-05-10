@@ -17,7 +17,7 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
       - CLUSTER_EXTERNAL_IP=${CLUSTER_EXTERNAL_IP:-}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-change-me}@redis:6379/0}
       - SECURE_COOKIES=${SECURE_COOKIES:-False}
     restart: unless-stopped
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
@@ -69,12 +69,12 @@ services:
   redis:
     image: redis:8-alpine
     container_name: labondemand-redis
-    ports:
-      - "6379:6379"
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-me}
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-change-me}\" ping | grep PONG"]
       interval: 10s
       timeout: 3s
       retries: 3

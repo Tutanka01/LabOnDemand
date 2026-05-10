@@ -170,9 +170,11 @@ class WordPressDeployMixin:
             },
         }
 
+        created_objects = []
         try:
             try:
                 self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
+                created_objects.append(("secret", secret_name))
             except client.exceptions.ApiException as e:
                 if e.status == 409:
                     try:
@@ -189,6 +191,7 @@ class WordPressDeployMixin:
             use_pvc = True
             try:
                 self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
+                created_objects.append(("pvc", pvc_db))
             except client.exceptions.ApiException as e:
                 msg = (getattr(e, "body", "") or "").lower()
                 if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
@@ -197,13 +200,17 @@ class WordPressDeployMixin:
                     raise
 
             self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
+            created_objects.append(("service", svc_db))
 
             if not use_pvc:
                 dep_db_manifest["spec"]["template"]["spec"]["volumes"] = [{"name": "data", "emptyDir": {}}]
 
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_db_manifest)
+            created_objects.append(("deployment", db_name))
             created_wp_svc = self.core_v1.create_namespaced_service(effective_namespace, svc_wp_manifest)
+            created_objects.append(("service", svc_wp))
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_wp_manifest)
+            created_objects.append(("deployment", wp_name))
 
             try:
                 apps_v1 = client.AppsV1Api()
@@ -231,6 +238,8 @@ class WordPressDeployMixin:
                 host = self._build_ingress_host(wp_name, current_user)
                 ingress_manifest = self.create_ingress_manifest(ingress_name, host, svc_wp, service_port, labels_wp)
                 ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
+                if created_flag:
+                    created_objects.append(("ingress", ingress_name))
                 scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
                 ingress_details = {
                     "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
@@ -254,6 +263,8 @@ class WordPressDeployMixin:
                 },
             }
         except client.exceptions.ApiException as e:
+            self._rollback_created_objects(effective_namespace, created_objects)
             raise HTTPException(status_code=e.status or 500, detail=f"Erreur WordPress: {e.reason} - {e.body}")
         except Exception as e:
+            self._rollback_created_objects(effective_namespace, created_objects)
             raise HTTPException(status_code=500, detail=f"Erreur WordPress inattendue: {e}")

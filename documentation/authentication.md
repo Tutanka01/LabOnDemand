@@ -41,7 +41,8 @@ LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
 
 ## Aperçu technique
 
-- **Session store** : Redis (service `redis` dans `compose.yaml`), TTL configurable (`SESSION_EXPIRY_HOURS`).
+- **Session store** : Redis authentifié (service `redis` dans `compose.yaml`),
+  TTL configurable (`SESSION_EXPIRY_HOURS`), accès limité au réseau interne.
 - **Cookies** : HttpOnly, SameSite configurable (`SESSION_SAMESITE`), `SECURE_COOKIES=True` en production.
 - **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP, contraint `UNIQUE` en base).
 - **SSO** : `backend/sso.py` — découverte automatique de l'IdP via `/.well-known/openid-configuration`.
