@@ -11,7 +11,7 @@ from .logging_config import shorten_token
 
 from .database import get_db
 from .models import User, UserRole, UserQuotaOverride
-from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse, SessionData
+from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse, SessionData, ChangePasswordRequest
 from .security import (
     authenticate_user, create_session, get_password_hash,
     get_current_user, delete_session, delete_user_sessions,
@@ -645,50 +645,46 @@ def check_user_role(current_user: User = Depends(get_current_user)):
         "can_manage_users": role == UserRole.admin.value,
         "can_create_labs": role in [UserRole.admin.value, UserRole.teacher.value],
         "can_view_all_labs": role in [UserRole.admin.value, UserRole.teacher.value],
-        "role": role
+        "can_manage_classrooms": role in [UserRole.admin.value, UserRole.teacher.value],
+        "role": role,
     }
     return permissions
 
 @router.post("/change-password", response_model=UserResponse)
 def change_password(
-    old_password: str, 
-    new_password: str, 
-    current_user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     Permet à l'utilisateur de changer son mot de passe en fournissant 
     l'ancien mot de passe pour vérification
     """
     from .security import verify_password
-    
+
+    old_password = payload.old_password
+    new_password = payload.new_password
+
     if settings.SSO_ENABLED and current_user.auth_provider == "oidc":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mot de passe indisponible pour les comptes SSO",
         )
-    # Vérifier l'ancien mot de passe
     if not verify_password(old_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le mot de passe actuel est incorrect"
+            detail="Le mot de passe actuel est incorrect",
         )
-    
-    # Vérifier que le nouveau mot de passe est différent
     if old_password == new_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le nouveau mot de passe doit être différent de l'ancien"
+            detail="Le nouveau mot de passe doit être différent de l'ancien",
         )
-    
-    # Vérifier la force du nouveau mot de passe
     if not validate_password_strength(new_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial."
+            detail="Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial.",
         )
-    
-    # Mettre à jour le mot de passe
     current_user.hashed_password = get_password_hash(new_password)
     db.commit()
     db.refresh(current_user)

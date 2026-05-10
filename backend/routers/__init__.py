@@ -11,6 +11,7 @@ from .k8s_runtime_configs import router as runtime_configs_router
 from .k8s_monitoring import router as monitoring_router
 from .quotas import quotas_router
 from .audit_logs import audit_router
+from .classrooms import classrooms_router, teacher_router
 
 __all__ = [
     "deployments_router",
@@ -21,4 +22,6 @@ __all__ = [
     "monitoring_router",
     "quotas_router",
     "audit_router",
+    "classrooms_router",
+    "teacher_router",
 ]

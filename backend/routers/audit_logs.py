@@ -43,11 +43,18 @@ EVENT_LABELS: dict[str, str] = {
     "user_self_update": "Mise à jour profil",
     "password_changed": "Changement mot de passe",
     "quota_override_set": "Dérogation quota",
-    "users_imported_csv": "Import CSV",
+    "users_imported_csv": "Import CSV utilisateurs",
     "deployment_created": "Déploiement créé",
     "deployment_deleted": "Déploiement supprimé",
     "deployment_paused": "Déploiement mis en pause",
     "deployment_resumed": "Déploiement repris",
+    "classroom_created": "Classe créée",
+    "classroom_updated": "Classe modifiée",
+    "classroom_archived": "Classe archivée",
+    "students_enrolled": "Étudiants inscrits",
+    "students_imported_csv": "Import CSV étudiants",
+    "assignment_created": "Devoir créé",
+    "assignment_deployed_bulk": "Devoir distribué",
 }
 
 # ── Catégories regroupées ──────────────────────────────────────────────────────
@@ -67,6 +74,15 @@ CATEGORIES: dict[str, list[str]] = {
         "deployment_deleted",
         "deployment_paused",
         "deployment_resumed",
+    ],
+    "classrooms": [
+        "classroom_created",
+        "classroom_updated",
+        "classroom_archived",
+        "students_enrolled",
+        "students_imported_csv",
+        "assignment_created",
+        "assignment_deployed_bulk",
     ],
 }
 

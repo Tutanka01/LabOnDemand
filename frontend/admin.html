@@ -16,6 +16,7 @@
       (function(){var t=localStorage.getItem('labondemand-theme');document.documentElement.setAttribute('data-theme',t==='dark'?'dark':'light');})();
     </script>
     <script src="js/darkmode.js"></script>
+    <script src="js/i18n.js"></script>
 </head>
 <body>
     <div class="main-container">
@@ -26,6 +27,7 @@
             <nav>
                 <ul>
                     <li><a href="index.html"><i class="fas fa-home"></i> Accueil</a></li>
+                    <li class="admin-only"><a href="teacher.html"><i class="fas fa-chalkboard-teacher"></i> Mes Classes</a></li>
                     <li class="admin-only active"><a href="admin.html"><i class="fas fa-users-cog"></i> Administration</a></li>
                     <li class="admin-only"><a href="admin-stats.html"><i class="fas fa-chart-line"></i> Statistiques</a></li>
                 </ul>

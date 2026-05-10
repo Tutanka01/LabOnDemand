@@ -3,7 +3,7 @@ Modèles SQLAlchemy pour LabOnDemand
 Principe KISS : Uniquement les modèles utilisés
 """
 
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.sql import func
 import enum
 
@@ -123,6 +123,63 @@ class UserQuotaOverride(Base):
     created_by = Column(
         Integer, nullable=True
     )  # user_id de l'admin qui a créé l'override
+
+
+# ====== Classroom system ======
+
+class Classroom(Base):
+    __tablename__ = "classrooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, index=True)
+    description = Column(String(500), nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    archived = Column(Boolean, default=False, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class Enrollment(Base):
+    __tablename__ = "enrollments"
+    __table_args__ = (
+        UniqueConstraint("classroom_id", "user_id", name="uq_enrollment_classroom_user"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    enrolled_at = Column(DateTime(timezone=True), server_default=func.now())
+    removed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class Assignment(Base):
+    __tablename__ = "assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    classroom_id = Column(Integer, ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    instructions = Column(Text, nullable=True)
+    template_key = Column(String(50), nullable=True)
+    cpu_preset = Column(String(20), nullable=True)
+    ram_preset = Column(String(20), nullable=True)
+    due_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), default="active", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class AssignmentDeployment(Base):
+    """Trace quel déploiement a été créé pour quel étudiant dans un assignment."""
+
+    __tablename__ = "assignment_deployments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    deployment_id = Column(Integer, ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True)
+    spawn_status = Column(String(20), nullable=False)  # ok | skipped | error
+    spawn_error = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 # Modèle pour la configuration des runtimes (ex: vscode, jupyter)
