@@ -1,6 +1,6 @@
 {
   "header.home": "Accueil",
-  "header.my_classes": "Mes Classes",
+  "header.my_classes": "Mes classes",
   "header.admin": "Administration",
   "header.stats": "Statistiques",
   "header.logout": "Déconnexion",
@@ -19,8 +19,8 @@
   "dashboard.resume": "Reprendre",
   "dashboard.open": "Ouvrir",
 
-  "classroom.title": "Mes Classes",
-  "classroom.new": "+ Nouvelle classe",
+  "classroom.title": "Mes classes",
+  "classroom.new": "Nouvelle classe",
   "classroom.empty": "Vous n'avez pas encore de classe",
   "classroom.empty_hint": "Créez votre première classe pour commencer",
   "classroom.students": "étudiants",
@@ -59,7 +59,7 @@
   "students.csv_format": "Format CSV : une colonne username par ligne",
 
   "assignment.title": "Devoirs",
-  "assignment.new": "+ Nouveau devoir",
+  "assignment.new": "Nouveau devoir",
   "assignment.empty": "Aucun devoir pour cette classe",
   "assignment.create_title": "Créer un devoir",
   "assignment.name": "Titre du devoir",
@@ -83,7 +83,7 @@
   "assignment.deploying": "Déploiement en cours...",
   "assignment.deploy_done": "Terminé : {ok} succès, {errors} erreurs, {skipped} ignorés",
 
-  "overview.title": "Vue d'ensemble",
+  "overview.title": "Suivi des labs",
   "overview.filter_class": "Filtrer par classe",
   "overview.filter_status": "Filtrer par statut",
   "overview.all_classes": "Toutes les classes",

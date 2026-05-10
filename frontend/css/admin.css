@@ -1729,3 +1729,148 @@ main {
   .audit-kpi-row { grid-template-columns: 1fr 1fr; }
   .audit-details { max-width: 200px; }
 }
+
+/* ==========================================================================
+   UX alignment for school workflows
+   ========================================================================== */
+
+header {
+  gap: 20px;
+}
+
+header nav {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+header nav::-webkit-scrollbar {
+  display: none;
+}
+
+.user-info {
+  flex-shrink: 0;
+}
+
+.tabs-nav {
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.tab-btn {
+  min-height: 38px;
+  margin-bottom: 0;
+  border-bottom: none;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.tab-btn.active {
+  background: var(--blue-tint);
+  box-shadow: inset 0 0 0 1px var(--blue-mid);
+}
+
+.tab-panel-header {
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-title-group {
+  min-width: 0;
+}
+
+.panel-title-group h1 {
+  margin-bottom: 4px;
+}
+
+.panel-title-group p {
+  margin: 0;
+  color: var(--gray-500);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.filter-container {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.filter-container .search-box {
+  flex: 1 1 260px;
+  max-width: none;
+}
+
+.filter-options {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.filter-options label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.users-table {
+  min-width: 880px;
+}
+
+.users-table th {
+  white-space: nowrap;
+}
+
+.page-header-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  header {
+    height: auto;
+    min-height: 60px;
+    padding: 10px 16px;
+    flex-wrap: wrap;
+  }
+
+  header nav {
+    order: 3;
+    width: 100%;
+  }
+
+  nav ul {
+    width: max-content;
+  }
+}
+
+@media (max-width: 768px) {
+  .tabs-nav {
+    margin-bottom: 20px;
+  }
+
+  .tab-panel-header {
+    align-items: stretch;
+  }
+
+  .page-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .page-header-actions .action-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}

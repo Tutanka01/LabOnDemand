@@ -54,6 +54,7 @@ window.TeacherAssignments = (function () {
   async function render(classroomId) {
     const loading = document.getElementById('assignments-loading');
     const empty = document.getElementById('assignments-empty');
+    const unselected = document.getElementById('assignments-unselected');
     const list = document.getElementById('assignments-list');
     const newBtn = document.getElementById('new-assignment-btn');
 
@@ -62,10 +63,12 @@ window.TeacherAssignments = (function () {
     if (!classroomId) {
       if (loading) loading.style.display = 'none';
       if (empty) empty.style.display = 'none';
+      if (unselected) unselected.style.display = 'flex';
       if (list) list.innerHTML = '';
       return;
     }
 
+    if (unselected) unselected.style.display = 'none';
     if (loading) loading.style.display = 'block';
     if (empty) empty.style.display = 'none';
     if (list) list.innerHTML = '';

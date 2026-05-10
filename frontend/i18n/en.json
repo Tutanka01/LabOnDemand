@@ -1,6 +1,6 @@
 {
   "header.home": "Home",
-  "header.my_classes": "My Classes",
+  "header.my_classes": "My classes",
   "header.admin": "Administration",
   "header.stats": "Statistics",
   "header.logout": "Log out",
@@ -19,8 +19,8 @@
   "dashboard.resume": "Resume",
   "dashboard.open": "Open",
 
-  "classroom.title": "My Classes",
-  "classroom.new": "+ New Class",
+  "classroom.title": "My classes",
+  "classroom.new": "New class",
   "classroom.empty": "You don't have any classes yet",
   "classroom.empty_hint": "Create your first class to get started",
   "classroom.students": "students",
@@ -59,7 +59,7 @@
   "students.csv_format": "CSV format: one username column per row",
 
   "assignment.title": "Assignments",
-  "assignment.new": "+ New Assignment",
+  "assignment.new": "New assignment",
   "assignment.empty": "No assignments for this class",
   "assignment.create_title": "Create an Assignment",
   "assignment.name": "Assignment title",
@@ -83,7 +83,7 @@
   "assignment.deploying": "Deploying...",
   "assignment.deploy_done": "Done: {ok} success, {errors} errors, {skipped} skipped",
 
-  "overview.title": "Overview",
+  "overview.title": "Lab monitoring",
   "overview.filter_class": "Filter by class",
   "overview.filter_status": "Filter by status",
   "overview.all_classes": "All classes",

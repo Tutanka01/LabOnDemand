@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mes Classes — LabOnDemand</title>
+    <title>Mes classes — LabOnDemand</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="css/admin.css">
     <link rel="stylesheet" href="css/teacher.css">
@@ -27,7 +27,7 @@
             <nav>
                 <ul>
                     <li><a href="index.html"><i class="fas fa-home"></i> <span data-i18n="header.home">Accueil</span></a></li>
-                    <li class="active"><a href="teacher.html"><i class="fas fa-chalkboard-teacher"></i> <span data-i18n="header.my_classes">Mes Classes</span></a></li>
+                    <li class="active"><a href="teacher.html"><i class="fas fa-chalkboard-teacher"></i> <span data-i18n="header.my_classes">Mes classes</span></a></li>
                     <li class="admin-only" style="display:none;"><a href="admin.html"><i class="fas fa-users-cog"></i> <span data-i18n="header.admin">Administration</span></a></li>
                     <li class="admin-only" style="display:none;"><a href="admin-stats.html"><i class="fas fa-chart-line"></i> <span data-i18n="header.stats">Statistiques</span></a></li>
                 </ul>
@@ -59,7 +59,7 @@
             <div class="admin-tabs">
                 <nav class="tabs-nav" role="tablist">
                     <button class="tab-btn active" role="tab" data-tab="classrooms" aria-selected="true">
-                        <i class="fas fa-chalkboard"></i> <span data-i18n="classroom.title">Mes Classes</span>
+                        <i class="fas fa-chalkboard"></i> <span data-i18n="classroom.title">Mes classes</span>
                     </button>
                     <button class="tab-btn" role="tab" data-tab="students" aria-selected="false">
                         <i class="fas fa-users"></i> <span data-i18n="students.title">Étudiants</span>
@@ -68,7 +68,7 @@
                         <i class="fas fa-tasks"></i> <span data-i18n="assignment.title">Devoirs</span>
                     </button>
                     <button class="tab-btn" role="tab" data-tab="overview" aria-selected="false">
-                        <i class="fas fa-th"></i> <span data-i18n="overview.title">Vue d'ensemble</span>
+                        <i class="fas fa-th"></i> <span data-i18n="overview.title">Suivi des labs</span>
                     </button>
                 </nav>
 
@@ -77,10 +77,13 @@
                 ══════════════════════════════════════════════════ -->
                 <div class="tab-panel active" id="tab-classrooms" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-chalkboard"></i> <span data-i18n="classroom.title">Mes Classes</span></h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-chalkboard"></i> <span data-i18n="classroom.title">Mes classes</span></h1>
+                            <p>Groupes de cours, effectifs et activités</p>
+                        </div>
                         <div class="page-header-actions">
                             <button id="new-classroom-btn" class="action-btn">
-                                <i class="fas fa-plus"></i> <span data-i18n="classroom.new">+ Nouvelle classe</span>
+                                <i class="fas fa-plus"></i> <span data-i18n="classroom.new">Nouvelle classe</span>
                             </button>
                         </div>
                     </div>
@@ -96,7 +99,7 @@
                         <h3 data-i18n="classroom.empty">Vous n'avez pas encore de classe</h3>
                         <p data-i18n="classroom.empty_hint">Créez votre première classe pour commencer</p>
                         <button class="action-btn" onclick="document.getElementById('new-classroom-btn').click()">
-                            <i class="fas fa-plus"></i> <span data-i18n="classroom.new">+ Nouvelle classe</span>
+                            <i class="fas fa-plus"></i> <span data-i18n="classroom.new">Nouvelle classe</span>
                         </button>
                     </div>
                 </div>
@@ -106,7 +109,10 @@
                 ══════════════════════════════════════════════════ -->
                 <div class="tab-panel" id="tab-students" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-users"></i> <span data-i18n="students.title">Étudiants</span></h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-users"></i> <span data-i18n="students.title">Étudiants</span></h1>
+                            <p>Inscriptions, emails et labs actifs</p>
+                        </div>
                         <div class="page-header-actions">
                             <button id="add-student-btn" class="action-btn" disabled>
                                 <i class="fas fa-user-plus"></i> <span data-i18n="students.add">Ajouter un étudiant</span>
@@ -118,12 +124,17 @@
                     </div>
 
                     <div class="class-selector">
-                        <label for="students-class-select"><i class="fas fa-chalkboard"></i></label>
+                        <label for="students-class-select"><i class="fas fa-chalkboard"></i><span>Classe</span></label>
                         <select id="students-class-select">
                             <option value="" data-i18n="students.select_class">Sélectionner une classe</option>
                         </select>
                     </div>
 
+                    <div id="students-unselected" class="empty-state teacher-placeholder">
+                        <i class="fas fa-chalkboard-user"></i>
+                        <h3>Aucune classe sélectionnée</h3>
+                        <p>Choisissez une classe pour afficher ses étudiants.</p>
+                    </div>
                     <div id="students-loading" style="display:none;">
                         <div class="skeleton" style="height:40px;margin-bottom:8px;"></div>
                         <div class="skeleton" style="height:40px;margin-bottom:8px;"></div>
@@ -158,21 +169,29 @@
                 ══════════════════════════════════════════════════ -->
                 <div class="tab-panel" id="tab-assignments" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-tasks"></i> <span data-i18n="assignment.title">Devoirs</span></h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-tasks"></i> <span data-i18n="assignment.title">Devoirs</span></h1>
+                            <p>Activités et environnements distribués</p>
+                        </div>
                         <div class="page-header-actions">
                             <button id="new-assignment-btn" class="action-btn" disabled>
-                                <i class="fas fa-plus"></i> <span data-i18n="assignment.new">+ Nouveau devoir</span>
+                                <i class="fas fa-plus"></i> <span data-i18n="assignment.new">Nouveau devoir</span>
                             </button>
                         </div>
                     </div>
 
                     <div class="class-selector">
-                        <label for="assignments-class-select"><i class="fas fa-chalkboard"></i></label>
+                        <label for="assignments-class-select"><i class="fas fa-chalkboard"></i><span>Classe</span></label>
                         <select id="assignments-class-select">
                             <option value="" data-i18n="students.select_class">Sélectionner une classe</option>
                         </select>
                     </div>
 
+                    <div id="assignments-unselected" class="empty-state teacher-placeholder">
+                        <i class="fas fa-clipboard-list"></i>
+                        <h3>Aucune classe sélectionnée</h3>
+                        <p>Choisissez une classe pour afficher ses devoirs.</p>
+                    </div>
                     <div id="assignments-loading" style="display:none;">
                         <div class="skeleton" style="height:80px;margin-bottom:10px;border-radius:10px;"></div>
                         <div class="skeleton" style="height:80px;border-radius:10px;"></div>
@@ -181,7 +200,7 @@
                         <i class="fas fa-tasks"></i>
                         <h3 data-i18n="assignment.empty">Aucun devoir pour cette classe</h3>
                         <button class="action-btn" onclick="document.getElementById('new-assignment-btn').click()">
-                            <i class="fas fa-plus"></i> <span data-i18n="assignment.new">+ Nouveau devoir</span>
+                            <i class="fas fa-plus"></i> <span data-i18n="assignment.new">Nouveau devoir</span>
                         </button>
                     </div>
                     <div id="assignments-list" class="assignment-list"></div>
@@ -192,7 +211,10 @@
                 ══════════════════════════════════════════════════ -->
                 <div class="tab-panel" id="tab-overview" role="tabpanel">
                     <div class="tab-panel-header">
-                        <h1><i class="fas fa-th"></i> <span data-i18n="overview.title">Vue d'ensemble</span></h1>
+                        <div class="panel-title-group">
+                            <h1><i class="fas fa-th"></i> <span data-i18n="overview.title">Suivi des labs</span></h1>
+                            <p>État des environnements par étudiant</p>
+                        </div>
                         <div class="page-header-actions">
                             <button id="overview-refresh-btn" class="action-btn action-btn--secondary">
                                 <i class="fas fa-sync-alt"></i> <span data-i18n="overview.refresh">Actualiser</span>
@@ -201,11 +223,11 @@
                     </div>
 
                     <div class="class-selector">
-                        <label for="overview-class-select"><i class="fas fa-chalkboard"></i></label>
+                        <label for="overview-class-select"><i class="fas fa-chalkboard"></i><span>Classe</span></label>
                         <select id="overview-class-select">
                             <option value="" data-i18n="overview.all_classes">Toutes les classes</option>
                         </select>
-                        <label for="overview-status-select"><i class="fas fa-filter"></i></label>
+                        <label for="overview-status-select"><i class="fas fa-filter"></i><span>Statut</span></label>
                         <select id="overview-status-select">
                             <option value="" data-i18n="overview.all_statuses">Tous les statuts</option>
                             <option value="active" data-i18n="dashboard.status_active">Actif</option>

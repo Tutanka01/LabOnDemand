@@ -52,32 +52,32 @@
         <section id="dashboard-view" class="view active-view">
             <div class="dashboard-hero">
                 <div class="hero-left">
-                    <h1>Laboratoires prêts en un clic</h1>
-                    <p class="hero-subtitle">Pilotez vos environnements Kubernetes, retrouvez vos fichiers et gardez une vue claire sur vos ressources.</p>
+                    <h1>Mes environnements de TP</h1>
+                    <p class="hero-subtitle">Lancez vos labs de cours, retrouvez vos fichiers et suivez les ressources disponibles pour vos travaux.</p>
                     <div class="hero-actions">
                         <button id="show-launch-view-btn" class="btn btn-primary btn-hero">
-                            <i class="fas fa-plus-circle"></i> Lancer une application
+                            <i class="fas fa-plus-circle"></i> Lancer un lab
                         </button>
                         <button id="refresh-dashboard" class="btn btn-ghost btn-hero">
-                            <i class="fas fa-sync-alt"></i> Rafraîchir le tableau
+                            <i class="fas fa-sync-alt"></i> Actualiser
                         </button>
                     </div>
                 </div>
                 <div class="hero-stats">
                     <div class="hero-stat">
-                        <span class="stat-label">Apps actives</span>
+                        <span class="stat-label">Labs actifs</span>
                         <span class="stat-value" id="stat-active-apps">0</span>
                     </div>
                     <div class="hero-stat">
-                        <span class="stat-label">Apps prêtes</span>
+                        <span class="stat-label">Labs prêts</span>
                         <span class="stat-value" id="stat-ready-apps">0</span>
                     </div>
                     <div class="hero-stat">
-                        <span class="stat-label">Volumes gérés</span>
+                        <span class="stat-label">Volumes</span>
                         <span class="stat-value" id="stat-persistent-volumes">0</span>
                     </div>
                     <div class="hero-stat">
-                        <span class="stat-label">Apps restantes</span>
+                        <span class="stat-label">Labs restants</span>
                         <span class="stat-value" id="stat-quota-apps">—</span>
                     </div>
                 </div>
@@ -113,26 +113,26 @@
 
                 <div class="compact-card tips-compact">
                     <div class="compact-card-header">
-                        <h3><i class="fas fa-lightbulb"></i> Conseils</h3>
+                        <h3><i class="fas fa-lightbulb"></i> Repères</h3>
                     </div>
                     <ul class="tips-compact-list">
-                        <li><i class="fas fa-rotate"></i> <span>Rafraîchissez pour voir les mises à jour</span></li>
-                        <li><i class="fas fa-database"></i> <span>Nommez vos apps pour retrouver vos volumes</span></li>
-                        <li><i class="fas fa-shield-alt"></i> <span>Vos volumes sont isolés et sécurisés</span></li>
+                        <li><i class="fas fa-rotate"></i> <span>Actualisez pour voir l'état de vos labs</span></li>
+                        <li><i class="fas fa-database"></i> <span>Les volumes conservent vos fichiers</span></li>
+                        <li><i class="fas fa-shield-alt"></i> <span>Chaque lab reste isolé par utilisateur</span></li>
                     </ul>
                 </div>
             </div>
 
             <div class="section-heading">
                 <div>
-                    <h2><i class="fas fa-rocket"></i> Applications Actives</h2>
-                    <p class="section-subtitle">Surveillez l’état de vos laboratoires en direct et accédez-y en un clic.</p>
+                    <h2><i class="fas fa-rocket"></i> Labs actifs</h2>
+                    <p class="section-subtitle">Vos environnements de travail en cours et leurs accès.</p>
                 </div>
             </div>
             <div id="active-labs-list" class="card-grid lab-grid">
                 <!-- Les labs actifs seront ajoutés ici par JS -->
                 <div class="no-labs-message">
-                    <i class="fas fa-info-circle"></i> Vous n'avez aucune application active pour le moment.
+                    <i class="fas fa-info-circle"></i> Vous n'avez aucun lab actif pour le moment.
                 </div>
             </div>
 
@@ -194,13 +194,13 @@
         <!-- Section Catalogue pour Lancer -->
         <section id="launch-view" class="view">
             <button class="btn btn-secondary back-btn" data-target="dashboard-view"><i class="fas fa-arrow-left"></i> Retour</button>
-            <h1><i class="fas fa-th-large"></i> Choisir une Application</h1>
-            <p class="subtitle">Sélectionnez l'application que vous souhaitez lancer.</p>
+            <h1><i class="fas fa-th-large"></i> Choisir un lab</h1>
+            <p class="subtitle">Sélectionnez l'environnement demandé pour votre cours.</p>
             <div class="catalog-toolbar card">
                 <div class="toolbar-row">
                     <div class="search-box">
                         <i class="fas fa-search"></i>
-                        <input type="text" id="catalog-search" placeholder="Rechercher une application...">
+                        <input type="text" id="catalog-search" placeholder="Rechercher un lab...">
                     </div>
                     <div class="tag-filters" id="tag-filters">
                         <!-- Tags dynamiquement ajoutés -->
@@ -215,8 +215,8 @@
         <!-- Section Configuration (Modale ou vue dédiée) -->
         <section id="config-view" class="view">
              <button class="btn btn-secondary back-btn" data-target="launch-view"><i class="fas fa-arrow-left"></i> Retour</button>
-            <h1><i class="fas fa-cogs"></i> Configurer l'application <span id="config-service-name"></span></h1>
-            <p class="subtitle">Ajustez les paramètres de votre nouvelle application.</p>
+            <h1><i class="fas fa-cogs"></i> Configurer le lab <span id="config-service-name"></span></h1>
+            <p class="subtitle">Ajustez les ressources de votre environnement.</p>
 
             <form id="config-form" class="config-form card">
                 <input type="hidden" id="service-type" value="">
@@ -226,7 +226,7 @@
                 <div class="form-group">
                     <label for="deployment-name"><i class="fas fa-tag"></i> Nom du déploiement</label>
                     <input type="text" id="deployment-name" name="deployment-name" required placeholder="Entrez un nom unique">
-                    <small>Ce nom sera utilisé pour identifier votre application</small>
+                    <small>Ce nom sera utilisé pour identifier votre lab</small>
                 </div>
 
                 <!-- Le namespace est désormais géré côté serveur (un par utilisateur) -->
@@ -270,7 +270,7 @@
                     <div class="form-group service-config">
                         <label class="checkbox-label">
                             <input type="checkbox" id="create-service" checked>
-                            Exposer l'application (création d'un Service Kubernetes)
+                            Rendre le lab accessible depuis le navigateur
                         </label>
                         <p><a href="#" id="advanced-options-toggle">Options réseau avancées</a></p>
                         <div id="service-options" class="hidden">
@@ -286,13 +286,13 @@
                             <div class="form-group">
                                 <label for="service-port"><i class="fas fa-plug"></i> Port d'accès</label>
                                 <input type="number" id="service-port" name="service-port" value="80" min="1" max="65535">
-                                <small>Port externe sur lequel l'application sera accessible</small>
+                                <small>Port externe sur lequel le lab sera accessible</small>
                             </div>
                             
                             <div class="form-group">
-                                <label for="service-target-port"><i class="fas fa-bullseye"></i> Port de l'application (container)</label>
+                                <label for="service-target-port"><i class="fas fa-bullseye"></i> Port du lab (container)</label>
                                 <input type="number" id="service-target-port" name="service-target-port" value="80" min="1" max="65535">
-                                <small>Port sur lequel l'application écoute dans le container</small>
+                                <small>Port sur lequel le lab écoute dans le container</small>
                             </div>
                         </div>
                     </div>
@@ -319,7 +319,7 @@
 
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary btn-launch">
-                        <i class="fas fa-rocket"></i> Lancer l'Application
+                        <i class="fas fa-rocket"></i> Lancer le lab
                     </button>
                 </div>
             </form>

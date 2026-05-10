@@ -734,3 +734,105 @@
     padding: 12px 16px;
   }
 }
+
+/* ==========================================================================
+   School workflow refinements
+   ========================================================================== */
+
+.class-selector {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.class-selector label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--gray-500);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.class-selector label i {
+  color: var(--blue);
+  font-size: 0.75rem;
+}
+
+.class-selector select {
+  min-height: 38px;
+}
+
+.teacher-placeholder {
+  display: flex;
+  min-height: 220px;
+  margin-top: 16px;
+  border-style: dashed;
+  background: linear-gradient(180deg, var(--surface), var(--gray-50));
+}
+
+.teacher-placeholder p {
+  max-width: 360px;
+}
+
+.classroom-card__actions {
+  padding-top: 2px;
+}
+
+.classroom-card__actions .action-btn {
+  min-height: 34px;
+}
+
+.classroom-card__actions .btn-students {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+
+.classroom-card__actions .btn-students:hover {
+  background: var(--blue-dark);
+}
+
+.assignment-card {
+  align-items: center;
+}
+
+.assignment-card__meta {
+  row-gap: 6px;
+}
+
+.students-table-container,
+.assignment-list {
+  margin-top: 16px;
+}
+
+@media (max-width: 768px) {
+  .teacher-placeholder {
+    min-height: 180px;
+    padding: 28px 16px;
+  }
+
+  .class-selector {
+    align-items: stretch;
+  }
+
+  .class-selector label {
+    width: 100%;
+  }
+
+  .classroom-card__actions .action-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .classroom-card__actions .btn-edit,
+  .classroom-card__actions .btn-archive {
+    flex: 0 0 38px;
+  }
+}
