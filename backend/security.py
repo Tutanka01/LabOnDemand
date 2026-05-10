@@ -326,4 +326,8 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     request.state.user = user
+    request.state.user_id = user.id
+    request.state.user_role = (
+        user.role.value if hasattr(user.role, "value") else str(user.role)
+    )
     return user

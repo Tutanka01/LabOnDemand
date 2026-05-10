@@ -37,6 +37,7 @@ async def get_deployment_templates_endpoint(
     def map_template(t: Template):
         return {
             "id": t.key,
+            "key": t.key,
             "name": t.name,
             "description": t.description,
             "icon": t.icon,

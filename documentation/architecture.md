@@ -33,6 +33,10 @@ LabOnDemand est une plateforme multi-tenant permettant aux **enseignants et étu
 
 **Technologies** : Python 3.11, FastAPI, SQLAlchemy 2, MariaDB, Redis, kubernetes-client, Nginx, Docker Compose.
 
+Redis est utilisé comme store de sessions authentifié et reste sur le réseau
+interne. Les origines CORS sont autorisées explicitement côté application; le
+proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
+
 ---
 
 ## Structure du dépôt
@@ -176,6 +180,11 @@ runtime_configs
 Les quotas par défaut (définis dans `k8s_utils.get_role_limits()`) peuvent être
 surchargés individuellement via `UserQuotaOverride`. Voir `documentation/resource-limits.md`.
 
+Les actions sur un lab (détails, identifiants, pause, reprise, suppression,
+terminal) suivent une règle owner/admin : le propriétaire du lab est autorisé,
+un admin est autorisé, et un teacher n'a pas d'accès transverse implicite aux
+labs d'autres utilisateurs.
+
 ---
 
 ## Sessions
@@ -195,8 +204,8 @@ la création selon le rôle (configurable via env, voir `documentation/lifecycle
 
 La tâche de fond `backend/tasks/cleanup.py` tourne toutes les `CLEANUP_INTERVAL_MINUTES`
 minutes et :
-1. Met en pause les déploiements dont `expires_at ≤ now`
-2. Supprime définitivement (de K8s) les labs en pause depuis plus de `LAB_GRACE_PERIOD_DAYS` jours
+1. Met en pause les déploiements dont `expires_at ≤ now` et synchronise la DB
+2. Supprime définitivement les labs en pause par labels Kubernetes après `LAB_GRACE_PERIOD_DAYS`
 3. Supprime les namespaces Kubernetes orphelins (user supprimé mais namespace présent),
    avec deux garde-fous pour protéger les namespaces SSO :
    - déploiements actifs encore rattachés en DB → skip

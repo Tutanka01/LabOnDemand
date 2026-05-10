@@ -17,9 +17,8 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
       - CLUSTER_EXTERNAL_IP=${CLUSTER_EXTERNAL_IP:-}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-change-me}@redis:6379/0}
       - SECURE_COOKIES=${SECURE_COOKIES:-False}
-      - WATCHFILES_FORCE_POLLING=true
     restart: unless-stopped
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
@@ -28,7 +27,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend", "--reload-exclude", "logs"]
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend"]
 
   frontend:
     image: nginx:alpine
@@ -70,12 +69,12 @@ services:
   redis:
     image: redis:8-alpine
     container_name: labondemand-redis
-    ports:
-      - "6379:6379"
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-me}
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-change-me}\" ping | grep PONG"]
       interval: 10s
       timeout: 3s
       retries: 3

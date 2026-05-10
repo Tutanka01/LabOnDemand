@@ -52,7 +52,11 @@ window.TeacherAPI = (function () {
     deployAssignment: (cid, aid) => _req('POST', `/classrooms/${cid}/assignments/${aid}/deploy-all`),
 
     // Templates (pour le select)
-    listTemplates: () => _req('GET', '/k8s/templates'),
+    listTemplates: async () => {
+      const body = await _req('GET', '/k8s/templates');
+      const templates = Array.isArray(body) ? body : (body.templates || []);
+      return templates.map((tpl) => ({ ...tpl, key: tpl.key || tpl.id }));
+    },
 
     // Teacher dashboard
     dashboard: () => _req('GET', '/teacher/dashboard'),

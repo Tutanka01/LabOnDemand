@@ -90,7 +90,6 @@ Cela permet de reconstituer le parcours d une requete dans les trois log files.
 | `AUDIT_LOG_MAX_BYTES` | Seuil de rotation specifique a `audit.log` | `10485760` (10 MiB) |
 | `AUDIT_LOG_BACKUP_COUNT` | Archives conservees pour `audit.log` | `30` |
 | `LOG_ENABLE_CONSOLE` | Active la sortie console (dev) | `True` |
-| `WATCHFILES_FORCE_POLLING` | (Compose dev) force la surveillance par polling pour eviter l erreur `Invalid argument` avec les partages de fichiers Docker. | `true` (compose.yaml) |
 
 Les variables `AUDIT_LOG_*` permettent de configurer une retention plus longue pour l audit sans gonfler les fichiers applicatifs. Avec les valeurs par defaut, la capacite maximale est :
 
@@ -185,7 +184,7 @@ Certains bruits de logs ont ete desactives:
 ## Depannage
 
 - **Fichiers absents** : le dossier n existe pas ou les droits ecriture sont insuffisants. Verifiez le montage (Compose: `./logs:/app/logs`).
-- **Erreur WatchFiles** : assurez-vous que `WATCHFILES_FORCE_POLLING=true` (ajoute dans `compose.yaml`).
+- **Erreur WatchFiles** : l'image n'installe pas `watchfiles` afin que `uvicorn --reload` utilise son reloader statique, compatible avec les partages Docker Desktop/Windows.
 - **Format non JSON** : certains loggers tiers peuvent ecrire en texte brut; utilisez des filtres sur `logger` pour distinguer leur contenu.
 - **Pas de `request_id`** : les journaux emis hors contexte HTTP (taches en arriere-plan) n ont pas d identifiant, ce comportement est normal.
 

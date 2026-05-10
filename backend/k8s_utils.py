@@ -94,7 +94,13 @@ def create_labondemand_labels(
     }
 
     if additional_labels:
-        labels.update(additional_labels)
+        protected = set(labels)
+        safe_extra = {
+            key: value
+            for key, value in additional_labels.items()
+            if key not in protected
+        }
+        labels.update(safe_extra)
 
     return labels
 

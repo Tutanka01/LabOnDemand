@@ -69,3 +69,5 @@ kubeconfig.yaml.cloud
 kubeconfig.*
 OLDkubeconfig.yaml
 .gitignore
+
+AGENTS.md

@@ -31,7 +31,13 @@ Le terminal intégré de LabOnDemand permet d’ouvrir une session shell interac
 ## Sécurité et restrictions
 
 - Authentification de la session requise
-- Contrôles de rôle et de labels: un étudiant ne peut pas ouvrir de terminal sur les pods de base de données (component=database) pour les stacks mysql/wordpress/lamp
+- Le terminal applique le même contrôle d'accès que les endpoints de déploiement :
+  le propriétaire du lab et les admins sont autorisés; un enseignant n'a accès
+  qu'aux pods de ses propres labs.
+- Les pods doivent porter les labels LabOnDemand cohérents (`managed-by`,
+  `user-id`, `app-type`).
+- Les pods de base de données (`component=database`) des stacks mysql,
+  wordpress et lamp ne sont pas accessibles par terminal.
 - Le backend tourne l’exec avec TTY, sous l’utilisateur du conteneur (ex. non-root pour LAMP web)
 
 ## Dépannage

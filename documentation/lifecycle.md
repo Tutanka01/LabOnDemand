@@ -75,12 +75,14 @@ _run_cleanup_cycle()
   │
   ├── 1. Labs expirés (status=active, expires_at ≤ now)
   │     → pause_application(namespace, name, user)
+  │     → replicas = 0 + annotations de reprise
   │     → deployments.status = "paused"
   │     → deployments.last_seen_at = now   (horloge de début de grace period)
   │     → log: deployment_auto_paused_expired
   │
   ├── 1b. Labs en pause depuis trop longtemps (last_seen_at ≤ now − LAB_GRACE_PERIOD_DAYS)
-  │     → delete_namespaced_deployment + delete_namespaced_service (best-effort)
+  │     → suppression des Deployments, Services et Ingress par labels
+  │       (managed-by, user-id, stack-name/app)
   │     → deployments.status = "deleted" / deployments.deleted_at = now   (soft delete)
   │     → log: deployment_auto_deleted_grace_expired
   │
@@ -117,6 +119,23 @@ et le cycle suivant reprend normalement.
 > Après le passage en `paused`, le champ `last_seen_at` est mis à jour pour
 > démarrer l'horloge de la grace period. Le lab est définitivement supprimé de
 > Kubernetes après `LAB_GRACE_PERIOD_DAYS` jours dans cet état.
+
+Les actions manuelles pause/reprise utilisent le même cycle : `pause` met la
+ligne DB en `paused`, `resume` la remet en `active`, en plus des changements
+appliqués dans Kubernetes.
+
+## Suppression des ressources Kubernetes
+
+La suppression d'un lab s'appuie sur les labels LabOnDemand plutôt que sur des
+noms reconstruits à la main. Pour une stack, le sélecteur principal est :
+
+```text
+managed-by=labondemand,user-id=<owner_id>,stack-name=<stack_name>
+```
+
+Pour un lab simple, le sélecteur utilise `app=<name>`. Les Deployments, Services
+et Ingress correspondants sont supprimés. Les PVC et Secrets sont conservés par
+défaut; ils ne sont supprimés que si l'appel API passe `delete_persistent=true`.
 
 ---
 

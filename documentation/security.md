@@ -53,6 +53,10 @@ en fallback plutôt que de bloquer toutes les connexions.
 | `SESSION_SAMESITE`     | Strict   | Protection CSRF                         |
 | `COOKIE_DOMAIN`        | (vide)   | Restreindre le cookie à un domaine      |
 
+Redis reste sur un réseau interne Docker/Kubernetes. Dans `compose.yaml`, le
+service Redis n'est pas publié sur l'hôte et utilise `REDIS_PASSWORD` via une
+URL du type `redis://:<password>@redis:6379/0`.
+
 ### Invalidation des sessions
 
 - **Au logout** : seule la session active est supprimée.
@@ -70,7 +74,7 @@ en fallback plutôt que de bloquer toutes les connexions.
 | Rôle    | Description                                                         |
 |---------|---------------------------------------------------------------------|
 | student | Utilisateur standard, quotas faibles, ne voit que ses propres labs |
-| teacher | Quotas plus élevés, peut voir les labs de ses étudiants             |
+| teacher | Quotas plus élevés, gère uniquement ses propres labs par défaut      |
 | admin   | Accès complet : CRUD utilisateurs, templates, runtime configs, quotas |
 
 ### Enforcement
@@ -81,6 +85,10 @@ dans `security.py` sont injectées sur chaque endpoint.
 L'isolation des ressources est également appliquée côté Kubernetes :
 - Namespace dédié par utilisateur (`labondemand-user-{id}`)
 - `ResourceQuota` et `LimitRange` par namespace selon le rôle
+- Labels obligatoires sur les ressources LabOnDemand : `managed-by=labondemand`,
+  `user-id=<id>`, `app-type=<type>`, et `stack-name=<nom>` pour les stacks.
+- Les opérations sensibles sur un lab (détails, identifiants, terminal, pause,
+  reprise, suppression) vérifient que l'appelant est le propriétaire ou un admin.
 
 ### Quotas applicatifs par rôle
 
@@ -160,6 +168,20 @@ Les mots de passe de base de données (MySQL, MariaDB, WordPress) sont généré
 aléatoirement avec `secrets.token_urlsafe()` à chaque déploiement et stockés
 dans des Secrets Kubernetes (type Opaque). Ils ne sont **jamais loggés**.
 
+Le `kubeconfig.yaml` local est un secret opérationnel. Il doit rester hors
+versioning, être monté en lecture seule en développement, et être remplacé en
+production par une configuration in-cluster ou un service account à droits
+minimaux.
+
+---
+
+## CORS et proxy HTTP
+
+Les origines autorisées sont configurées côté FastAPI via `CORS_ORIGINS`.
+Le proxy Nginx relaie les requêtes API sans refléter arbitrairement l'en-tête
+`Origin` avec des cookies. Toute nouvelle origine frontend doit être ajoutée
+explicitement à la configuration applicative.
+
 ---
 
 ## Protection anti-CSRF (OIDC)
@@ -203,7 +225,9 @@ Toutes les actions sensibles sont tracées dans `logs/audit.log` :
 - [ ] `SESSION_SAMESITE=Strict`
 - [ ] `DEBUG_MODE=False`
 - [ ] `ADMIN_DEFAULT_PASSWORD` changé dès le premier démarrage
-- [ ] Redis non accessible publiquement (réseau interne Docker/K8s uniquement)
+- [ ] Redis non accessible publiquement et protégé par `REDIS_PASSWORD`
+- [ ] `CORS_ORIGINS` limité aux domaines frontend attendus
+- [ ] `kubeconfig.yaml` local non versionné, droits restreints, rotation effectuée si exposé
 - [ ] `OIDC_CLIENT_SECRET` dans un secret K8s ou fichier `.env` non versionné
 - [ ] Logs montés sur un volume persistant et monitorés
 - [ ] Rotation des logs activée (`LOG_MAX_BYTES`, `LOG_BACKUP_COUNT`)

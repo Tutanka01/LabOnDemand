@@ -278,59 +278,23 @@ async def get_deployment_details(
         core_v1 = client.CoreV1Api()
         networking_v1 = client.NetworkingV1Api()
 
-        # Résoudre le déploiement avec fallbacks
-        try:
-            deployment = apps_v1.read_namespaced_deployment(name, namespace)
-        except client.exceptions.ApiException:
-            label_selector = (
-                f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
-            )
-            lst = apps_v1.list_namespaced_deployment(
-                namespace, label_selector=label_selector
-            )
-            if lst.items:
-                wp = [
-                    d
-                    for d in lst.items
-                    if (d.metadata.labels or {}).get("component") == "wordpress"
-                ]
-                deployment = wp[0] if wp else lst.items[0]
-                name = deployment.metadata.name
-            else:
-                lst2 = apps_v1.list_namespaced_deployment(
-                    namespace, label_selector=f"app={name}"
-                )
-                if lst2.items:
-                    deployment = lst2.items[0]
-                    name = deployment.metadata.name
-                else:
-                    raise HTTPException(
-                        status_code=404, detail="Déploiement non trouvé"
-                    )
-
-        if current_user.role == UserRole.student:
-            labels = deployment.metadata.labels or {}
-            owner_id = labels.get("user-id")
-            if owner_id != str(current_user.id):
-                raise HTTPException(
-                    status_code=403, detail="Accès refusé à ce déploiement"
-                )
-
+        resolved = deployment_service._resolve_target_deployments(
+            namespace, name, current_user
+        )
+        component_deployments = resolved["deployments"]
+        preferred = [
+            d
+            for d in component_deployments
+            if (d.metadata.labels or {}).get("component") in {"wordpress", "web"}
+        ]
+        deployment = preferred[0] if preferred else component_deployments[0]
+        name = deployment.metadata.name
         dep_labels = deployment.metadata.labels or {}
-        stack_name = dep_labels.get("stack-name")
-
-        component_deployments: List[client.V1Deployment] = []
-        if stack_name:
-            try:
-                comp_list = apps_v1.list_namespaced_deployment(
-                    namespace,
-                    label_selector=f"managed-by=labondemand,stack-name={stack_name}",
-                )
-                component_deployments = comp_list.items or []
-            except Exception:
-                component_deployments = []
-        if not component_deployments:
-            component_deployments = [deployment]
+        stack_name = resolved["stack_name"] or dep_labels.get("stack-name")
+        owner_id = dep_labels.get("user-id")
+        owner_selector = (
+            "" if current_user.role == UserRole.admin else f",user-id={owner_id}"
+        )
 
         lifecycle_components = [
             deployment_service.describe_component_lifecycle(dep)
@@ -341,19 +305,23 @@ async def get_deployment_details(
         if stack_name:
             pods = core_v1.list_namespaced_pod(
                 namespace,
-                label_selector=f"managed-by=labondemand,stack-name={stack_name}",
+                label_selector=f"managed-by=labondemand,stack-name={stack_name}{owner_selector}",
             )
         else:
-            pods = core_v1.list_namespaced_pod(namespace, label_selector=f"app={name}")
+            pods = core_v1.list_namespaced_pod(
+                namespace,
+                label_selector=f"managed-by=labondemand,app={name}{owner_selector}",
+            )
 
         if stack_name:
             services = core_v1.list_namespaced_service(
                 namespace,
-                label_selector=f"managed-by=labondemand,stack-name={stack_name}",
+                label_selector=f"managed-by=labondemand,stack-name={stack_name}{owner_selector}",
             )
         else:
             services = core_v1.list_namespaced_service(
-                namespace, label_selector=f"app={name}"
+                namespace,
+                label_selector=f"managed-by=labondemand,app={name}{owner_selector}",
             )
 
         # Build node IP cache
@@ -479,9 +447,11 @@ async def get_deployment_details(
         ingress_access_entries: List[Dict[str, Any]] = []
         try:
             if stack_name:
-                ingress_selector = f"managed-by=labondemand,stack-name={stack_name}"
+                ingress_selector = (
+                    f"managed-by=labondemand,stack-name={stack_name}{owner_selector}"
+                )
             else:
-                ingress_selector = f"managed-by=labondemand,app={name}"
+                ingress_selector = f"managed-by=labondemand,app={name}{owner_selector}"
             ingress_list = networking_v1.list_namespaced_ingress(
                 namespace, label_selector=ingress_selector
             )
@@ -687,44 +657,26 @@ async def get_deployment_credentials(
     name = validate_k8s_name(name)
 
     try:
-        apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
 
         requested_name = name
-        try:
-            deployment = apps_v1.read_namespaced_deployment(name, namespace)
-        except client.exceptions.ApiException as e:
-            if e.status == 404:
-                label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
-                lst = apps_v1.list_namespaced_deployment(
-                    namespace, label_selector=label_selector
-                )
-                if not lst.items:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="Application introuvable pour récupérer les identifiants",
-                    )
-                wp = [
-                    d
-                    for d in lst.items
-                    if (d.metadata.labels or {}).get("component") == "wordpress"
-                ]
-                deployment = wp[0] if wp else lst.items[0]
-            else:
-                raise
+        resolved = deployment_service._resolve_target_deployments(
+            namespace, name, current_user
+        )
+        deployment = resolved["deployments"][0]
         labels = deployment.metadata.labels or {}
         owner_id = labels.get("user-id")
         app_type = labels.get("app-type", "custom")
         stack_name = (
-            labels.get("stack-name") or requested_name or deployment.metadata.name
+            resolved["stack_name"]
+            or labels.get("stack-name")
+            or requested_name
+            or deployment.metadata.name
         )
 
-        if current_user.role == UserRole.student and owner_id != str(current_user.id):
-            raise HTTPException(
-                status_code=403, detail="Accès refusé à ces identifiants"
-            )
-
         selector = f"managed-by=labondemand,stack-name={stack_name}"
+        if current_user.role != UserRole.admin:
+            selector += f",user-id={owner_id}"
         secrets_list = core_v1.list_namespaced_secret(
             namespace, label_selector=selector
         )
@@ -1007,9 +959,8 @@ async def delete_deployment(
     namespace: str,
     name: str,
     delete_service: bool = True,
-    delete_persistent: bool = True,
+    delete_persistent: bool = False,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
     """Supprimer un déploiement et son service."""
     namespace = validate_k8s_name(namespace)
@@ -1029,292 +980,30 @@ async def delete_deployment(
     )
 
     try:
-        apps_v1 = client.AppsV1Api()
-        core_v1 = client.CoreV1Api()
-        networking_v1 = client.NetworkingV1Api()
-
-        def delete_associated_ingress(service_name: str) -> None:
-            if not service_name.endswith("-service"):
-                return
-            ingress_name = f"{service_name[:-8]}-ingress"
-            try:
-                networking_v1.delete_namespaced_ingress(ingress_name, namespace)
-            except client.exceptions.ApiException as exc:
-                if exc.status != 404:
-                    raise
-            except Exception:
-                pass
-
-        # Resolve deployment
-        stack_mode = False
-        try:
-            dep = apps_v1.read_namespaced_deployment(name, namespace)
-        except client.exceptions.ApiException as e:
-            if e.status == 404:
-                try:
-                    if current_user.role == UserRole.student:
-                        label_selector = f"managed-by=labondemand,user-id={current_user.id},stack-name={name}"
-                    else:
-                        label_selector = f"managed-by=labondemand,stack-name={name}"
-                    lst = apps_v1.list_namespaced_deployment(
-                        namespace, label_selector=label_selector
-                    )
-                except Exception:
-                    lst = client.V1DeploymentList(items=[])
-                if lst and lst.items:
-                    wp = [
-                        d
-                        for d in lst.items
-                        if (d.metadata.labels or {}).get("component") == "wordpress"
-                    ]
-                    dep = wp[0] if wp else lst.items[0]
-                    stack_mode = True
-                    name = dep.metadata.name
-                else:
-                    lst2 = apps_v1.list_namespaced_deployment(
-                        namespace, label_selector=f"app={name}"
-                    )
-                    if lst2.items:
-                        dep = lst2.items[0]
-                        name = dep.metadata.name
-                    else:
-                        raise HTTPException(
-                            status_code=404, detail="Déploiement non trouvé"
-                        )
-            else:
-                raise
-
-        labels = dep.metadata.labels or {}
-        app_type = labels.get("app-type", "custom")
-
-        if current_user.role == UserRole.student:
-            owner_id = labels.get("user-id")
-            managed = labels.get("managed-by")
-            if owner_id != str(current_user.id) or managed != "labondemand":
-                raise HTTPException(
-                    status_code=403, detail="Accès refusé à ce déploiement"
-                )
-
-        deleted = []
-
-        if app_type == "wordpress" or (
-            stack_mode
-            and (
-                labels.get("app-type") == "wordpress"
-                or labels.get("component") == "wordpress"
-            )
-        ):
-            stack_name = labels.get("stack-name") or name
-            wp_name = stack_name
-            db_name = f"{stack_name}-mariadb"
-
-            for dep_name in [wp_name, db_name]:
-                try:
-                    apps_v1.delete_namespaced_deployment(dep_name, namespace)
-                    deleted.append(dep_name)
-                except client.exceptions.ApiException as e:
-                    if e.status != 404:
-                        raise
-
-            if delete_service:
-                for svc_name in [f"{wp_name}-service", f"{db_name}-service"]:
-                    try:
-                        core_v1.delete_namespaced_service(svc_name, namespace)
-                    except client.exceptions.ApiException as exc:
-                        if exc.status != 404:
-                            raise
-                    delete_associated_ingress(svc_name)
-
-            if delete_persistent:
-                try:
-                    core_v1.delete_namespaced_persistent_volume_claim(
-                        f"{db_name}-pvc", namespace
-                    )
-                except client.exceptions.ApiException:
-                    pass
-                try:
-                    core_v1.delete_namespaced_secret(f"{stack_name}-secret", namespace)
-                except client.exceptions.ApiException:
-                    pass
-
-            audit_logger.info(
-                "deployment_deleted",
-                extra={
-                    "extra_fields": {
-                        "namespace": namespace,
-                        "name": stack_name,
-                        "user_id": getattr(current_user, "id", None),
-                        "deployment_type": "wordpress",
-                        "components_deleted": deleted,
-                        "delete_service": delete_service,
-                        "delete_persistent": delete_persistent,
-                    }
-                },
-            )
-            # Soft delete en base pour garder l'historique
-            _soft_delete_deployment(db, current_user.id, stack_name)
-            return {
-                "message": f"Stack WordPress '{stack_name}' supprimée: {', '.join(deleted)}"
-            }
-
-        elif (
-            app_type == "mysql"
-            or stack_mode
-            and (
-                labels.get("app-type") == "mysql"
-                or labels.get("component") in {"database", "phpmyadmin"}
-            )
-        ):
-            stack_name = labels.get("stack-name") or name
-            db_name = f"{stack_name}-mysql"
-            pma_name = f"{stack_name}-phpmyadmin"
-
-            for dep_name in [db_name, pma_name]:
-                try:
-                    apps_v1.delete_namespaced_deployment(dep_name, namespace)
-                    deleted.append(dep_name)
-                except client.exceptions.ApiException as e:
-                    if e.status != 404:
-                        raise
-
-            if delete_service:
-                for svc_name in [f"{db_name}-service", f"{pma_name}-service"]:
-                    try:
-                        core_v1.delete_namespaced_service(svc_name, namespace)
-                    except client.exceptions.ApiException as exc:
-                        if exc.status != 404:
-                            raise
-                    delete_associated_ingress(svc_name)
-
-            if delete_persistent:
-                try:
-                    core_v1.delete_namespaced_persistent_volume_claim(
-                        f"{db_name}-pvc", namespace
-                    )
-                except client.exceptions.ApiException:
-                    pass
-                try:
-                    core_v1.delete_namespaced_secret(
-                        f"{stack_name}-db-secret", namespace
-                    )
-                except client.exceptions.ApiException:
-                    pass
-
-            audit_logger.info(
-                "deployment_deleted",
-                extra={
-                    "extra_fields": {
-                        "namespace": namespace,
-                        "name": stack_name,
-                        "user_id": getattr(current_user, "id", None),
-                        "deployment_type": "mysql",
-                        "components_deleted": deleted,
-                        "delete_service": delete_service,
-                        "delete_persistent": delete_persistent,
-                    }
-                },
-            )
-            # Soft delete en base pour garder l'historique
-            _soft_delete_deployment(db, current_user.id, stack_name)
-            return {
-                "message": f"Stack MySQL/phpMyAdmin '{stack_name}' supprimée: {', '.join(deleted)}"
-            }
-
-        elif app_type == "lamp" or stack_mode and labels.get("app-type") == "lamp":
-            stack_name = labels.get("stack-name") or name
-            web_name = f"{stack_name}-web"
-            db_name = f"{stack_name}-mysql"
-            pma_name = f"{stack_name}-phpmyadmin"
-
-            for dep_name in [web_name, db_name, pma_name]:
-                try:
-                    apps_v1.delete_namespaced_deployment(dep_name, namespace)
-                    deleted.append(dep_name)
-                except client.exceptions.ApiException as e:
-                    if e.status != 404:
-                        raise
-
-            if delete_service:
-                for svc_name in [
-                    f"{web_name}-service",
-                    f"{db_name}-service",
-                    f"{pma_name}-service",
-                ]:
-                    try:
-                        core_v1.delete_namespaced_service(svc_name, namespace)
-                    except client.exceptions.ApiException as exc:
-                        if exc.status != 404:
-                            raise
-                    delete_associated_ingress(svc_name)
-
-            if delete_persistent:
-                try:
-                    core_v1.delete_namespaced_persistent_volume_claim(
-                        f"{db_name}-pvc", namespace
-                    )
-                except client.exceptions.ApiException:
-                    pass
-                try:
-                    core_v1.delete_namespaced_secret(
-                        f"{stack_name}-db-secret", namespace
-                    )
-                except client.exceptions.ApiException:
-                    pass
-
-            audit_logger.info(
-                "deployment_deleted",
-                extra={
-                    "extra_fields": {
-                        "namespace": namespace,
-                        "name": stack_name,
-                        "user_id": getattr(current_user, "id", None),
-                        "deployment_type": "lamp",
-                        "components_deleted": deleted,
-                        "delete_service": delete_service,
-                        "delete_persistent": delete_persistent,
-                    }
-                },
-            )
-            # Soft delete en base pour garder l'historique
-            _soft_delete_deployment(db, current_user.id, stack_name)
-            return {
-                "message": f"Stack LAMP '{stack_name}' supprimée: {', '.join(deleted)}"
-            }
-
-        else:
-            apps_v1.delete_namespaced_deployment(name, namespace)
-            if delete_service:
-                try:
-                    core_v1.delete_namespaced_service(f"{name}-service", namespace)
-                except client.exceptions.ApiException as exc:
-                    if exc.status != 404:
-                        raise
-                delete_associated_ingress(f"{name}-service")
-            if delete_persistent:
-                try:
-                    core_v1.delete_namespaced_persistent_volume_claim(
-                        f"{name}-pvc", namespace
-                    )
-                except client.exceptions.ApiException:
-                    pass
-                try:
-                    core_v1.delete_namespaced_secret(f"{name}-secret", namespace)
-                except client.exceptions.ApiException:
-                    pass
-            audit_logger.info(
-                "deployment_deleted",
-                extra={
-                    "extra_fields": {
-                        "namespace": namespace,
-                        "name": name,
-                        "user_id": getattr(current_user, "id", None),
-                        "deployment_type": labels.get("app-type", "custom"),
-                        "delete_service": delete_service,
-                        "delete_persistent": delete_persistent,
-                    }
-                },
-            )
-            _soft_delete_deployment(db, current_user.id, name)
-            return {"message": f"Déploiement {name} supprimé du namespace {namespace}"}
+        result = deployment_service.delete_labondemand_resources(
+            namespace=namespace,
+            name=name,
+            current_user=current_user,
+            delete_services=delete_service,
+            delete_persistent=delete_persistent,
+        )
+        audit_logger.info(
+            "deployment_deleted",
+            extra={
+                "extra_fields": {
+                    "namespace": namespace,
+                    "name": result["name"],
+                    "user_id": getattr(current_user, "id", None),
+                    "deployment_type": result["deployment_type"],
+                    "delete_service": delete_service,
+                    "delete_persistent": delete_persistent,
+                    "deleted": result["deleted"],
+                }
+            },
+        )
+        return {
+            "message": f"Application '{result['name']}' supprimée du namespace {namespace}",
+            "deleted": result["deleted"],
+        }
     except Exception as e:
         raise_k8s_http(e)

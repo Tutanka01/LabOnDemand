@@ -126,6 +126,43 @@ async def test_delete_deployment(admin_client, mock_k8s):
     assert r.status_code in (200, 404)
 
 
+async def test_delete_deployment_soft_delete_does_not_break_logging(
+    admin_client, db, mock_k8s, admin_user
+):
+    from backend.models import Deployment
+
+    db.add(
+        Deployment(
+            user_id=admin_user.id,
+            name="juju",
+            deployment_type="jupyter",
+            namespace=f"labondemand-user-{admin_user.id}",
+            status="active",
+        )
+    )
+    db.commit()
+
+    dep = MagicMock()
+    dep.metadata.name = "juju"
+    dep.metadata.labels = {
+        "managed-by": "labondemand",
+        "user-id": str(admin_user.id),
+        "app-type": "jupyter",
+    }
+    mock_k8s["apps"].read_namespaced_deployment.return_value = dep
+    mock_k8s["apps"].delete_namespaced_deployment.return_value = MagicMock()
+
+    r = await admin_client.delete(
+        f"/api/v1/k8s/deployments/labondemand-user-{admin_user.id}/juju",
+        params={"delete_service": "true"},
+    )
+
+    assert r.status_code == 200
+    deployment = db.query(Deployment).filter_by(name="juju").one()
+    assert deployment.status == "deleted"
+    assert deployment.deleted_at is not None
+
+
 async def test_delete_deployment_student_forbidden_other(
     student_client, admin_user, mock_k8s
 ):

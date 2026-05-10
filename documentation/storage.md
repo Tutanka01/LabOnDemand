@@ -77,7 +77,9 @@ exit
 - Pour réutiliser un volume, choisir le PVC dans le formulaire de création (dropdown) ou laisser vide pour en créer un nouveau.
 - Suppression :
   - Via l'UI, un volume `Bound` demande une confirmation explicite.
-  - Lors de la suppression d'une stack WordPress/LAMP, le paramètre `delete_persistent=false` permet de conserver DB + volume web.
+  - Lors de la suppression d'une stack WordPress/LAMP, `delete_persistent=false`
+    est le défaut : les PVC et Secrets sont conservés. Passez
+    `delete_persistent=true` pour les supprimer explicitement.
 
 ## 4. Bonnes pratiques
 
@@ -93,6 +95,6 @@ exit
 | PVC bloqué en `Pending` | StorageClass inexistante, quota atteint ou nœuds sans volume local libre |
 | L'UI n'affiche aucun volume | Rafraîchir la carte; vérifier que les PVC ont les labels `managed-by=labondemand`/`user-id` |
 | Données volatiles après redémarrage | Pas de StorageClass par défaut → fallback `emptyDir` |
-| Message `AlreadyExists` sur Secret ou PVC | Stack supprimée partiellement; effacer les ressources restantes ou passer `delete_persistent=false` |
+| Message `AlreadyExists` sur Secret ou PVC | Une ressource persistante conservée existe déjà; la réutiliser, l'effacer explicitement ou supprimer avec `delete_persistent=true` |
 
 Pour la configuration du provisioner (local-path, NFS, Longhorn, rook-ceph...) reportez-vous au guide de votre storage provider. LabOnDemand fonctionne tant que Kubernetes peut satisfaire les `PersistentVolumeClaim` standards.
