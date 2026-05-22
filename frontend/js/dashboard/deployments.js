@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js';
+import { escapeHtml, renderIcon } from './utils.js';
 
 export function createDeploymentsModule({
     API_V1,
@@ -153,12 +153,12 @@ export function createDeploymentsModule({
             const html = `
                 <div class="list-group">
                     ${namespaces.map(ns => {
-                        let icon = 'fa-project-diagram';
+                        let icon = 'fa-solid fa-project-diagram';
                         let badge = '';
                         if (ns.includes('jupyter')) { icon = 'fa-brands fa-python'; badge = '<span class="namespace-type jupyter">Jupyter</span>'; }
                         else if (ns.includes('vscode')) { icon = 'fa-solid fa-code'; badge = '<span class="namespace-type vscode">VSCode</span>'; }
                         else if (ns.includes('custom')) { icon = 'fa-solid fa-cube'; badge = '<span class="namespace-type custom">Custom</span>'; }
-                        return `<div class="list-group-item"><i class="fas ${icon}"></i> ${ns} ${badge}</div>`;
+                        return `<div class="list-group-item">${renderIcon(icon)} ${ns} ${badge}</div>`;
                     }).join('')}
                 </div>`;
             listEl.innerHTML = html;
@@ -290,7 +290,7 @@ export function createDeploymentsModule({
                     </thead>
                     <tbody>
                         ${deployments.map(dep => {
-                            let icon = 'fa-layer-group';
+                            let icon = 'fa-solid fa-layer-group';
                             let typeBadge = '';
                             switch (dep.type) {
                                 case 'jupyter':
@@ -319,7 +319,7 @@ export function createDeploymentsModule({
 
                             return `
                                 <tr>
-                                    <td><i class="fas ${icon}"></i> ${dep.name}</td>
+                                    <td>${renderIcon(icon)} ${dep.name}</td>
                                     <td>${dep.namespace}</td>
                                     <td>${typeBadge}</td>
                                     <td>${lifecycleBadge}</td>
@@ -1088,7 +1088,7 @@ export function createDeploymentsModule({
         const ttlHtml = buildTtlBadge(labDetails.expiresAt, labDetails.id, isPaused);
 
         card.innerHTML = `
-            <h3><i class="${labDetails.icon}"></i> ${labDetails.name} ${statusIndicator}</h3>
+            <h3>${renderIcon(labDetails.icon)} ${labDetails.name} ${statusIndicator}</h3>
             <div class="lab-subtitle">
                 <span class="id-badge"><i class="fas fa-tag"></i>${labDetails.id}</span>
             </div>

@@ -5,7 +5,7 @@ import { createNovncModule } from './js/dashboard/novnc.js';
 import { createStatusView } from './js/dashboard/statusView.js';
 import { createResourceModule } from './js/dashboard/resources.js';
 import { createDeploymentsModule } from './js/dashboard/deployments.js';
-import { escapeAttr, escapeHtml } from './js/dashboard/utils.js';
+import { escapeAttr, escapeHtml, renderIcon } from './js/dashboard/utils.js';
 
 function createDashboardApp() {
     const API_V1 = '/api/v1';
@@ -374,7 +374,7 @@ function createDashboardApp() {
         }
         const tipsHtml = info.tips.map(tip => `<li><i class="fas fa-check"></i> ${tip}</li>`).join('');
         serviceGuidanceBox.innerHTML = `
-            <h4><i class="fas ${info.icon}"></i> ${info.title}</h4>
+            <h4>${renderIcon(info.icon)} ${info.title}</h4>
             <p>${info.description}</p>
             <ul>${tipsHtml}</ul>
         `;
@@ -594,13 +594,7 @@ function createDashboardApp() {
 
                 serviceCatalog.innerHTML = matches.map(t => {
                     const rawIcon = (t.icon || '').trim();
-                    const isFA = /^fa[srbl]?(?: fa-[a-z0-9-]+)+$/i.test(rawIcon);
-                    const faClass = isFA ? escapeAttr(rawIcon) : 'fa-solid fa-cube';
-                    const iconInner = isFA
-                        ? `<i class="${faClass} service-icon" aria-hidden="true"></i>`
-                        : (rawIcon
-                            ? `<span class="emoji-icon service-icon" role="img" aria-label="icône">${escapeHtml(rawIcon)}</span>`
-                            : `<i class="fa-solid fa-cube service-icon" aria-hidden="true"></i>`);
+                    const iconInner = renderIcon(rawIcon, 'service-icon');
                     const iconHtml = `<div class="service-icon-wrap">${iconInner}</div>`;
                     const title = t.name || t.id;
                     const desc = t.description || '';
@@ -1153,7 +1147,7 @@ function createDashboardApp() {
                             const detailsData = await detailsResponse.json();
                             
                             // Déterminer l'icône et le nom du service selon le type
-                            let serviceIcon = "fa-cube"; // Icône par défaut
+                            let serviceIcon = "fa-solid fa-cube"; // Icône par défaut
                             let serviceName = "Lab"; // Nom par défaut
                             
                             if (deployment.type === "jupyter") {
