@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { User } from "../../types/api";
-import { enrollStudents, importStudentsCsv, searchStudents } from "../../lib/api";
+import { createAndEnrollStudent, enrollStudents, importStudentsCsv, searchStudents } from "../../lib/api";
 import { Button, ErrorState, IconButton, LoadingState, showToast } from "../ui";
 
 interface AddStudentDialogProps {
@@ -21,8 +21,9 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
   const [results, setResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [mode, setMode] = useState<"search" | "csv">("search");
+  const [mode, setMode] = useState<"search" | "create" | "csv">("search");
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [newStudent, setNewStudent] = useState({ username: "", email: "", full_name: "", password: "" });
 
   const enrollMutation = useMutation({
     mutationFn: (userIds: number[]) => enrollStudents(classroomId, userIds),
@@ -44,12 +45,23 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
     },
   });
 
+  const createMutation = useMutation({
+    mutationFn: () => createAndEnrollStudent(classroomId, newStudent),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["classroom-students", classroomId] });
+      showToast("Compte etudiant cree et inscrit", "success");
+      onOpenChange(false);
+      reset();
+    },
+  });
+
   const reset = () => {
     setQuery("");
     setResults([]);
     setSelected(new Set());
     setMode("search");
     setCsvFile(null);
+    setNewStudent({ username: "", email: "", full_name: "", password: "" });
   };
 
   const doSearch = async () => {
@@ -89,6 +101,9 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
           <div className="actions-row mb-3.5">
             <Button variant={mode === "search" ? "primary" : "default"} onClick={() => setMode("search")}>
               <Search size={16} /> Rechercher
+            </Button>
+            <Button variant={mode === "create" ? "primary" : "default"} onClick={() => setMode("create")}>
+              <UserPlus size={16} /> Creer un compte
             </Button>
             <Button variant={mode === "csv" ? "primary" : "default"} onClick={() => setMode("csv")}>
               <Upload size={16} /> CSV
@@ -138,6 +153,59 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
                 <Button onClick={() => onOpenChange(false)}>Annuler</Button>
                 <Button variant="primary" disabled={selected.size === 0 || enrollMutation.isPending} onClick={() => enrollMutation.mutate([...selected])}>
                   {enrollMutation.isPending ? "Inscription..." : `Inscrire ${selected.size} etudiant(s)`}
+                </Button>
+              </div>
+            </div>
+          ) : mode === "create" ? (
+            <div className="form-grid">
+              <div className="field">
+                <label htmlFor="new-student-username">Nom d'utilisateur</label>
+                <input
+                  id="new-student-username"
+                  value={newStudent.username}
+                  onChange={(e) => setNewStudent((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="jean.dupont"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="new-student-email">Email</label>
+                <input
+                  id="new-student-email"
+                  type="email"
+                  value={newStudent.email}
+                  onChange={(e) => setNewStudent((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="jean.dupont@univ.fr"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="new-student-name">Nom complet</label>
+                <input
+                  id="new-student-name"
+                  value={newStudent.full_name}
+                  onChange={(e) => setNewStudent((prev) => ({ ...prev, full_name: e.target.value }))}
+                  placeholder="Jean Dupont"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="new-student-password">Mot de passe initial</label>
+                <input
+                  id="new-student-password"
+                  type="password"
+                  value={newStudent.password}
+                  onChange={(e) => setNewStudent((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="12 caracteres min."
+                />
+              </div>
+              <p className="muted field full">Le mot de passe doit contenir au moins 12 caracteres, une majuscule, une minuscule, un chiffre et un caractere special.</p>
+              {createMutation.error ? <ErrorState>{createMutation.error.message}</ErrorState> : null}
+              <div className="actions-row field full justify-end">
+                <Button onClick={() => setMode("search")}>Retour</Button>
+                <Button
+                  variant="primary"
+                  disabled={!newStudent.username || !newStudent.email || !newStudent.password || createMutation.isPending}
+                  onClick={() => createMutation.mutate()}
+                >
+                  {createMutation.isPending ? "Creation..." : "Creer et inscrire"}
                 </Button>
               </div>
             </div>

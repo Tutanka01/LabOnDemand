@@ -180,8 +180,8 @@ export function AuditLogViewer() {
                     <tr key={entry.id || i}>
                       <td>{fullDate(entry.timestamp)}</td>
                       <td>{levelBadge(entry.level)}</td>
-                      <td>{entry.event}</td>
-                      <td>{entry.category}</td>
+                      <td>{entry.event_label || entry.event || entry.message || "N/A"}</td>
+                      <td>{entry.category || "N/A"}</td>
                       <td>{entry.username || "N/A"}</td>
                       <td>
                         <Button onClick={() => setSelectedEntry(entry)}>
@@ -201,7 +201,7 @@ export function AuditLogViewer() {
       {selectedEntry ? (
         <section className="panel">
           <div className="section-head">
-            <h2>Detail: {selectedEntry.event}</h2>
+            <h2>Detail: {selectedEntry.event_label || selectedEntry.event || selectedEntry.message || "audit"}</h2>
             <Button onClick={() => setSelectedEntry(null)}>Fermer</Button>
           </div>
           <pre className="pre-wrap">

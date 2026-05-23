@@ -22,11 +22,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+import logging
 
 from ..config import settings
 from ..security import is_admin
 
 audit_router = APIRouter(prefix="/api/v1/audit-logs", tags=["audit"])
+logger = logging.getLogger("labondemand.audit_api")
 
 # ── Chemin de base du fichier audit.log ───────────────────────────────────────
 _LOG_DIR = Path(settings.LOG_DIR)
@@ -53,6 +55,7 @@ EVENT_LABELS: dict[str, str] = {
     "classroom_archived": "Classe archivée",
     "students_enrolled": "Étudiants inscrits",
     "students_imported_csv": "Import CSV étudiants",
+    "student_created_and_enrolled": "Compte étudiant créé et inscrit",
     "assignment_created": "Devoir créé",
     "assignment_deployed_bulk": "Devoir distribué",
 }
@@ -81,6 +84,7 @@ CATEGORIES: dict[str, list[str]] = {
         "classroom_archived",
         "students_enrolled",
         "students_imported_csv",
+        "student_created_and_enrolled",
         "assignment_created",
         "assignment_deployed_bulk",
     ],
@@ -101,10 +105,18 @@ def _iter_log_files() -> list[Path]:
     On les parcourt donc dans l'ordre décroissant du suffixe numérique.
     """
     files: list[Path] = []
+    if not _LOG_DIR.exists():
+        return files
 
     # Collecter les archives numérotées (audit.log.1, audit.log.2, …)
     rotated: list[tuple[int, Path]] = []
-    for candidate in _LOG_DIR.glob("audit.log.*"):
+    try:
+        candidates = list(_LOG_DIR.glob("audit.log.*"))
+    except OSError as exc:
+        logger.warning("audit_log_glob_failed", extra={"extra_fields": {"path": str(_LOG_DIR), "error": str(exc)}})
+        return files
+
+    for candidate in candidates:
         suffix = candidate.suffix.lstrip(".")
         if suffix.isdigit():
             rotated.append((int(suffix), candidate))
@@ -142,10 +154,7 @@ def _parse_file(path: Path) -> list[dict]:
                         }
                     )
     except OSError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Impossible de lire {path.name} : {exc}",
-        )
+        logger.warning("audit_log_read_failed", extra={"extra_fields": {"path": str(path), "error": str(exc)}})
     return entries
 
 
@@ -327,6 +336,7 @@ async def get_audit_stats():
         "total": len(entries),
         "files_read": len(log_files),
         "last_event_at": last_ts,
+        "by_event": by_event,
         "by_level": by_level,
         "by_category": by_category,
         "top_events": [
@@ -338,6 +348,7 @@ async def get_audit_stats():
             for ev, cnt in top_events
         ],
         "activity_7d": activity_7d,
+        "last_7_days": {item["date"]: item["count"] for item in activity_7d},
     }
 
 
@@ -402,6 +413,7 @@ async def list_audit_logs(
     enriched = []
     for e in page_entries:
         item = dict(e)
+        item["event"] = e.get("message", "")
         item["event_label"] = EVENT_LABELS.get(
             e.get("message", ""), e.get("message", "—")
         )

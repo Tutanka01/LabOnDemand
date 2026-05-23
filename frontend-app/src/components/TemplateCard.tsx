@@ -27,7 +27,7 @@ export function TemplateCard({ template, onSelect }: { template: Template; onSel
       </div>
       <div className="actions-row">
         <Button variant="primary" onClick={() => onSelect(template)}>
-          Configurer
+          Lancer
         </Button>
       </div>
     </article>

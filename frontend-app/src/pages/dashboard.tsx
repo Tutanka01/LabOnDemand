@@ -147,6 +147,19 @@ function Dashboard({ user }: { user: User }) {
               <LabCard
                 key={`${deployment.namespace}-${deployment.name}`}
                 deployment={deployment}
+                onOpen={async (item) => {
+                  try {
+                    const details = await getDeploymentDetails(item.namespace, item.name);
+                    const firstUrl = details.access_urls?.find((access) => access.url)?.url;
+                    if (firstUrl) {
+                      window.open(firstUrl, "_blank", "noopener,noreferrer");
+                      return;
+                    }
+                    showToast("Aucune URL disponible pour ce lab pour le moment.", "error");
+                  } catch {
+                    showToast("Impossible de recuperer l'URL du lab.", "error");
+                  }
+                }}
                 onDetails={setDetailsTarget}
                 onDelete={(item) => deleteMutation.mutate(item)}
                 onLifecycle={(item, action) => lifecycleMutation.mutate({ deployment: item, action })}
@@ -279,14 +292,7 @@ function Dashboard({ user }: { user: User }) {
           onCreated={async (created, name) => {
             setSelectedTemplate(null);
             await invalidateDashboard();
-            if (created.namespace) {
-              setDetailsTarget({
-                name,
-                namespace: created.namespace,
-                deployment_type: created.deployment_type || selectedTemplate.deployment_type || selectedTemplate.key || "custom",
-              });
-            }
-            showToast("Lab lance avec succes", "success");
+            showToast(`Deploiement de ${name} en cours. Le lab apparaitra pret des que Kubernetes aura termine.`, "info");
           }}
         />
       ) : null}

@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -46,6 +47,8 @@ from ..schemas import (
     StudentLabStatus,
 )
 from ..security import get_current_user, is_teacher_or_admin
+from ..security import get_password_hash, validate_password_strength
+from ..config import settings
 
 audit_logger = logging.getLogger("labondemand.audit")
 
@@ -68,6 +71,13 @@ _RAM_PRESETS = {
     "high": ("1024Mi", "2048Mi"),
     "very-high": ("2048Mi", "4096Mi"),
 }
+
+
+class StudentCreateAndEnrollRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_.-]+$")
+    email: EmailStr
+    full_name: Optional[str] = Field(None, max_length=120)
+    password: str = Field(..., min_length=12)
 
 
 def _preset_cpu(preset: Optional[str], kind: str) -> str:
@@ -279,6 +289,57 @@ def enroll_students(
     enrolled = sum(1 for r in results if r["status"] in ("enrolled", "re-enrolled"))
     audit_logger.info("students_enrolled", extra={"extra_fields": {"classroom_id": cid, "enrolled": enrolled}})
     return {"enrolled": enrolled, "results": results}
+
+
+@classrooms_router.post("/{cid}/students/create", status_code=201, dependencies=[Depends(is_teacher_or_admin)])
+def create_and_enroll_student(
+    cid: int,
+    payload: StudentCreateAndEnrollRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+
+    if settings.SSO_ENABLED:
+        raise HTTPException(status_code=403, detail="Creation locale des comptes desactivee car le SSO est active")
+    if not validate_password_strength(payload.password):
+        raise HTTPException(
+            status_code=400,
+            detail="Le mot de passe doit contenir au moins 12 caracteres, une majuscule, une minuscule, un chiffre et un caractere special.",
+        )
+    if db.query(User).filter(User.username == payload.username).first():
+        raise HTTPException(status_code=400, detail="Ce nom d'utilisateur est deja utilise")
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=400, detail="Cet email est deja utilise")
+
+    student = User(
+        username=payload.username,
+        email=str(payload.email),
+        full_name=payload.full_name,
+        hashed_password=get_password_hash(payload.password),
+        role=UserRole.student,
+        is_active=True,
+        auth_provider="local",
+    )
+    db.add(student)
+    db.flush()
+
+    enrollment = Enrollment(classroom_id=cid, user_id=student.id)
+    db.add(enrollment)
+    db.commit()
+    db.refresh(student)
+
+    audit_logger.info(
+        "student_created_and_enrolled",
+        extra={"extra_fields": {"classroom_id": cid, "user_id": student.id, "username": student.username}},
+    )
+    return {
+        "user_id": student.id,
+        "username": student.username,
+        "email": student.email,
+        "status": "created",
+    }
 
 
 @classrooms_router.post("/{cid}/students/import", status_code=200, dependencies=[Depends(is_teacher_or_admin)])

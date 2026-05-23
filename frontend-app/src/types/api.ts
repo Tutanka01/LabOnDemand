@@ -182,6 +182,14 @@ export interface PodInfo {
 
 export interface ClusterStats {
   nodes?: ClusterNode[];
+  cluster?: {
+    nodes?: number;
+    deployments?: number;
+    deployments_ready?: number;
+    lab_apps?: number;
+    pods?: number;
+    namespaces?: number;
+  };
   total_deployments?: number;
   ready_deployments?: number;
   total_lab_apps?: number;
@@ -191,13 +199,15 @@ export interface ClusterStats {
 
 export interface ClusterNode {
   name?: string;
-  roles?: string;
+  roles?: string | string[];
   kubelet_version?: string;
   pods?: number;
   cpu_usage_m?: number;
   cpu_allocatable_m?: number;
   mem_usage_mi?: number;
   mem_allocatable_mi?: number;
+  cpu?: { usage_m?: number; allocatable_m?: number; capacity_m?: number; usage_pct?: number };
+  memory?: { usage_mi?: number; allocatable_mi?: number; capacity_mi?: number; usage_pct?: number };
 }
 
 export interface Classroom {
@@ -294,6 +304,8 @@ export interface AuditLogEntry {
   id?: number;
   timestamp?: string;
   event?: string;
+  message?: string;
+  event_label?: string;
   category?: string;
   level?: string;
   username?: string;
@@ -307,6 +319,8 @@ export interface AuditLogStats {
   by_level?: Record<string, number>;
   by_category?: Record<string, number>;
   last_7_days?: Record<string, number>;
+  activity_7d?: Array<{ date: string; count: number }>;
+  top_events?: Array<{ event: string; label?: string; count: number }>;
 }
 
 export interface QuotaOverride {

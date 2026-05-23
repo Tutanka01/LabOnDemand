@@ -15,6 +15,7 @@ const nav = [
   { href: "admin.html", labelKey: "administration", icon: Shield, roles: ["admin"] },
   { href: "admin-stats.html", labelKey: "clusterStats", icon: BarChart3, roles: ["admin"] }
 ];
+const documentationHref = "documentation.html";
 
 export function AppShell({
   page,
@@ -84,7 +85,7 @@ export function AppShell({
         <header className="topbar">
           <SearchBox placeholder="Rechercher un lab, volume ou template" />
           <div className="top-actions">
-            <a className="icon-btn" href="documentation/README.md" title="Documentation">
+            <a className="icon-btn" href={documentationHref} target="_blank" rel="noreferrer" title="Documentation">
               <BookOpen size={17} />
             </a>
             <IconButton

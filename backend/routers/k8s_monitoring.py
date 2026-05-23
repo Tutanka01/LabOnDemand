@@ -157,6 +157,11 @@ async def get_cluster_stats(
                 "pods": pods_count,
                 "namespaces": namespaces_count,
             },
+            "total_deployments": deployments_count,
+            "ready_deployments": ready_deployments,
+            "total_lab_apps": lab_apps_count,
+            "total_pods": pods_count,
+            "total_namespaces": namespaces_count,
             "nodes": nodes_data,
         }
     except Exception as e:
@@ -167,6 +172,11 @@ async def get_cluster_stats(
         return {
             "k8s_available": False,
             "cluster": {"nodes": 0, "deployments": 0, "deployments_ready": 0, "lab_apps": 0, "pods": 0, "namespaces": 0},
+            "total_deployments": 0,
+            "ready_deployments": 0,
+            "total_lab_apps": 0,
+            "total_pods": 0,
+            "total_namespaces": 0,
             "nodes": []
         }
 

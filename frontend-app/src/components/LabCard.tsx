@@ -1,4 +1,4 @@
-import { ExternalLink, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
+import { ExternalLink, Info, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
 import { motion } from "motion/react";
 import type { Deployment } from "../types/api";
 import { ttl } from "../lib/format";
@@ -7,11 +7,13 @@ import { Button, ConfirmDialog, StatusBadge } from "./ui";
 
 export function LabCard({
   deployment,
+  onOpen,
   onDetails,
   onDelete,
   onLifecycle
 }: {
   deployment: Deployment;
+  onOpen: (deployment: Deployment) => void;
   onDetails: (deployment: Deployment) => void;
   onDelete: (deployment: Deployment) => void;
   onLifecycle: (deployment: Deployment, action: "pause" | "resume") => void;
@@ -45,9 +47,13 @@ export function LabCard({
       </div>
 
       <div className="actions-row">
-        <Button variant="primary" onClick={() => onDetails(deployment)}>
+        <Button variant="primary" disabled={!ready} onClick={() => onOpen(deployment)}>
           <ExternalLink size={16} />
-          Ouvrir
+          {ready ? "Ouvrir" : "En preparation"}
+        </Button>
+        <Button onClick={() => onDetails(deployment)}>
+          <Info size={16} />
+          Infos
         </Button>
         <Button onClick={() => onLifecycle(deployment, paused ? "resume" : "pause")}>
           {paused ? <PlayCircle size={16} /> : <PauseCircle size={16} />}

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Documentation - LabOnDemand</title>
+    <style>
+      body { margin: 0; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #171c1f; }
+      main { max-width: 920px; margin: 0 auto; padding: 36px 20px; }
+      h1 { margin: 0 0 8px; font-size: 2rem; }
+      p { color: #66717a; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 22px; }
+      a { display: block; padding: 14px 16px; border: 1px solid #dce3e4; border-radius: 8px; background: white; color: inherit; text-decoration: none; }
+      a:hover { border-color: #0f766e; }
+      strong { display: block; margin-bottom: 4px; }
+      span { color: #66717a; font-size: 0.92rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Documentation LabOnDemand</h1>
+      <p>Guides rapides integres. Cette page s'ouvre hors de l'application pour ne pas interrompre votre session.</p>
+      <div class="grid">
+        <a href="#admin"><strong>Administration</strong><span>Utilisateurs, templates et exploitation</span></a>
+        <a href="#troubleshooting"><strong>Depannage</strong><span>Erreurs frequentes et diagnostic</span></a>
+        <a href="#setup"><strong>Installation</strong><span>Configuration de la plateforme</span></a>
+        <a href="#lifecycle"><strong>Cycle de vie</strong><span>Pause, reprise, TTL et nettoyage</span></a>
+        <a href="#security"><strong>Securite</strong><span>Auth, sessions et bonnes pratiques</span></a>
+        <a href="#support"><strong>Support</strong><span>Elements a fournir pour un diagnostic</span></a>
+      </div>
+      <section id="admin">
+        <h2>Administration</h2>
+        <p>Utilisez la page Administration pour gerer les comptes, les templates, les runtimes et les labs actifs. Les templates actifs apparaissent dans le catalogue utilisateur.</p>
+      </section>
+      <section id="troubleshooting">
+        <h2>Depannage</h2>
+        <p>En cas d'erreur UI, actualisez la page puis verifiez l'onglet Audit et les logs API. Pour Kubernetes, controlez Stats cluster, Pods, Namespaces et Deployments.</p>
+      </section>
+      <section id="setup">
+        <h2>Installation</h2>
+        <p>Copiez le fichier .env.exemple vers .env, verifiez kubeconfig.yaml, puis lancez la pile avec docker compose up --build.</p>
+      </section>
+      <section id="lifecycle">
+        <h2>Cycle de vie des labs</h2>
+        <p>Un lab peut etre en preparation, pret, en pause ou supprime. Ouvrir lance directement l'URL de l'application; Infos affiche les details Kubernetes.</p>
+      </section>
+      <section id="security">
+        <h2>Securite</h2>
+        <p>Ne partagez pas de credentials, kubeconfigs ou fichiers .env. Les comptes locaux doivent utiliser un mot de passe fort.</p>
+      </section>
+      <section id="support">
+        <h2>Support</h2>
+        <p>Indiquez le compte, l'heure, le lab, le namespace et le message d'erreur. Les logs d'audit permettent de retrouver les actions recentes.</p>
+      </section>
+    </main>
+  </body>
+</html>
