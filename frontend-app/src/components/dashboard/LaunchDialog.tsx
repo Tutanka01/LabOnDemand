@@ -1,18 +1,18 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { createDeployment } from "../../lib/api";
-import { defaultRuntime, presetToResources } from "../../lib/format";
+import { createDeployment, getResourcePresets } from "../../lib/api";
+import { defaultRuntime } from "../../lib/format";
 import type { PvcInfo, Template } from "../../types/api";
-import { Button, ErrorState, FormField, IconButton } from "../ui";
+import { Button, ErrorState, FormField, IconButton, LoadingState } from "../ui";
 
 const launchSchema = z.object({
   name: z.string().min(3, "Nom trop court").regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, "Nom DNS Kubernetes invalide"),
-  cpu: z.enum(["very-low", "low", "medium", "high", "very-high"]),
-  ram: z.enum(["very-low", "low", "medium", "high", "very-high"]),
+  cpu: z.string().min(1),
+  ram: z.string().min(1),
   image: z.string().min(1, "Image requise"),
   replicas: z.number().min(1).max(5),
   serviceType: z.enum(["ClusterIP", "NodePort", "LoadBalancer"]),
@@ -34,19 +34,32 @@ export function LaunchDialog({
   pvcs: PvcInfo[];
   student: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: () => Promise<void>;
+  onCreated: (created: { namespace?: string; deployment_type?: string }, name: string) => Promise<void>;
 }) {
   const deploymentType = template.deployment_type || template.key || String(template.id || "custom");
   const runtime = defaultRuntime(deploymentType);
-  const createMutation = useMutation({ mutationFn: createDeployment, onSuccess: onCreated });
+  const presets = useQuery({ queryKey: ["resource-presets"], queryFn: getResourcePresets, staleTime: 300_000 });
+  const createMutation = useMutation({
+    mutationFn: createDeployment,
+    onSuccess: (created, variables) => onCreated(created, variables.name),
+  });
+  const cpuPresets = presets.data?.cpu?.length ? presets.data.cpu : [
+    { label: "0.25 vCPU", request: "250m", limit: "500m" },
+    { label: "0.5 vCPU", request: "500m", limit: "1000m" },
+  ];
+  const memoryPresets = presets.data?.memory?.length ? presets.data.memory : [
+    { label: "256 Mi", request: "256Mi", limit: "512Mi" },
+    { label: "512 Mi", request: "512Mi", limit: "1Gi" },
+  ];
+  const optionValue = (preset: { request: string; limit: string }) => `${preset.request}|${preset.limit}`;
 
   const suffix = Math.floor(Math.random() * 9000) + 1000;
   const form = useForm<LaunchForm>({
     resolver: zodResolver(launchSchema),
     defaultValues: {
       name: `${deploymentType}-${suffix}`.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
-      cpu: student && deploymentType === "vscode" ? "low" : "medium",
-      ram: "medium",
+      cpu: optionValue(cpuPresets[Math.min(student && deploymentType === "vscode" ? 0 : 1, cpuPresets.length - 1)]),
+      ram: optionValue(memoryPresets[Math.min(1, memoryPresets.length - 1)]),
       image: template.default_image || runtime.image,
       replicas: 1,
       serviceType: (template.default_service_type as LaunchForm["serviceType"]) || (runtime.serviceType as LaunchForm["serviceType"]),
@@ -57,7 +70,8 @@ export function LaunchDialog({
   });
 
   const submit = form.handleSubmit((values) => {
-    const resources = presetToResources(values.cpu, values.ram);
+    const [cpuRequest, cpuLimit] = values.cpu.split("|");
+    const [memoryRequest, memoryLimit] = values.ram.split("|");
     createMutation.mutate({
       name: values.name,
       image: values.image,
@@ -67,10 +81,10 @@ export function LaunchDialog({
       service_target_port: values.serviceTargetPort,
       service_type: values.serviceType,
       deployment_type: deploymentType,
-      cpu_request: resources.cpu.request,
-      cpu_limit: resources.cpu.limit,
-      memory_request: resources.memory.request,
-      memory_limit: resources.memory.limit,
+      cpu_request: cpuRequest,
+      cpu_limit: cpuLimit,
+      memory_request: memoryRequest,
+      memory_limit: memoryLimit,
       existing_pvc_name: values.existingPvcName || undefined,
     });
   });
@@ -100,21 +114,21 @@ export function LaunchDialog({
 
             <FormField label="CPU" full={false}>
               <select id="cpu" disabled={student} {...form.register("cpu")}>
-                <option value="very-low">0.1 vCPU</option>
-                <option value="low">0.25 vCPU</option>
-                <option value="medium">0.5 vCPU</option>
-                <option value="high">1 vCPU</option>
-                <option value="very-high">2 vCPU</option>
+                {cpuPresets.map((preset) => (
+                  <option value={optionValue(preset)} key={optionValue(preset)}>
+                    {preset.label} ({preset.request}/{preset.limit})
+                  </option>
+                ))}
               </select>
             </FormField>
 
             <FormField label="Memoire" full={false}>
               <select id="ram" disabled={student} {...form.register("ram")}>
-                <option value="very-low">128 Mi</option>
-                <option value="low">256 Mi</option>
-                <option value="medium">512 Mi</option>
-                <option value="high">1 Gi</option>
-                <option value="very-high">2 Gi</option>
+                {memoryPresets.map((preset) => (
+                  <option value={optionValue(preset)} key={optionValue(preset)}>
+                    {preset.label} ({preset.request}/{preset.limit})
+                  </option>
+                ))}
               </select>
             </FormField>
 
@@ -162,6 +176,7 @@ export function LaunchDialog({
               </FormField>
             ) : null}
 
+            {presets.isLoading ? <LoadingState label="Chargement des presets ressources" /> : null}
             {student ? <p className="muted field full">Les ressources CPU/RAM sont fixees par la politique etudiante.</p> : null}
             {createMutation.error ? <ErrorState>{createMutation.error.message}</ErrorState> : null}
             <div className="actions-row field full" style={{ justifyContent: "end" }}>

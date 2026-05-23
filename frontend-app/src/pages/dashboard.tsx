@@ -169,6 +169,14 @@ function Dashboard({ user }: { user: User }) {
               <ResourceMeter label="Applications" used={quotas.data.usage.apps_used} max={quotas.data.limits.max_apps} />
               <ResourceMeter label="CPU" used={quotas.data.usage.cpu_m_used} max={quotas.data.limits.max_requests_cpu_m} unit="m" />
               <ResourceMeter label="Memoire" used={quotas.data.usage.mem_mi_used} max={quotas.data.limits.max_requests_mem_mi} unit="Mi" />
+              {quotas.data.limits.max_storage_gi != null ? (
+                <ResourceMeter
+                  label="Stockage"
+                  used={quotas.data.usage.storage_gi_used || 0}
+                  max={quotas.data.limits.max_storage_gi}
+                  unit="Gi"
+                />
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -221,6 +229,9 @@ function Dashboard({ user }: { user: User }) {
                   <th>Volume</th>
                   <th>Etat</th>
                   <th>Capacite</th>
+                  <th>StorageClass</th>
+                  {isAdmin ? <th>Namespace</th> : null}
+                  <th>Acces</th>
                   <th>Dernier lab</th>
                   <th>Cree le</th>
                   <th>Actions</th>
@@ -232,10 +243,13 @@ function Dashboard({ user }: { user: User }) {
                     <td>{pvc.name}</td>
                     <td>
                       <span className={pvc.bound ? "badge amber" : "badge green"}>
-                        {pvc.phase || (pvc.bound ? "Bound" : "Libre")}
+                        {pvc.bound ? `${pvc.phase || "Bound"} - attache` : `${pvc.phase || "Libre"} - disponible`}
                       </span>
                     </td>
                     <td>{pvc.storage || "N/A"}</td>
+                    <td>{pvc.storage_class || "N/A"}</td>
+                    {isAdmin ? <td>{pvc.namespace || "N/A"}</td> : null}
+                    <td>{pvc.access_modes?.length ? pvc.access_modes.join(", ") : "N/A"}</td>
                     <td>{pvc.last_bound_app || pvc.app_type || "N/A"}</td>
                     <td>{shortDate(pvc.created_at)}</td>
                     <td>
@@ -262,9 +276,16 @@ function Dashboard({ user }: { user: User }) {
           pvcs={pvcItems}
           student={user.role === "student"}
           onOpenChange={(open) => !open && setSelectedTemplate(null)}
-          onCreated={async () => {
+          onCreated={async (created, name) => {
             setSelectedTemplate(null);
             await invalidateDashboard();
+            if (created.namespace) {
+              setDetailsTarget({
+                name,
+                namespace: created.namespace,
+                deployment_type: created.deployment_type || selectedTemplate.deployment_type || selectedTemplate.key || "custom",
+              });
+            }
             showToast("Lab lance avec succes", "success");
           }}
         />

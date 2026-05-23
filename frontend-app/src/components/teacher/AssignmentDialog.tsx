@@ -1,11 +1,11 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { Assignment, Template } from "../../types/api";
-import { createAssignment, updateAssignment } from "../../lib/api";
+import { createAssignment, getResourcePresets, updateAssignment } from "../../lib/api";
 import { presetLabel } from "../../lib/format";
 import { Button, ErrorState, IconButton, showToast } from "../ui";
 
@@ -35,6 +35,7 @@ export function AssignmentDialog({
 }) {
   const queryClient = useQueryClient();
   const isEdit = Boolean(assignment);
+  const resourcePresets = useQuery({ queryKey: ["resource-presets"], queryFn: getResourcePresets, staleTime: 300_000 });
 
   const form = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -74,7 +75,18 @@ export function AssignmentDialog({
   });
 
   const mutation = isEdit ? updateMut : createMut;
-  const presets = ["very-low", "low", "medium", "high", "very-high"];
+  const presetKeys = ["very-low", "low", "medium", "high", "very-high"] as const;
+  const cpuOptions = (resourcePresets.data?.cpu || []).map((preset, index) => ({
+    value: presetKeys[index] || "medium",
+    label: `${preset.label} (${preset.request}/${preset.limit})`,
+  }));
+  const ramOptions = (resourcePresets.data?.memory || []).map((preset, index) => ({
+    value: presetKeys[index] || "medium",
+    label: `${preset.label} (${preset.request}/${preset.limit})`,
+  }));
+  const fallbackOptions = presetKeys.map((p) => ({ value: p, label: presetLabel(p) }));
+  const effectiveCpuOptions = cpuOptions.length ? cpuOptions : fallbackOptions;
+  const effectiveRamOptions = ramOptions.length ? ramOptions : fallbackOptions;
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) form.reset(); }}>
@@ -110,16 +122,16 @@ export function AssignmentDialog({
             <div className="field">
               <label htmlFor="cpu_preset">CPU Preset</label>
               <select id="cpu_preset" {...form.register("cpu_preset")}>
-                {presets.map((p) => (
-                  <option key={p} value={p}>{presetLabel(p)}</option>
+                {effectiveCpuOptions.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
             </div>
             <div className="field">
               <label htmlFor="ram_preset">RAM Preset</label>
               <select id="ram_preset" {...form.register("ram_preset")}>
-                {presets.map((p) => (
-                  <option key={p} value={p}>{presetLabel(p)}</option>
+                {effectiveRamOptions.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
             </div>

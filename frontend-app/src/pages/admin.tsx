@@ -20,7 +20,7 @@ import {
   Users,
   Wrench,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell, PageHeader } from "../components/AppShell";
 import {
@@ -64,10 +64,13 @@ import { QueryProvider } from "../lib/query";
 
 function AdminPage() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState("users");
+  const initialTab = window.location.hash?.replace("#", "") || new URLSearchParams(window.location.search).get("tab") || "users";
+  const [tab, setTab] = useState(initialTab);
   const [userFilter, setUserFilter] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [authFilter, setAuthFilter] = useState("");
+  const [userPage, setUserPage] = useState(1);
+  const [userLimit, setUserLimit] = useState(25);
   const [showUserDialog, setShowUserDialog] = useState(false);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [quotaUser, setQuotaUser] = useState<User | null>(null);
@@ -78,13 +81,20 @@ function AdminPage() {
   const [editRuntime, setEditRuntime] = useState<RuntimeConfig | null>(null);
   const [labFilter, setLabFilter] = useState("");
   const [labStatusFilter, setLabStatusFilter] = useState("");
+  const [labTypeFilter, setLabTypeFilter] = useState("");
 
   const sso = useQuery({ queryKey: ["sso-status"], queryFn: getSsoStatus });
 
   const users = useQuery({
-    queryKey: ["users", { search: userFilter, role: roleFilter, auth_provider: authFilter }],
+    queryKey: ["users", { search: userFilter, role: roleFilter, auth_provider: authFilter, userPage, userLimit }],
     queryFn: () =>
-      getUsers({ search: userFilter || undefined, role: roleFilter || undefined, auth_provider: authFilter || undefined }),
+      getUsers({
+        search: userFilter || undefined,
+        role: (roleFilter as "admin" | "teacher" | "student") || undefined,
+        auth_provider: authFilter || undefined,
+        skip: (userPage - 1) * userLimit,
+        limit: userLimit,
+      }),
   });
 
   const templates = useQuery({ queryKey: ["templates-all"], queryFn: getAllTemplates });
@@ -120,21 +130,43 @@ function AdminPage() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["deployments-all"] }); showToast("Action executee", "success"); },
   });
 
+  useEffect(() => {
+    if (["users", "catalog", "runtimes", "labs", "audit"].includes(tab)) {
+      window.history.replaceState(null, "", `${window.location.pathname}#${tab}`);
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    setUserPage(1);
+  }, [userFilter, roleFilter, authFilter, userLimit]);
+
   const fleetStats = useMemo(() => {
     const items = labFleet.data || [];
     return {
       total: items.length,
       active: items.filter((d) => (d.ready_replicas || 0) > 0).length,
       paused: items.filter((d) => d.is_paused || d.lifecycle_summary?.state === "paused").length,
+      expired: items.filter((d) => d.expires_at && new Date(d.expires_at).getTime() <= Date.now()).length,
     };
   }, [labFleet.data]);
 
   const filteredFleet = useMemo(() => {
     const q = labFilter.toLowerCase();
+    const type = labTypeFilter.toLowerCase();
     return (labFleet.data || []).filter(
-      (d) => !q || d.name.toLowerCase().includes(q) || d.namespace.toLowerCase().includes(q),
+      (d) => {
+        const haystack = `${d.name} ${d.namespace} ${d.owner_username || ""} ${(d as Deployment & { owner_email?: string }).owner_email || ""}`.toLowerCase();
+        const deploymentType = (d.deployment_type || d.type || "").toLowerCase();
+        return (!q || haystack.includes(q)) && (!type || deploymentType === type);
+      },
     );
-  }, [labFleet.data, labFilter]);
+  }, [labFleet.data, labFilter, labTypeFilter]);
+
+  const labTypes = useMemo(() => {
+    return Array.from(new Set((labFleet.data || []).map((d) => d.deployment_type || d.type).filter(Boolean))).sort();
+  }, [labFleet.data]);
+
+  const userTotalPages = (users.data || []).length >= userLimit ? userPage + 1 : userPage;
 
   return (
     <>
@@ -173,6 +205,12 @@ function AdminPage() {
                 <option value="">Tous providers</option>
                 <option value="local">Local</option>
                 <option value="oidc">SSO</option>
+              </select>
+              <select value={userLimit} onChange={(e) => setUserLimit(Number(e.target.value))} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+                <option value={10}>10 / page</option>
+                <option value={25}>25 / page</option>
+                <option value={50}>50 / page</option>
+                <option value={100}>100 / page</option>
               </select>
             </div>
             {users.isLoading ? <LoadingState /> : null}
@@ -220,6 +258,7 @@ function AdminPage() {
                 </tbody>
               </table>
             </div>
+            <Pagination page={userPage} totalPages={userTotalPages} onChange={setUserPage} />
           </section>
         </TabContent>
 
@@ -342,21 +381,26 @@ function AdminPage() {
             <MetricCard label="Total" value={fleetStats.total} icon={<Boxes size={18} />} />
             <MetricCard label="Actifs" value={fleetStats.active} icon={<Activity size={18} />} />
             <MetricCard label="En pause" value={fleetStats.paused} icon={<PauseCircle size={18} />} />
+            <MetricCard label="Expires" value={fleetStats.expired} icon={<Activity size={18} />} />
           </section>
           <section className="panel" style={{ marginTop: 16 }}>
             <div className="section-head">
-              <h2>Fleet etudiant</h2>
+              <h2>Fleet etudiant ({filteredFleet.length}/{labFleet.data?.length || 0})</h2>
               <Button onClick={() => queryClient.invalidateQueries({ queryKey: ["deployments-all"] })}>
                 <RefreshCw size={16} /> Actualiser
               </Button>
             </div>
             <div className="actions-row" style={{ gap: 10, marginBottom: 12 }}>
-              <SearchBox placeholder="Rechercher..." value={labFilter} onChange={(e) => setLabFilter(e.target.value)} />
+              <SearchBox placeholder="Nom, namespace, proprietaire..." value={labFilter} onChange={(e) => setLabFilter(e.target.value)} />
               <select value={labStatusFilter} onChange={(e) => setLabStatusFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
                 <option value="">Tous</option>
                 <option value="active">Actifs</option>
                 <option value="paused">En pause</option>
                 <option value="expired">Expires</option>
+              </select>
+              <select value={labTypeFilter} onChange={(e) => setLabTypeFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+                <option value="">Tous types</option>
+                {labTypes.map((type) => <option value={type} key={type}>{type}</option>)}
               </select>
             </div>
             {labFleet.isLoading ? <LoadingState /> : null}

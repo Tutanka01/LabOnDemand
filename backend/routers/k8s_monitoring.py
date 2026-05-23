@@ -189,7 +189,14 @@ async def get_pods(current_user: User = Depends(get_current_user), _: bool = Dep
         v1 = client.CoreV1Api()
         ret = v1.list_pod_for_all_namespaces(watch=False)
         pods = [
-            {"name": pod.metadata.name, "namespace": pod.metadata.namespace, "ip": pod.status.pod_ip}
+            {
+                "name": pod.metadata.name,
+                "namespace": pod.metadata.namespace,
+                "ip": pod.status.pod_ip,
+                "status": pod.status.phase,
+                "phase": pod.status.phase,
+                "node_name": pod.spec.node_name,
+            }
             for pod in ret.items
         ]
         return {"pods": pods, "k8s_available": True}
@@ -345,7 +352,17 @@ async def get_pods_by_namespace(
     try:
         v1 = client.CoreV1Api()
         ret = v1.list_namespaced_pod(namespace, watch=False)
-        pods = [{"name": pod.metadata.name, "ip": pod.status.pod_ip} for pod in ret.items]
+        pods = [
+            {
+                "name": pod.metadata.name,
+                "namespace": pod.metadata.namespace,
+                "ip": pod.status.pod_ip,
+                "status": pod.status.phase,
+                "phase": pod.status.phase,
+                "node_name": pod.spec.node_name,
+            }
+            for pod in ret.items
+        ]
         return {"namespace": namespace, "pods": pods, "k8s_available": True}
     except Exception:
         return {"namespace": namespace, "pods": [], "k8s_available": False}

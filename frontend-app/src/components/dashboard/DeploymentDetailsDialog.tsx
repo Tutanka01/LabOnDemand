@@ -24,6 +24,11 @@ export function DeploymentDetailsDialog({
     queryKey: ["deployment-details", deployment.namespace, deployment.name],
     queryFn: () => getDeploymentDetails(deployment.namespace, deployment.name),
     staleTime: 10_000,
+    refetchInterval: (query) => {
+      const state = query.state.data?.lifecycle?.state;
+      const ready = (query.state.data?.deployment.available_replicas || 0) > 0;
+      return ready || state === "deleted" || state === "expired" ? false : 5000;
+    },
   });
 
   const credentials = useQuery({
@@ -61,6 +66,7 @@ export function DeploymentDetailsDialog({
                 <StatusBadge state={details.data.lifecycle?.state} />
                 <span className="badge">{details.data.deployment.available_replicas || 0} replicas dispo.</span>
                 <span className="badge">TTL {ttl(deployment.expires_at)}</span>
+                {!details.data.deployment.available_replicas ? <span className="badge blue">Preparation du lab</span> : null}
               </div>
 
               <div>

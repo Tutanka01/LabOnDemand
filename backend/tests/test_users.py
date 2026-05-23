@@ -51,6 +51,37 @@ async def test_list_users_pagination(admin_client, db):
     assert len(r.json()) <= 2
 
 
+async def test_list_users_filters(admin_client, db):
+    """Admin user list filters must match the frontend search controls."""
+    from backend.models import User, UserRole
+    from backend.security import get_password_hash
+
+    db.add(User(
+        username="filter-local-student",
+        email="filter-local-student@test.lab",
+        full_name="Filtered Local Student",
+        hashed_password=get_password_hash(STRONG_PASS),
+        role=UserRole.student,
+        is_active=True,
+        auth_provider="local",
+    ))
+    db.add(User(
+        username="filter-oidc-teacher",
+        email="filter-oidc-teacher@test.lab",
+        full_name="Filtered OIDC Teacher",
+        hashed_password=get_password_hash(STRONG_PASS),
+        role=UserRole.teacher,
+        is_active=True,
+        auth_provider="oidc",
+    ))
+    db.commit()
+
+    r = await admin_client.get(f"{BASE}/users?search=oidc&role=teacher&auth_provider=oidc")
+    assert r.status_code == 200
+    body = r.json()
+    assert [u["username"] for u in body] == ["filter-oidc-teacher"]
+
+
 # ============================================================
 # Create user
 # ============================================================

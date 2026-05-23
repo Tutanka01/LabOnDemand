@@ -18,6 +18,23 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+[data-theme="dark"] {
+  --bg: #101414;
+  --surface: #171d1d;
+  --surface-muted: #202828;
+  --text: #edf2f1;
+  --muted: #9eb0ad;
+  --border: #2b3837;
+  --primary: #2dd4bf;
+  --primary-strong: #14b8a6;
+  --blue: #7aa2ff;
+  --green: #56d08b;
+  --amber: #e4b554;
+  --red: #f0837d;
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -149,6 +166,10 @@ a {
   padding: 0 28px;
 }
 
+[data-theme="dark"] .topbar {
+  background: rgba(23, 29, 29, 0.92);
+}
+
 .search {
   width: min(420px, 42vw);
   display: flex;
@@ -159,6 +180,11 @@ a {
   border-radius: 8px;
   padding: 9px 12px;
   color: var(--muted);
+}
+
+[data-theme="dark"] .search {
+  background: #202828;
+  border-color: var(--border);
 }
 
 .search input {
@@ -176,12 +202,24 @@ a {
 }
 
 .user-chip {
+  border: 0;
+  background: transparent;
   display: flex;
   align-items: center;
   gap: 9px;
   color: var(--muted);
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+.user-chip-btn {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 7px 8px;
+}
+
+.user-chip-btn:hover {
+  background: var(--surface-muted);
 }
 
 .content {
@@ -337,6 +375,11 @@ h1 {
   background: #fff7f6;
 }
 
+[data-theme="dark"] .btn.danger {
+  background: rgba(194, 65, 59, 0.12);
+  border-color: rgba(240, 131, 125, 0.38);
+}
+
 .btn.ghost {
   background: transparent;
 }
@@ -353,6 +396,17 @@ h1 {
   color: var(--muted);
   font-size: 0.78rem;
   white-space: nowrap;
+}
+
+[data-theme="dark"] .badge {
+  background: #202828;
+}
+
+[data-theme="dark"] .badge.green,
+[data-theme="dark"] .badge.amber,
+[data-theme="dark"] .badge.red,
+[data-theme="dark"] .badge.blue {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .badge.green {
@@ -442,6 +496,10 @@ h1 {
   overflow: hidden;
 }
 
+[data-theme="dark"] .meter-track {
+  background: #263231;
+}
+
 .meter-fill {
   height: 100%;
   border-radius: inherit;
@@ -501,6 +559,10 @@ h1 {
   border-color: #f0c4c0;
 }
 
+[data-theme="dark"] .error-state {
+  background: rgba(194, 65, 59, 0.12);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -532,6 +594,14 @@ h1 {
   padding: 8px 10px;
   outline: 0;
   width: 100%;
+}
+
+[data-theme="dark"] .field input,
+[data-theme="dark"] .field select,
+[data-theme="dark"] .field textarea,
+[data-theme="dark"] .select-trigger,
+[data-theme="dark"] .select-content {
+  background: #131919;
 }
 
 .field textarea {

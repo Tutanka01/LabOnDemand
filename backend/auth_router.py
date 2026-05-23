@@ -3,7 +3,7 @@ import os
 import secrets
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -436,11 +436,30 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     return db_user
 
 @router.get("/users", response_model=List[UserResponse], dependencies=[Depends(is_admin)])
-def get_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_users(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    search: Optional[str] = Query(None, max_length=100),
+    role: Optional[UserRole] = None,
+    auth_provider: Optional[str] = Query(None, max_length=50),
+    db: Session = Depends(get_db),
+):
     """
-    Récupère la liste des utilisateurs (admins seulement)
+    Récupère la liste des utilisateurs (admins seulement), avec filtres simples.
     """
-    users = db.query(User).offset(skip).limit(limit).all()
+    query = db.query(User)
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            (User.username.ilike(term))
+            | (User.email.ilike(term))
+            | (User.full_name.ilike(term))
+        )
+    if role is not None:
+        query = query.filter(User.role == role)
+    if auth_provider and auth_provider.strip():
+        query = query.filter(User.auth_provider == auth_provider.strip())
+    users = query.order_by(User.created_at.desc(), User.id.desc()).offset(skip).limit(limit).all()
     return users
 
 @router.get("/users/{user_id}", response_model=UserResponse, dependencies=[Depends(is_admin)])

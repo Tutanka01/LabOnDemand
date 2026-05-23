@@ -1,5 +1,5 @@
 import "../styles/main.css";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   ArrowLeft,
@@ -15,7 +15,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell, PageHeader } from "../components/AppShell";
 import {
@@ -39,7 +39,7 @@ import { ClassroomCard } from "../components/teacher/ClassroomCard";
 import { ClassroomDialog } from "../components/teacher/ClassroomDialog";
 import { AddStudentDialog } from "../components/teacher/AddStudentDialog";
 import { AssignmentDialog } from "../components/teacher/AssignmentDialog";
-import type { Assignment, Classroom, StudentLabStatus, Template, User } from "../types/api";
+import type { Assignment, BulkSpawnReport, Classroom, StudentLabStatus, TeacherDashboard, Template, User } from "../types/api";
 import {
   deleteAssignment,
   deployAllAssignments,
@@ -47,6 +47,7 @@ import {
   getClassroomLabStatus,
   getClassrooms,
   getClassroomStudents,
+  getTeacherDashboard,
   getTemplates,
   unenrollStudent,
 } from "../lib/api";
@@ -55,7 +56,8 @@ import { QueryProvider } from "../lib/query";
 
 function TeacherPage({ user }: { user: User }) {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState("classrooms");
+  const initialTab = window.location.hash?.replace("#", "") || new URLSearchParams(window.location.search).get("tab") || "overview";
+  const [tab, setTab] = useState(initialTab);
   const [showClassroomDialog, setShowClassroomDialog] = useState(false);
   const [editClassroom, setEditClassroom] = useState<Classroom | null>(null);
   const [selectedClassroomId, setSelectedClassroomId] = useState<number | null>(null);
@@ -63,15 +65,10 @@ function TeacherPage({ user }: { user: User }) {
   const [showAssignmentDialog, setShowAssignmentDialog] = useState(false);
   const [editAssignment, setEditAssignment] = useState<Assignment | null>(null);
   const [overviewFilter, setOverviewFilter] = useState("all");
-  const [deployProgress, setDeployProgress] = useState<{
-    total: number;
-    ok: number;
-    errors: number;
-    skipped: number;
-    done: boolean;
-  } | null>(null);
+  const [deployProgress, setDeployProgress] = useState<(BulkSpawnReport & { done: boolean }) | null>(null);
 
   const classrooms = useQuery({ queryKey: ["classrooms"], queryFn: getClassrooms });
+  const teacherDashboard = useQuery({ queryKey: ["teacher-dashboard"], queryFn: getTeacherDashboard, refetchInterval: 30_000 });
   const templates = useQuery({ queryKey: ["templates"], queryFn: getTemplates });
   const selectedClassroom = classrooms.data?.find((c) => c.id === selectedClassroomId) || null;
 
@@ -91,15 +88,21 @@ function TeacherPage({ user }: { user: User }) {
     queryKey: ["lab-status", selectedClassroomId],
     queryFn: () => getClassroomLabStatus(selectedClassroomId!),
     enabled: tab === "monitor",
+    refetchInterval: 30_000,
   });
 
   const deployMutation = useMutation({
     mutationFn: ({ cid, aid }: { cid: number; aid: number }) => deployAllAssignments(cid, aid),
     onSuccess: (data) => {
-      setDeployProgress({ total: data.total, ok: data.ok, errors: data.errors, skipped: data.skipped, done: true });
+      setDeployProgress({ ...data, done: true });
       showToast(`Deploiement termine: ${data.ok} ok, ${data.errors} erreurs`, data.errors > 0 ? "error" : "success");
     },
   });
+
+  useEffect(() => {
+    const allowed = selectedClassroom ? ["students", "assignments", "monitor"] : ["overview", "classrooms", "monitor"];
+    if (allowed.includes(tab)) window.history.replaceState(null, "", `${window.location.pathname}#${tab}`);
+  }, [selectedClassroom, tab]);
 
   const unenrollMutation = useMutation({
     mutationFn: ({ userId }: { userId: number }) => unenrollStudent(selectedClassroomId!, userId),
@@ -172,7 +175,7 @@ function TeacherPage({ user }: { user: User }) {
               }}
               onDelete={(aid) => deleteAssignMutation.mutate({ aid })}
               onDeploy={(aid) => {
-                setDeployProgress({ total: 0, ok: 0, errors: 0, skipped: 0, done: false });
+                setDeployProgress({ assignment_id: aid, classroom_id: selectedClassroom.id, total: 0, ok: 0, errors: 0, skipped: 0, results: [], done: false });
                 deployMutation.mutate({ cid: selectedClassroom.id, aid });
               }}
               isDeploying={deployMutation.isPending}
@@ -227,22 +230,43 @@ function TeacherPage({ user }: { user: User }) {
         }
       />
 
-      {classrooms.isLoading ? <LoadingState /> : null}
-      {classrooms.error ? <ErrorState>Impossible de charger les classes.</ErrorState> : null}
-      {!classrooms.isLoading && !classrooms.error && (classrooms.data || []).length === 0 ? (
-        <EmptyState title="Aucune classe">Creez votre premiere classe pour commencer.</EmptyState>
-      ) : null}
+      <Tabs value={tab} onChange={setTab}>
+        <TabList>
+          <TabTrigger value="overview"><LayoutGrid size={16} /> Vue globale</TabTrigger>
+          <TabTrigger value="classrooms"><GraduationCap size={16} /> Classes</TabTrigger>
+          <TabTrigger value="monitor"><Monitor size={16} /> Monitoring</TabTrigger>
+        </TabList>
 
-      <section className="grid-teacher">
-        {(classrooms.data || []).map((classroom) => (
-          <ClassroomCard
-            key={classroom.id}
-            classroom={classroom}
-            onEdit={(c) => { setEditClassroom(c); setShowClassroomDialog(true); }}
-            onSelect={setSelectedClassroomId}
-          />
-        ))}
-      </section>
+        <TabContent value="overview">
+          <TeacherOverview dashboard={teacherDashboard.data} isLoading={teacherDashboard.isLoading} error={teacherDashboard.error} />
+        </TabContent>
+
+        <TabContent value="classrooms">
+          {classrooms.isLoading ? <LoadingState /> : null}
+          {classrooms.error ? <ErrorState>Impossible de charger les classes.</ErrorState> : null}
+          {!classrooms.isLoading && !classrooms.error && (classrooms.data || []).length === 0 ? (
+            <EmptyState title="Aucune classe">Creez votre premiere classe pour commencer.</EmptyState>
+          ) : null}
+
+          <section className="grid-teacher">
+            {(classrooms.data || []).map((classroom) => (
+              <ClassroomCard
+                key={classroom.id}
+                classroom={classroom}
+                onEdit={(c) => { setEditClassroom(c); setShowClassroomDialog(true); }}
+                onSelect={(id) => {
+                  setSelectedClassroomId(id);
+                  setTab("students");
+                }}
+              />
+            ))}
+          </section>
+        </TabContent>
+
+        <TabContent value="monitor">
+          <GlobalMonitor classrooms={classrooms.data || []} />
+        </TabContent>
+      </Tabs>
 
       <ClassroomDialog
         classroom={editClassroom}
@@ -250,6 +274,144 @@ function TeacherPage({ user }: { user: User }) {
         onOpenChange={setShowClassroomDialog}
       />
     </>
+  );
+}
+
+function TeacherOverview({
+  dashboard,
+  isLoading,
+  error,
+}: {
+  dashboard?: TeacherDashboard;
+  isLoading: boolean;
+  error: unknown;
+}) {
+  if (isLoading) return <LoadingState />;
+  if (error) return <ErrorState>Impossible de charger la vue globale.</ErrorState>;
+
+  const classrooms = dashboard?.classrooms || [];
+  const totalStudents = classrooms.reduce((sum, classroom) => sum + classroom.student_count, 0);
+  const totalAssignments = classrooms.reduce((sum, classroom) => sum + classroom.active_assignment_count, 0);
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      <section className="metric-grid">
+        <div className="card metric-card">
+          <div className="metric-top"><span>Classes</span><GraduationCap size={18} /></div>
+          <strong className="metric-value">{dashboard?.classroom_count || 0}</strong>
+        </div>
+        <div className="card metric-card">
+          <div className="metric-top"><span>Etudiants</span><Users size={18} /></div>
+          <strong className="metric-value">{totalStudents}</strong>
+        </div>
+        <div className="card metric-card">
+          <div className="metric-top"><span>Devoirs actifs</span><BookOpen size={18} /></div>
+          <strong className="metric-value">{totalAssignments}</strong>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-head">
+          <h2>Classes recentes</h2>
+        </div>
+        {classrooms.length ? (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr><th>Classe</th><th>Etudiants</th><th>Devoirs actifs</th><th>Cree le</th></tr>
+              </thead>
+              <tbody>
+                {classrooms.map((classroom) => (
+                  <tr key={classroom.id}>
+                    <td>{classroom.name}</td>
+                    <td>{classroom.student_count}</td>
+                    <td>{classroom.active_assignment_count}</td>
+                    <td>{shortDate(classroom.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="Aucune classe">Creez une classe pour afficher la synthese.</EmptyState>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function GlobalMonitor({ classrooms }: { classrooms: Classroom[] }) {
+  const [classroomFilter, setClassroomFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const activeClassrooms = classrooms.filter((classroom) => !classroom.archived);
+  const statusQueries = useQueries({
+    queries: activeClassrooms.map((classroom) => ({
+      queryKey: ["lab-status", classroom.id],
+      queryFn: () => getClassroomLabStatus(classroom.id),
+      refetchInterval: 30_000,
+    })),
+  });
+  const rows = activeClassrooms.flatMap((classroom, index) => {
+    const statuses = statusQueries[index]?.data || [];
+    return statuses.map((status) => ({ ...status, classroom_id: classroom.id, classroom_name: classroom.name }));
+  });
+  const filtered = rows.filter((row) => {
+    const status = row.lab_status || "none";
+    return (!classroomFilter || String(row.classroom_id) === classroomFilter) && (statusFilter === "all" || status === statusFilter);
+  });
+  const summary = {
+    active: rows.filter((row) => row.lab_status === "active").length,
+    paused: rows.filter((row) => row.lab_status === "paused").length,
+    none: rows.filter((row) => !row.lab_status || row.lab_status === "none").length,
+  };
+
+  return (
+    <section className="panel">
+      <div className="section-head">
+        <h2>Monitoring multi-classes</h2>
+        <span className="badge blue">Auto-refresh 30s</span>
+      </div>
+      <section className="metric-grid" style={{ marginBottom: 16 }}>
+        <div className="card metric-card"><div className="metric-top"><span>Actifs</span><CheckCircle2 size={18} /></div><strong className="metric-value">{summary.active}</strong></div>
+        <div className="card metric-card"><div className="metric-top"><span>En pause</span><Archive size={18} /></div><strong className="metric-value">{summary.paused}</strong></div>
+        <div className="card metric-card"><div className="metric-top"><span>Sans lab</span><XCircle size={18} /></div><strong className="metric-value">{summary.none}</strong></div>
+      </section>
+      <div className="actions-row" style={{ marginBottom: 12 }}>
+        <select value={classroomFilter} onChange={(e) => setClassroomFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+          <option value="">Toutes classes</option>
+          {activeClassrooms.map((classroom) => <option value={classroom.id} key={classroom.id}>{classroom.name}</option>)}
+        </select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+          <option value="all">Tous statuts</option>
+          <option value="active">Actifs</option>
+          <option value="paused">En pause</option>
+          <option value="none">Sans lab</option>
+        </select>
+      </div>
+      {statusQueries.some((query) => query.isLoading) ? <LoadingState /> : null}
+      {filtered.length ? (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr><th>Classe</th><th>Etudiant</th><th>Lab</th><th>Statut</th><th>Expire</th></tr>
+            </thead>
+            <tbody>
+              {filtered.map((row) => (
+                <tr key={`${row.classroom_id}-${row.user_id}`}>
+                  <td>{row.classroom_name}</td>
+                  <td>{row.username}</td>
+                  <td>{row.lab_name || "Aucun"}</td>
+                  <td><StatusBadge state={row.lab_status || "none"} /></td>
+                  <td>{row.lab_expires_at ? shortDate(row.lab_expires_at) : "N/A"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState title="Aucune donnee">Aucun etudiant ne correspond aux filtres.</EmptyState>
+      )}
+    </section>
   );
 }
 
@@ -333,7 +495,7 @@ function AssignmentsView({
   onDelete: (aid: number) => void;
   onDeploy: (aid: number) => void;
   isDeploying: boolean;
-  deployProgress: { total: number; ok: number; errors: number; skipped: number; done: boolean } | null;
+  deployProgress: (BulkSpawnReport & { done: boolean }) | null;
 }) {
   if (isLoading) return <LoadingState />;
   if (error) return <ErrorState>Impossible de charger les devoirs.</ErrorState>;
@@ -351,6 +513,25 @@ function AssignmentsView({
             <span>{deployProgress.ok} ok / {deployProgress.errors} erreurs / {deployProgress.skipped} ignores</span>
           </div>
           {!deployProgress.done && <ResourceMeter label="Progression" used={deployProgress.ok + deployProgress.errors + deployProgress.skipped} max={deployProgress.total} />}
+          {deployProgress.done && deployProgress.results.length ? (
+            <div className="table-wrap" style={{ marginTop: 12 }}>
+              <table className="data-table">
+                <thead>
+                  <tr><th>Etudiant</th><th>Statut</th><th>Lab</th><th>Erreur</th></tr>
+                </thead>
+                <tbody>
+                  {deployProgress.results.map((result) => (
+                    <tr key={result.user_id}>
+                      <td>{result.username}</td>
+                      <td><StatusBadge state={result.status === "ok" ? "active" : result.status === "skipped" ? "paused" : "error"} /></td>
+                      <td>{result.deployment_name || "N/A"}</td>
+                      <td>{result.error || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {assignments.length === 0 ? (

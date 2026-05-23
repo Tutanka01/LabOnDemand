@@ -9,14 +9,14 @@ import { Button, EmptyState, ErrorState, LoadingState, MetricCard, Pagination, S
 export function AuditLogViewer() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [event, setEvent] = useState("");
   const [category, setCategory] = useState("");
   const [level, setLevel] = useState("");
   const [username, setUsername] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [pageSize, setPageSize] = useState(50);
   const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
-
-  const pageSize = 50;
 
   const stats = useQuery({
     queryKey: ["audit-stats"],
@@ -25,12 +25,13 @@ export function AuditLogViewer() {
   });
 
   const logs = useQuery({
-    queryKey: ["audit-logs", { page, pageSize, search, category, level, username, dateFrom, dateTo }],
+    queryKey: ["audit-logs", { page, pageSize, search, event, category, level, username, dateFrom, dateTo }],
     queryFn: () =>
       getAuditLogs({
         page,
         page_size: pageSize,
         search: search || undefined,
+        event: event || undefined,
         category: category || undefined,
         level: level || undefined,
         username: username || undefined,
@@ -45,6 +46,7 @@ export function AuditLogViewer() {
     try {
       const data = await exportAuditLogs({
         search: search || undefined,
+        event: event || undefined,
         category: category || undefined,
         level: level || undefined,
         username: username || undefined,
@@ -77,10 +79,39 @@ export function AuditLogViewer() {
         <section className="metric-grid">
           <MetricCard label="Total" value={stats.data.total || 0} icon={<Eye size={18} />} />
           <MetricCard
+            label="Categories"
+            value={Object.keys(stats.data.by_category || {}).length}
+            icon={<Eye size={18} />}
+          />
+          <MetricCard
+            label="Niveaux"
+            value={Object.keys(stats.data.by_level || {}).length}
+            icon={<Eye size={18} />}
+          />
+          <MetricCard
             label="7 derniers jours"
             value={stats.data.last_7_days ? Object.values(stats.data.last_7_days).reduce((a, b) => a + b, 0) : 0}
             icon={<Eye size={18} />}
           />
+        </section>
+      ) : null}
+
+      {stats.data?.last_7_days ? (
+        <section className="panel">
+          <div className="section-head"><h2>Activite 7 jours</h2></div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 8, alignItems: "end" }}>
+            {Object.entries(stats.data.last_7_days).map(([day, count]) => {
+              const max = Math.max(...Object.values(stats.data!.last_7_days || { x: 1 }));
+              return (
+                <div key={day} style={{ display: "grid", gap: 6 }}>
+                  <div className="meter-track" style={{ height: 72, display: "flex", alignItems: "end" }}>
+                    <div className="meter-fill" style={{ width: "100%", height: `${Math.max(6, (count / Math.max(max, 1)) * 100)}%` }} />
+                  </div>
+                  <span className="muted" style={{ fontSize: "0.75rem" }}>{day}</span>
+                </div>
+              );
+            })}
+          </div>
         </section>
       ) : null}
 
@@ -91,6 +122,12 @@ export function AuditLogViewer() {
         </div>
         <div className="actions-row" style={{ flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
           <SearchBox placeholder="Recherche texte..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <input
+            placeholder="Evenement"
+            value={event}
+            onChange={(e) => { setEvent(e.target.value); setPage(1); }}
+            style={{ minHeight: 38, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, width: 150 }}
+          />
           <input
             placeholder="Categorie"
             value={category}
@@ -111,7 +148,12 @@ export function AuditLogViewer() {
           />
           <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }} />
           <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }} />
-          <Button onClick={() => { setSearch(""); setCategory(""); setLevel(""); setUsername(""); setDateFrom(""); setDateTo(""); setPage(1); }}>
+          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+            <option value={100}>100 / page</option>
+          </select>
+          <Button onClick={() => { setSearch(""); setEvent(""); setCategory(""); setLevel(""); setUsername(""); setDateFrom(""); setDateTo(""); setPage(1); }}>
             <RefreshCw size={16} />
           </Button>
         </div>

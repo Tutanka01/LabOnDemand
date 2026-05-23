@@ -12,6 +12,14 @@ export interface User {
   updated_at?: string | null;
 }
 
+export interface UserListParams {
+  skip?: number;
+  limit?: number;
+  search?: string;
+  role?: Role | "";
+  auth_provider?: string;
+}
+
 export interface Template {
   id?: string | number;
   key?: string;
@@ -142,11 +150,34 @@ export interface PvcInfo {
   phase?: string;
   storage?: string;
   access_modes?: string[];
+  storage_class?: string | null;
+  volume_name?: string | null;
   bound?: boolean;
   last_bound_app?: string;
   app_type?: string;
   created_at?: string;
   labels?: Record<string, string>;
+}
+
+export interface ResourcePreset {
+  label: string;
+  request: string;
+  limit: string;
+  value?: string;
+}
+
+export interface ResourcePresets {
+  cpu: ResourcePreset[];
+  memory: ResourcePreset[];
+}
+
+export interface PodInfo {
+  name: string;
+  namespace: string;
+  status?: string;
+  phase?: string;
+  ip?: string | null;
+  node_name?: string | null;
 }
 
 export interface ClusterStats {
@@ -232,10 +263,24 @@ export interface BulkSpawnReport {
   skipped: number;
   errors: number;
   results: BulkSpawnResult[];
+  summary?: {
+    total: number;
+    ok: number;
+    skipped: number;
+    errors: number;
+  };
 }
 
 export interface TeacherDashboard {
   classroom_count?: number;
+  classrooms?: Array<{
+    id: number;
+    name: string;
+    description?: string | null;
+    student_count: number;
+    active_assignment_count: number;
+    created_at?: string | null;
+  }>;
   per_classroom?: Array<{
     classroom_id: number;
     classroom_name: string;

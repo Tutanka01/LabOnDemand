@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Upload, X } from "lucide-react";
 import { useState } from "react";
 import { importUsersCsv } from "../../lib/api";
-import type { ApiError } from "../../lib/api";
 import { Button, ErrorState, IconButton, showToast } from "../ui";
 
 export function CsvImportDialog({
@@ -21,8 +20,13 @@ export function CsvImportDialog({
     mutationFn: (file: File) => importUsersCsv(file),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      setResult(data);
-      showToast(`${data.created} utilisateurs importes`, "success");
+      const normalized = {
+        created: data.created ?? data.summary?.created ?? 0,
+        skipped: data.skipped ?? data.summary?.skipped ?? 0,
+        errors: data.errors ?? (data.results || []).filter((item) => item.status === "error").map((item) => item.error || "Erreur inconnue"),
+      };
+      setResult(normalized);
+      showToast(`${normalized.created} utilisateurs importes`, "success");
     },
   });
 
