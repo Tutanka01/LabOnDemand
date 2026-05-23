@@ -3,20 +3,81 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Search, X } from "lucide-react";
-import { type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, useEffect, useState } from "react";
+import {
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+  useEffect,
+  useState,
+} from "react";
 
 type ButtonVariant = "default" | "primary" | "danger" | "ghost";
+type BadgeTone = "default" | "green" | "amber" | "red" | "blue";
+
+export function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
 
 export function Button({
   variant = "default",
   className = "",
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
-  return <button className={`btn ${variant === "default" ? "" : variant} ${className}`} {...props} />;
+  return <button className={cn("btn", variant !== "default" && variant, className)} {...props} />;
 }
 
 export function IconButton({ className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button className={`icon-btn ${className}`} {...props} />;
+  return <button className={cn("icon-btn", className)} {...props} />;
+}
+
+export function Card({ className = "", ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("card", className)} {...props} />;
+}
+
+export function Panel({ className = "", ...props }: HTMLAttributes<HTMLElement>) {
+  return <section className={cn("panel", className)} {...props} />;
+}
+
+export function Badge({
+  tone = "default",
+  className = "",
+  ...props
+}: HTMLAttributes<HTMLSpanElement> & { tone?: BadgeTone }) {
+  return <span className={cn("badge", tone !== "default" && tone, className)} {...props} />;
+}
+
+export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
+  return <input className={className} {...props} />;
+}
+
+export function Textarea({ className = "", ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={className} {...props} />;
+}
+
+export function ActionRow({ className = "", ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("actions-row", className)} {...props} />;
+}
+
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="page-title">
+      <div>
+        <h1>{title}</h1>
+        {description ? <p className="sub">{description}</p> : null}
+      </div>
+      {actions ? <ActionRow>{actions}</ActionRow> : null}
+    </div>
+  );
 }
 
 export function SearchBox(props: InputHTMLAttributes<HTMLInputElement>) {
@@ -30,27 +91,27 @@ export function SearchBox(props: InputHTMLAttributes<HTMLInputElement>) {
 
 export function MetricCard({ label, value, icon, hint }: { label: string; value: ReactNode; icon: ReactNode; hint?: string }) {
   return (
-    <div className="card metric-card">
+    <Card className="metric-card">
       <div className="metric-top">
         <span>{label}</span>
         {icon}
       </div>
       <strong className="metric-value">{value}</strong>
       {hint ? <span className="muted">{hint}</span> : null}
-    </div>
+    </Card>
   );
 }
 
 export function StatusBadge({ state }: { state?: string | null }) {
   const value = (state || "unknown").toLowerCase();
-  if (value === "running" || value === "active" || value === "ready") return <span className="badge green">Actif</span>;
-  if (value === "paused") return <span className="badge amber">En pause</span>;
-  if (value === "starting" || value === "mixed" || value === "pending") return <span className="badge blue">Initialisation</span>;
-  if (value === "error" || value === "failed") return <span className="badge red">Erreur</span>;
-  if (value === "expired" || value === "deleted") return <span className="badge red">Expire</span>;
-  if (value === "archived") return <span className="badge amber">Archive</span>;
-  if (value === "none") return <span className="badge">Aucun</span>;
-  return <span className="badge">Inconnu</span>;
+  if (value === "running" || value === "active" || value === "ready") return <Badge tone="green">Actif</Badge>;
+  if (value === "paused") return <Badge tone="amber">En pause</Badge>;
+  if (value === "starting" || value === "mixed" || value === "pending") return <Badge tone="blue">Initialisation</Badge>;
+  if (value === "error" || value === "failed") return <Badge tone="red">Erreur</Badge>;
+  if (value === "expired" || value === "deleted") return <Badge tone="red">Expire</Badge>;
+  if (value === "archived") return <Badge tone="amber">Archive</Badge>;
+  if (value === "none") return <Badge>Aucun</Badge>;
+  return <Badge>Inconnu</Badge>;
 }
 
 export function ResourceMeter({ label, used, max, unit = "" }: { label: string; used?: number; max?: number; unit?: string }) {
@@ -131,7 +192,7 @@ export function ConfirmDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="muted">{description}</Dialog.Description>
-          <div className="actions-row" style={{ justifyContent: "end", marginTop: 18 }}>
+          <ActionRow className="mt-[18px] justify-end">
             <Dialog.Close asChild>
               <Button>Annuler</Button>
             </Dialog.Close>
@@ -140,7 +201,7 @@ export function ConfirmDialog({
                 {confirmLabel}
               </Button>
             </Dialog.Close>
-          </div>
+          </ActionRow>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -166,7 +227,7 @@ export function Tabs({
 }
 
 export function TabList({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <TabsPrimitive.List className={`tab-list ${className}`}>{children}</TabsPrimitive.List>;
+  return <TabsPrimitive.List className={cn("tab-list", className)}>{children}</TabsPrimitive.List>;
 }
 
 export function TabTrigger({ value, children }: { value: string; children: ReactNode }) {
@@ -195,15 +256,15 @@ export function Pagination({
   if (totalPages <= 1) return null;
   return (
     <div className="pagination">
-      <button className="btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>
+      <Button disabled={page <= 1} onClick={() => onChange(page - 1)}>
         <ChevronLeft size={16} />
-      </button>
+      </Button>
       <span className="muted">
         {page} / {totalPages}
       </span>
-      <button className="btn" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
+      <Button disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
         <ChevronRight size={16} />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -226,7 +287,7 @@ export function Select({
   className?: string;
 }) {
   return (
-    <div className={`select-root ${className}`}>
+    <div className={cn("select-root", className)}>
       {label ? <label className="select-label">{label}</label> : null}
       <SelectPrimitive.Root value={value} onValueChange={onChange}>
         <SelectPrimitive.Trigger className="select-trigger">
@@ -307,7 +368,7 @@ export function ToastContainer() {
   return (
     <div className="toast-container">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.type}`}>
+        <div key={t.id} className={cn("toast", t.type)}>
           {t.type === "success" ? <Check size={16} /> : t.type === "error" ? <AlertTriangle size={16} /> : null}
           <span>{t.message}</span>
         </div>
@@ -332,13 +393,13 @@ export function FormField({
   required?: boolean;
 }) {
   return (
-    <div className={`field ${full ? "full" : ""}`}>
+    <div className={cn("field", full && "full")}>
       <label>
         {label}
         {required ? <span className="required"> *</span> : null}
       </label>
       {children}
-      {error ? <span className="badge red">{error}</span> : null}
+      {error ? <Badge tone="red">{error}</Badge> : null}
     </div>
   );
 }
@@ -362,7 +423,7 @@ export function ModalShell({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className={`dialog-content panel ${wide ? "dialog-wide" : ""}`}>
+        <Dialog.Content className={cn("dialog-content panel", wide && "dialog-wide")}>
           <div className="section-head">
             <Dialog.Title asChild>
               <h2>{title}</h2>
