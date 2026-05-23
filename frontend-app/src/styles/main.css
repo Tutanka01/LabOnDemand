@@ -522,7 +522,8 @@ h1 {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   min-height: 40px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -530,10 +531,18 @@ h1 {
   color: var(--text);
   padding: 8px 10px;
   outline: 0;
+  width: 100%;
+}
+
+.field textarea {
+  min-height: 90px;
+  resize: vertical;
+  font: inherit;
 }
 
 .field input:focus,
-.field select:focus {
+.field select:focus,
+.field textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
 }

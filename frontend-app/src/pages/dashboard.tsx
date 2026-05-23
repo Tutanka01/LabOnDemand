@@ -1,6 +1,6 @@
 import "../styles/main.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw, Monitor } from "lucide-react";
+import { Boxes, Cpu, Database, Gauge, Monitor, Plus, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AppShell, PageHeader } from "../components/AppShell";
@@ -22,6 +22,7 @@ import {
 import {
   deleteDeployment,
   deletePvc,
+  getDeploymentDetails,
   getDeployments,
   getPvcs,
   getQuotas,
@@ -104,7 +105,12 @@ function Dashboard({ user }: { user: User }) {
         subtitle="Lancez vos labs, retrouvez vos fichiers persistants et surveillez les quotas disponibles."
         actions={
           <>
-            <Button variant="primary" onClick={() => setSelectedTemplate((templates.data || [])[0] || null)}>
+            <Button
+              variant="primary"
+              onClick={() => {
+                document.getElementById("lab-catalog")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
               <Plus size={16} />
               Lancer un lab
             </Button>
@@ -170,7 +176,7 @@ function Dashboard({ user }: { user: User }) {
 
       <K8sAdminPanel admin={isAdmin} />
 
-      <section className="panel">
+      <section className="panel" id="lab-catalog">
         <div className="section-head">
           <div>
             <h2>Catalogue</h2>
@@ -280,8 +286,13 @@ function Dashboard({ user }: { user: User }) {
 }
 
 function NovncDialog({ deployment, onClose }: { deployment: Deployment; onClose: () => void }) {
-  const svcType = deployment.deployment_type || "netbeans";
-  const port = svcType.includes("netbeans") ? 6901 : 6080;
+  const details = useQuery({
+    queryKey: ["deployment-details", deployment.namespace, deployment.name],
+    queryFn: () => getDeploymentDetails(deployment.namespace, deployment.name),
+    staleTime: 30_000,
+  });
+
+  const novncUrl = details.data?.novnc_endpoint;
 
   return (
     <div className="dialog-overlay" style={{ position: "fixed", inset: 0, zIndex: 60 }} onClick={onClose}>
@@ -297,16 +308,22 @@ function NovncDialog({ deployment, onClose }: { deployment: Deployment; onClose:
         onClick={(e) => e.stopPropagation()}
       >
         <div className="section-head" style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-          <h2>{deployment.name} - Bureau NoVNC</h2>
+          <h2>{deployment.name} — Bureau NoVNC</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Fermer">
             <Monitor size={17} />
           </button>
         </div>
-        <iframe
-          src={`/api/v1/k8s/deployments/${encodeURIComponent(deployment.namespace)}/${encodeURIComponent(deployment.name)}/novnc`}
-          style={{ flex: 1, border: 0, width: "100%" }}
-          title="NoVNC"
-        />
+        {details.isLoading ? (
+          <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
+            <span className="muted">Chargement...</span>
+          </div>
+        ) : novncUrl ? (
+          <iframe src={novncUrl} style={{ flex: 1, border: 0, width: "100%" }} title="NoVNC" />
+        ) : (
+          <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
+            <span className="muted">NoVNC non disponible pour ce lab.</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,11 +1,12 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
 import { Copy, Terminal, X } from "lucide-react";
-import { type MouseEvent, useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { getDeploymentCredentials, getDeploymentDetails } from "../../lib/api";
 import { ttl } from "../../lib/format";
 import type { Deployment, DeploymentCredential } from "../../types/api";
 import { Button, ErrorState, IconButton, LoadingState, StatusBadge, showToast } from "../ui";
+import { TerminalDialog } from "./TerminalDialog";
 
 export function DeploymentDetailsDialog({
   deployment,
@@ -17,6 +18,7 @@ export function DeploymentDetailsDialog({
   onNovnc?: (deployment: Deployment) => void;
 }) {
   const [showCredentials, setShowCredentials] = useState(false);
+  const [terminalPod, setTerminalPod] = useState<string | null>(null);
 
   const details = useQuery({
     queryKey: ["deployment-details", deployment.namespace, deployment.name],
@@ -30,10 +32,10 @@ export function DeploymentDetailsDialog({
     enabled: showCredentials,
   });
 
-  const isNetBeans = (deployment.deployment_type || "").toLowerCase().includes("netbeans");
-  const type = deployment.deployment_type || deployment.type || "";
+  const isNetBeans = (deployment.deployment_type || deployment.type || "").toLowerCase().includes("netbeans");
 
   return (
+    <>
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
@@ -87,15 +89,26 @@ export function DeploymentDetailsDialog({
                       <th>Statut</th>
                       <th>IP</th>
                       <th>Noeud</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
                     {(details.data.pods || []).map((pod) => (
                       <tr key={pod.name}>
-                        <td>{pod.name}</td>
+                        <td style={{ fontFamily: "monospace", fontSize: "0.82rem" }}>{pod.name}</td>
                         <td>{pod.status || "N/A"}</td>
                         <td>{pod.pod_ip || "N/A"}</td>
                         <td>{pod.node_name || "N/A"}</td>
+                        <td>
+                          {pod.status === "Running" ? (
+                            <IconButton
+                              title="Ouvrir terminal"
+                              onClick={() => setTerminalPod(pod.name)}
+                            >
+                              <Terminal size={14} />
+                            </IconButton>
+                          ) : null}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -117,6 +130,15 @@ export function DeploymentDetailsDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+
+    {terminalPod ? (
+      <TerminalDialog
+        namespace={deployment.namespace}
+        pod={terminalPod}
+        onClose={() => setTerminalPod(null)}
+      />
+    ) : null}
+    </>
   );
 }
 

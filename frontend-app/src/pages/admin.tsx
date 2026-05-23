@@ -54,7 +54,6 @@ import {
   deleteUser,
   getAllDeployments,
   getAllTemplates,
-  getDeploymentDetails,
   getRuntimeConfigs,
   getSsoStatus,
   getUsers,
@@ -417,11 +416,11 @@ function AdminPage() {
         </TabContent>
       </Tabs>
 
-      <UserDialog user={editUser} ssoEnabled={Boolean(sso.data)} open={showUserDialog} onOpenChange={setShowUserDialog} />
-      {quotaUser ? <QuotaDialog user={quotaUser} open={Boolean(quotaUser)} onOpenChange={(o) => { if (!o) setQuotaUser(null); }} /> : null}
+      <UserDialog key={editUser?.id ?? "new"} user={editUser} ssoEnabled={Boolean(sso.data)} open={showUserDialog} onOpenChange={setShowUserDialog} />
+      {quotaUser ? <QuotaDialog key={quotaUser.id} user={quotaUser} open={Boolean(quotaUser)} onOpenChange={(o) => { if (!o) setQuotaUser(null); }} /> : null}
       <CsvImportDialog open={showCsvImport} onOpenChange={setShowCsvImport} />
-      <TemplateDialog template={editTemplate} open={showTemplateDialog} onOpenChange={setShowTemplateDialog} />
-      <RuntimeConfigDialog config={editRuntime} open={showRuntimeDialog} onOpenChange={setShowRuntimeDialog} />
+      <TemplateDialog key={editTemplate ? String(editTemplate.key ?? editTemplate.id) : "new"} template={editTemplate} open={showTemplateDialog} onOpenChange={setShowTemplateDialog} />
+      <RuntimeConfigDialog key={editRuntime?.id ?? "new"} config={editRuntime} open={showRuntimeDialog} onOpenChange={setShowRuntimeDialog} />
     </>
   );
 }

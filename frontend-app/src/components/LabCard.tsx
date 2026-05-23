@@ -1,4 +1,4 @@
-import { ExternalLink, Info, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
+import { ExternalLink, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
 import { motion } from "motion/react";
 import type { Deployment } from "../types/api";
 import { ttl } from "../lib/format";
@@ -47,11 +47,7 @@ export function LabCard({
       <div className="actions-row">
         <Button variant="primary" onClick={() => onDetails(deployment)}>
           <ExternalLink size={16} />
-          Acces
-        </Button>
-        <Button onClick={() => onDetails(deployment)}>
-          <Info size={16} />
-          Details
+          Ouvrir
         </Button>
         <Button onClick={() => onLifecycle(deployment, paused ? "resume" : "pause")}>
           {paused ? <PlayCircle size={16} /> : <PauseCircle size={16} />}

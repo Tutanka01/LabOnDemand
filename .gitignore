@@ -71,3 +71,8 @@ OLDkubeconfig.yaml
 .gitignore
 
 AGENTS.md
+
+node_modules/
+frontend-app/node_modules/
+frontend-app/dist/
+*.tsbuildinfo

@@ -39,7 +39,7 @@ import { ClassroomCard } from "../components/teacher/ClassroomCard";
 import { ClassroomDialog } from "../components/teacher/ClassroomDialog";
 import { AddStudentDialog } from "../components/teacher/AddStudentDialog";
 import { AssignmentDialog } from "../components/teacher/AssignmentDialog";
-import type { Assignment, Classroom, Enrollment, StudentLabStatus, Template, User } from "../types/api";
+import type { Assignment, Classroom, StudentLabStatus, Template, User } from "../types/api";
 import {
   deleteAssignment,
   deployAllAssignments,
@@ -198,6 +198,7 @@ function TeacherPage({ user }: { user: User }) {
           onOpenChange={setShowAddStudent}
         />
         <AssignmentDialog
+          key={editAssignment?.id ?? "new"}
           classroomId={selectedClassroom.id}
           assignment={editAssignment}
           templates={templates.data || []}
@@ -259,7 +260,7 @@ function ClassroomStudentsView({
   onAdd,
   onUnenroll,
 }: {
-  students: Enrollment[];
+  students: StudentLabStatus[];
   isLoading: boolean;
   error: unknown;
   onAdd: () => void;

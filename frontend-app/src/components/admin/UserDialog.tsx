@@ -46,7 +46,15 @@ export function UserDialog({
   });
 
   const createMut = useMutation({
-    mutationFn: (data: FormData) => registerUser({ ...data, email: data.email || "", password: data.password || "" }),
+    mutationFn: (data: FormData) =>
+      registerUser({
+        username: data.username,
+        email: data.email || "",
+        full_name: data.full_name,
+        password: data.password || "",
+        role: data.role,
+        is_active: data.is_active,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       showToast("Utilisateur cree", "success");
