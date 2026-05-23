@@ -18,6 +18,7 @@ from .security import (
     is_admin, is_teacher_or_admin, limiter, validate_password_strength
 )
 from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
+from .session_store import session_store
 from .config import settings
 from .sso import (
     get_authorization_url,
@@ -323,27 +324,40 @@ def sso_callback(request: Request, db: Session = Depends(get_db)):
     return response
 
 @router.post("/logout")
-def logout(response: Response, request: Request, user: User = Depends(get_current_user)):
+def logout(response: Response, request: Request):
     """
     Déconnecte l'utilisateur actuel en supprimant son cookie de session
-    et en invalidant la session côté serveur
+    et en invalidant la session côté serveur.
+
+    La route est volontairement idempotente: si le cookie est absent ou si la
+    session a déjà expiré côté serveur, le navigateur doit quand même recevoir
+    une suppression du cookie et pouvoir revenir à la page de connexion.
     """
-    # Récupérer l'ID de session depuis le cookie
     session_id = request.cookies.get("session_id")
     session_preview = shorten_token(session_id)
+    session_data = session_store.get(session_id) if session_id else None
+
     if session_id:
         delete_session(session_id)
 
-    response.delete_cookie(key="session_id", path="/")
+    response.delete_cookie(
+        key="session_id",
+        path="/",
+        domain=COOKIE_DOMAIN or None,
+        secure=SECURE_COOKIES,
+        httponly=True,
+        samesite=SESSION_SAMESITE.lower(),
+    )
 
     audit_logger.info(
         "logout",
         extra={
             "extra_fields": {
-                "user_id": user.id,
-                "username": user.username,
-                "role": user.role.value,
+                "user_id": session_data.get("user_id") if session_data else None,
+                "username": session_data.get("username") if session_data else None,
+                "role": session_data.get("role") if session_data else None,
                 "session_id": session_preview,
+                "session_found": bool(session_data),
             }
         },
     )

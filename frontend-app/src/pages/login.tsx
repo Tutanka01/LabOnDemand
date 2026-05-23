@@ -17,12 +17,19 @@ const schema = z.object({
 type LoginForm = z.infer<typeof schema>;
 
 function LoginPage() {
-  const session = useQuery({ queryKey: ["me"], queryFn: getCurrentUser, retry: false });
+  const shouldCheckExistingSession = sessionStorage.getItem("user") !== null;
+  const session = useQuery({
+    queryKey: ["me"],
+    queryFn: getCurrentUser,
+    retry: false,
+    enabled: shouldCheckExistingSession,
+  });
   const sso = useQuery({ queryKey: ["sso"], queryFn: getSsoStatus });
   const form = useForm<LoginForm>({ resolver: zodResolver(schema), defaultValues: { username: "", password: "" } });
   const mutation = useMutation({
     mutationFn: (values: LoginForm) => login(values.username, values.password),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      sessionStorage.setItem("user", JSON.stringify(data.user));
       window.location.href = "index.html";
     }
   });

@@ -58,7 +58,12 @@ async def test_logout_clears_session(client, admin_user, admin_token):
 
 async def test_logout_no_session(client):
     r = await client.post(f"{BASE}/logout")
-    assert r.status_code != 500
+    assert r.status_code == 200
+
+
+async def test_logout_invalid_session(client):
+    r = await client.post(f"{BASE}/logout", cookies={"session_id": "already-gone"})
+    assert r.status_code == 200
 
 
 # ============================================================

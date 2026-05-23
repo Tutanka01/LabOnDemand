@@ -25,7 +25,14 @@ export function AppShell({
   const userQuery = useQuery({ queryKey: ["me"], queryFn: getCurrentUser, retry: false });
 
   useEffect(() => {
-    if (userQuery.error) window.location.href = "login.html";
+    if (userQuery.data) sessionStorage.setItem("user", JSON.stringify(userQuery.data));
+  }, [userQuery.data]);
+
+  useEffect(() => {
+    if (userQuery.error) {
+      sessionStorage.removeItem("user");
+      window.location.href = "login.html";
+    }
   }, [userQuery.error]);
 
   useEffect(() => {
@@ -81,8 +88,12 @@ export function AppShell({
               id="logout-btn"
               title="Deconnexion"
               onClick={async () => {
-                await logout();
-                window.location.href = "login.html";
+                try {
+                  await logout();
+                } finally {
+                  sessionStorage.removeItem("user");
+                  window.location.href = "login.html";
+                }
               }}
             >
               <LogOut size={17} />

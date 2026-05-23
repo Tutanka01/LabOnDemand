@@ -70,23 +70,21 @@ class AuthManager {
                 credentials: 'include'
             });
             
-            if (response.ok) {
-                // Nettoyer les données de session
-                sessionStorage.removeItem('user');
-                this.user = null;
-                this.isAuthenticated = false;
-                
-                // Rediriger vers la page de connexion
-                window.location.href = 'login.html';
-                return true;
-            } else {
+            if (!response.ok && response.status !== 401) {
                 console.error('Erreur lors de la déconnexion');
                 return false;
             }
         } catch (error) {
             console.error('Erreur lors de la déconnexion:', error);
-            return false;
+        } finally {
+            // Nettoyer les données de session même si la session serveur a déjà expiré.
+            sessionStorage.removeItem('user');
+            this.user = null;
+            this.isAuthenticated = false;
+            window.location.href = 'login.html';
         }
+
+        return true;
     }
     
     getUserDisplayName() {
