@@ -86,7 +86,7 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
             </Dialog.Close>
           </div>
 
-          <div className="actions-row" style={{ marginBottom: 14 }}>
+          <div className="actions-row mb-3.5">
             <Button variant={mode === "search" ? "primary" : "default"} onClick={() => setMode("search")}>
               <Search size={16} /> Rechercher
             </Button>
@@ -96,14 +96,14 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
           </div>
 
           {mode === "search" ? (
-            <div style={{ display: "grid", gap: 14 }}>
+            <div className="grid gap-3.5">
               <div className="actions-row">
                 <input
+                  className="control flex-1"
                   placeholder="Rechercher par nom ou email..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && doSearch()}
-                  style={{ flex: 1, minHeight: 38, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8 }}
                 />
                 <Button variant="primary" onClick={doSearch}><Search size={16} /></Button>
               </div>
@@ -134,7 +134,7 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
                   </table>
                 </div>
               ) : null}
-              <div className="actions-row" style={{ justifyContent: "end" }}>
+              <div className="actions-row justify-end">
                 <Button onClick={() => onOpenChange(false)}>Annuler</Button>
                 <Button variant="primary" disabled={selected.size === 0 || enrollMutation.isPending} onClick={() => enrollMutation.mutate([...selected])}>
                   {enrollMutation.isPending ? "Inscription..." : `Inscrire ${selected.size} etudiant(s)`}
@@ -142,13 +142,13 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
               </div>
             </div>
           ) : (
-            <div style={{ display: "grid", gap: 14 }}>
+            <div className="grid gap-3.5">
               <div className="field full">
                 <label htmlFor="student-csv">Fichier CSV (format: username,email,full_name)</label>
                 <input id="student-csv" type="file" accept=".csv" onChange={(e) => setCsvFile(e.target.files?.[0] || null)} />
               </div>
               {csvMutation.error ? <ErrorState>{csvMutation.error.message}</ErrorState> : null}
-              <div className="actions-row" style={{ justifyContent: "end" }}>
+              <div className="actions-row justify-end">
                 <Button onClick={() => setMode("search")}>Retour</Button>
                 <Button variant="primary" disabled={!csvFile || csvMutation.isPending} onClick={() => csvFile && csvMutation.mutate(csvFile)}>
                   {csvMutation.isPending ? "Import..." : "Importer CSV"}

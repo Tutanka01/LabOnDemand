@@ -165,7 +165,7 @@ function Dashboard({ user }: { user: User }) {
           {quotas.isLoading ? <LoadingState /> : null}
           {quotas.error ? <ErrorState>Quotas indisponibles.</ErrorState> : null}
           {quotas.data ? (
-            <div style={{ display: "grid", gap: 14 }}>
+            <div className="grid gap-3.5">
               <ResourceMeter label="Applications" used={quotas.data.usage.apps_used} max={quotas.data.limits.max_apps} />
               <ResourceMeter label="CPU" used={quotas.data.usage.cpu_m_used} max={quotas.data.limits.max_requests_cpu_m} unit="m" />
               <ResourceMeter label="Memoire" used={quotas.data.usage.mem_mi_used} max={quotas.data.limits.max_requests_mem_mi} unit="Mi" />
@@ -316,32 +316,25 @@ function NovncDialog({ deployment, onClose }: { deployment: Deployment; onClose:
   const novncUrl = details.data?.novnc_endpoint;
 
   return (
-    <div className="dialog-overlay" style={{ position: "fixed", inset: 0, zIndex: 60 }} onClick={onClose}>
+    <div className="dialog-overlay z-[60]" onClick={onClose}>
       <div
-        className="dialog-content panel"
-        style={{
-          width: "min(1024px, calc(100vw - 32px))",
-          height: "min(768px, calc(100vh - 32px))",
-          padding: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
+        className="dialog-content panel flex h-[min(768px,calc(100vh-32px))] w-[min(1024px,calc(100vw-32px))] flex-col p-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="section-head" style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
+        <div className="section-head border-b border-[var(--border)] px-4 py-3">
           <h2>{deployment.name} — Bureau NoVNC</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Fermer">
             <Monitor size={17} />
           </button>
         </div>
         {details.isLoading ? (
-          <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
+          <div className="grid flex-1 place-items-center">
             <span className="muted">Chargement...</span>
           </div>
         ) : novncUrl ? (
-          <iframe src={novncUrl} style={{ flex: 1, border: 0, width: "100%" }} title="NoVNC" />
+          <iframe className="w-full flex-1 border-0" src={novncUrl} title="NoVNC" />
         ) : (
-          <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
+          <div className="grid flex-1 place-items-center">
             <span className="muted">NoVNC non disponible pour ce lab.</span>
           </div>
         )}

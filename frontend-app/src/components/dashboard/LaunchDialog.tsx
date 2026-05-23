@@ -179,7 +179,7 @@ export function LaunchDialog({
             {presets.isLoading ? <LoadingState label="Chargement des presets ressources" /> : null}
             {student ? <p className="muted field full">Les ressources CPU/RAM sont fixees par la politique etudiante.</p> : null}
             {createMutation.error ? <ErrorState>{createMutation.error.message}</ErrorState> : null}
-            <div className="actions-row field full" style={{ justifyContent: "end" }}>
+            <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={createMutation.isPending}>
                 {createMutation.isPending ? "Lancement..." : "Lancer le lab"}

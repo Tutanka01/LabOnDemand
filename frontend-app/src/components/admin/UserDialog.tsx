@@ -131,12 +131,12 @@ export function UserDialog({
               </select>
             </div>
             <div className="field">
-              <label>
-                <input type="checkbox" {...form.register("is_active")} style={{ marginRight: 8 }} />
+              <label className="flex items-center gap-2">
+                <input type="checkbox" {...form.register("is_active")} />
                 Actif
               </label>
             </div>
-            <div className="actions-row field full" style={{ justifyContent: "end" }}>
+            <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
                 {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre a jour" : "Creer"}

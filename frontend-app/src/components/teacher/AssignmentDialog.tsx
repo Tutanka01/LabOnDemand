@@ -138,9 +138,9 @@ export function AssignmentDialog({
             <div className="field full">
               <label htmlFor="instructions">Instructions (markdown)</label>
               <textarea
+                className="min-h-[100px] resize-y"
                 id="instructions"
                 rows={5}
-                style={{ minHeight: 100, resize: "vertical" }}
                 placeholder="Decrivez le devoir en markdown..."
                 {...form.register("instructions")}
               />
@@ -150,7 +150,7 @@ export function AssignmentDialog({
               <input id="due_at" type="datetime-local" {...form.register("due_at")} />
             </div>
 
-            <div className="actions-row field full" style={{ justifyContent: "end" }}>
+            <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
                 {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre a jour" : "Creer le devoir"}

@@ -294,7 +294,7 @@ function TeacherOverview({
   const totalAssignments = classrooms.reduce((sum, classroom) => sum + classroom.active_assignment_count, 0);
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div className="grid gap-4">
       <section className="metric-grid">
         <div className="card metric-card">
           <div className="metric-top"><span>Classes</span><GraduationCap size={18} /></div>
@@ -371,17 +371,17 @@ function GlobalMonitor({ classrooms }: { classrooms: Classroom[] }) {
         <h2>Monitoring multi-classes</h2>
         <span className="badge blue">Auto-refresh 30s</span>
       </div>
-      <section className="metric-grid" style={{ marginBottom: 16 }}>
+      <section className="metric-grid mb-4">
         <div className="card metric-card"><div className="metric-top"><span>Actifs</span><CheckCircle2 size={18} /></div><strong className="metric-value">{summary.active}</strong></div>
         <div className="card metric-card"><div className="metric-top"><span>En pause</span><Archive size={18} /></div><strong className="metric-value">{summary.paused}</strong></div>
         <div className="card metric-card"><div className="metric-top"><span>Sans lab</span><XCircle size={18} /></div><strong className="metric-value">{summary.none}</strong></div>
       </section>
-      <div className="actions-row" style={{ marginBottom: 12 }}>
-        <select value={classroomFilter} onChange={(e) => setClassroomFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+      <div className="actions-row mb-3">
+        <select className="control" value={classroomFilter} onChange={(e) => setClassroomFilter(e.target.value)}>
           <option value="">Toutes classes</option>
           {activeClassrooms.map((classroom) => <option value={classroom.id} key={classroom.id}>{classroom.name}</option>)}
         </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+        <select className="control" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="all">Tous statuts</option>
           <option value="active">Actifs</option>
           <option value="paused">En pause</option>
@@ -507,14 +507,14 @@ function AssignmentsView({
         <Button variant="primary" onClick={onCreate}><Plus size={16} /> Nouveau devoir</Button>
       </div>
       {deployProgress ? (
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-          <div style={{ display: "flex", gap: 16, justifyContent: "space-between", flexWrap: "wrap" }}>
+        <div className="card mb-4 p-4">
+          <div className="flex flex-wrap justify-between gap-4">
             <span><strong>{deployProgress.done ? "Termine" : "En cours"}</strong></span>
             <span>{deployProgress.ok} ok / {deployProgress.errors} erreurs / {deployProgress.skipped} ignores</span>
           </div>
           {!deployProgress.done && <ResourceMeter label="Progression" used={deployProgress.ok + deployProgress.errors + deployProgress.skipped} max={deployProgress.total} />}
           {deployProgress.done && deployProgress.results.length ? (
-            <div className="table-wrap" style={{ marginTop: 12 }}>
+            <div className="table-wrap mt-3">
               <table className="data-table">
                 <thead>
                   <tr><th>Etudiant</th><th>Statut</th><th>Lab</th><th>Erreur</th></tr>
@@ -537,20 +537,20 @@ function AssignmentsView({
       {assignments.length === 0 ? (
         <EmptyState title="Aucun devoir">Creez un devoir pour le distribuer aux etudiants.</EmptyState>
       ) : (
-        <div style={{ display: "grid", gap: 12 }}>
+        <div className="grid gap-3">
           {assignments.map((a) => (
-            <article className="card" key={a.id} style={{ padding: 16 }}>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "space-between", alignItems: "start" }}>
+            <article className="card p-4" key={a.id}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <strong>{a.title}</strong>
-                  <div className="lab-meta" style={{ marginTop: 6 }}>
+                  <div className="lab-meta mt-1.5">
                     {a.template_key ? <span className="badge">{a.template_key}</span> : null}
                     <span className="badge">CPU {presetLabel(a.cpu_preset)}</span>
                     <span className="badge">RAM {presetLabel(a.ram_preset)}</span>
                     {a.due_at ? <span className="badge">Echeance {fullDate(a.due_at)}</span> : null}
                   </div>
                   {a.instructions ? (
-                    <p className="muted" style={{ marginTop: 8, fontSize: "0.85rem" }}>
+                    <p className="muted mt-2 text-[0.85rem]">
                       {a.instructions.slice(0, 200)}{a.instructions.length > 200 ? "..." : ""}
                     </p>
                   ) : null}

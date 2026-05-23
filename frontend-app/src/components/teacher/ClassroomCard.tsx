@@ -28,13 +28,13 @@ export function ClassroomCard({
   return (
     <article className="card teacher-classroom-card" style={{ borderLeft: `4px solid ${color}` }}>
       <div className="teacher-cls-head">
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="flex items-center gap-2.5">
           <span className="runtime-mark" style={{ background: `${color}18`, color }}>
             <GraduationCap size={18} />
           </span>
           <div>
             <strong>{classroom.name}</strong>
-            <div className="muted" style={{ fontSize: "0.83rem" }}>
+            <div className="muted text-[0.83rem]">
               {classroom.description || "Aucune description"}
             </div>
           </div>
@@ -56,7 +56,7 @@ export function ClassroomCard({
           />
         </div>
       </div>
-      <div className="lab-meta" style={{ marginTop: 10 }}>
+      <div className="lab-meta mt-2.5">
         <span className="badge">{classroom.student_count || 0} etudiants</span>
         <span className="badge">{classroom.active_assignment_count || 0} devoirs</span>
         {classroom.created_at ? <span className="badge">Cree {shortDate(classroom.created_at)}</span> : null}

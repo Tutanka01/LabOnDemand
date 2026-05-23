@@ -60,7 +60,7 @@ export function DeploymentDetailsDialog({
           {details.error ? <ErrorState>Details indisponibles.</ErrorState> : null}
 
           {details.data ? (
-            <div style={{ display: "grid", gap: 16 }}>
+            <div className="grid gap-4">
               <div className="lab-meta">
                 <span className="badge">{details.data.deployment.namespace}</span>
                 <StatusBadge state={details.data.lifecycle?.state} />
@@ -71,7 +71,7 @@ export function DeploymentDetailsDialog({
 
               <div>
                 <h3>Acces</h3>
-                <div className="actions-row" style={{ marginTop: 10 }}>
+                <div className="actions-row mt-2.5">
                   {(details.data.access_urls || [])?.length ? (
                     details.data.access_urls!.map((access) => (
                       <a className="btn primary" href={access.url} target="_blank" rel="noreferrer" key={access.url}>
@@ -101,7 +101,7 @@ export function DeploymentDetailsDialog({
                   <tbody>
                     {(details.data.pods || []).map((pod) => (
                       <tr key={pod.name}>
-                        <td style={{ fontFamily: "monospace", fontSize: "0.82rem" }}>{pod.name}</td>
+                        <td className="code-text">{pod.name}</td>
                         <td>{pod.status || "N/A"}</td>
                         <td>{pod.pod_ip || "N/A"}</td>
                         <td>{pod.node_name || "N/A"}</td>
@@ -160,7 +160,7 @@ function CredentialsDisplay({ credentials }: { credentials: Record<string, Deplo
   if (entries.length === 0) return <span className="muted">Aucun identifiant disponible.</span>;
 
   return (
-    <div className="table-wrap" style={{ marginTop: 12 }}>
+    <div className="table-wrap mt-3">
       <table className="data-table">
         <thead>
           <tr>

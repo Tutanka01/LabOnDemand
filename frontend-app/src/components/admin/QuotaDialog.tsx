@@ -79,7 +79,7 @@ export function QuotaDialog({
           )}
 
           {existing.data && hasOverride && (
-            <div className="lab-meta" style={{ marginBottom: 14 }}>
+            <div className="lab-meta mb-3.5">
               <span className="badge">Apps: {existing.data.max_apps || "defaut"}</span>
               <span className="badge">CPU: {existing.data.max_cpu_m || "defaut"}m</span>
               <span className="badge">Memoire: {existing.data.max_mem_mi || "defaut"}Mi</span>
@@ -112,7 +112,7 @@ export function QuotaDialog({
 
           {setMut.error ? <ErrorState>{setMut.error.message}</ErrorState> : null}
 
-          <div className="actions-row" style={{ justifyContent: "end", marginTop: 16, gap: 12 }}>
+          <div className="actions-row mt-4 justify-end gap-3">
             {hasOverride ? (
               <Button variant="danger" onClick={() => deleteMut.mutate()} disabled={deleteMut.isPending}>
                 <Trash2 size={14} /> Supprimer l'override

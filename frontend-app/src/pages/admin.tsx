@@ -193,20 +193,20 @@ function AdminPage() {
                 <Button onClick={() => setShowCsvImport(true)}><Upload size={16} /> CSV</Button>
               </div>
             </div>
-            <div className="actions-row" style={{ gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <div className="actions-row mb-3 gap-2.5">
               <SearchBox placeholder="Rechercher..." value={userFilter} onChange={(e) => setUserFilter(e.target.value)} />
-              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+              <select className="control" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
                 <option value="">Tous roles</option>
                 <option value="student">Etudiant</option>
                 <option value="teacher">Enseignant</option>
                 <option value="admin">Admin</option>
               </select>
-              <select value={authFilter} onChange={(e) => setAuthFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+              <select className="control" value={authFilter} onChange={(e) => setAuthFilter(e.target.value)}>
                 <option value="">Tous providers</option>
                 <option value="local">Local</option>
                 <option value="oidc">SSO</option>
               </select>
-              <select value={userLimit} onChange={(e) => setUserLimit(Number(e.target.value))} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+              <select className="control" value={userLimit} onChange={(e) => setUserLimit(Number(e.target.value))}>
                 <option value={10}>10 / page</option>
                 <option value={25}>25 / page</option>
                 <option value={50}>50 / page</option>
@@ -240,7 +240,7 @@ function AdminPage() {
                       <td><StatusBadge state={user.is_active ? "active" : "error"} /></td>
                       <td>{shortDate(user.created_at)}</td>
                       <td>
-                        <div className="actions-row" style={{ gap: 4 }}>
+                        <div className="actions-row gap-1">
                           <Button onClick={() => { setEditUser(user); setShowUserDialog(true); }}><Edit2 size={14} /></Button>
                           <Button onClick={() => setQuotaUser(user)}><Sliders size={14} /></Button>
                           <ConfirmDialog
@@ -293,7 +293,7 @@ function AdminPage() {
                       <td>{t.key}</td>
                       <td>{t.name}</td>
                       <td><span className="badge">{t.deployment_type}</span></td>
-                      <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{t.default_image}</td>
+                      <td className="truncate-cell">{t.default_image}</td>
                       <td>{t.default_port}</td>
                       <td>{t.default_service_type}</td>
                       <td className="lab-meta">{(t.tags || []).map((tag) => <span className="badge" key={tag}>{tag}</span>)}</td>
@@ -348,7 +348,7 @@ function AdminPage() {
                   {(runtimeConfigs.data || []).map((rc) => (
                     <tr key={rc.id}>
                       <td><strong>{rc.key}</strong></td>
-                      <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{rc.default_image}</td>
+                      <td className="truncate-cell">{rc.default_image}</td>
                       <td>{rc.target_port}</td>
                       <td>{rc.default_service_type}</td>
                       <td>{rc.min_cpu_request}/{rc.min_cpu_limit}</td>
@@ -383,22 +383,22 @@ function AdminPage() {
             <MetricCard label="En pause" value={fleetStats.paused} icon={<PauseCircle size={18} />} />
             <MetricCard label="Expires" value={fleetStats.expired} icon={<Activity size={18} />} />
           </section>
-          <section className="panel" style={{ marginTop: 16 }}>
+          <section className="panel mt-4">
             <div className="section-head">
               <h2>Fleet etudiant ({filteredFleet.length}/{labFleet.data?.length || 0})</h2>
               <Button onClick={() => queryClient.invalidateQueries({ queryKey: ["deployments-all"] })}>
                 <RefreshCw size={16} /> Actualiser
               </Button>
             </div>
-            <div className="actions-row" style={{ gap: 10, marginBottom: 12 }}>
+            <div className="actions-row mb-3 gap-2.5">
               <SearchBox placeholder="Nom, namespace, proprietaire..." value={labFilter} onChange={(e) => setLabFilter(e.target.value)} />
-              <select value={labStatusFilter} onChange={(e) => setLabStatusFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+              <select className="control" value={labStatusFilter} onChange={(e) => setLabStatusFilter(e.target.value)}>
                 <option value="">Tous</option>
                 <option value="active">Actifs</option>
                 <option value="paused">En pause</option>
                 <option value="expired">Expires</option>
               </select>
-              <select value={labTypeFilter} onChange={(e) => setLabTypeFilter(e.target.value)} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+              <select className="control" value={labTypeFilter} onChange={(e) => setLabTypeFilter(e.target.value)}>
                 <option value="">Tous types</option>
                 {labTypes.map((type) => <option value={type} key={type}>{type}</option>)}
               </select>

@@ -113,9 +113,9 @@ export function TemplateDialog({
             </div>
             <div className="field full"><label>Tags (separes par des virgules)</label><input {...form.register("tags")} /></div>
             <div className="field">
-              <label><input type="checkbox" {...form.register("active")} style={{ marginRight: 8 }} />Actif</label>
+              <label className="flex items-center gap-2"><input type="checkbox" {...form.register("active")} />Actif</label>
             </div>
-            <div className="actions-row field full" style={{ justifyContent: "end" }}>
+            <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
                 {mutation.isPending ? "..." : isEdit ? "Mettre a jour" : "Creer"}

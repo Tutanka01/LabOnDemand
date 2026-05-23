@@ -16,9 +16,8 @@ export function K8sAdminPanel({ admin }: { admin: boolean }) {
       <div className="section-head">
         <h2>
           <button
-            className="btn ghost"
+            className="btn ghost px-2 py-1"
             onClick={() => setOpen(!open)}
-            style={{ padding: "4px 8px" }}
           >
             {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
             Ressources Kubernetes (admin)
@@ -35,7 +34,7 @@ export function K8sAdminPanel({ admin }: { admin: boolean }) {
         </Button>
       </div>
       {open ? (
-        <div style={{ display: "grid", gap: 18 }}>
+        <div className="grid gap-[18px]">
           <ClusterPingView />
           <NamespacesView />
           <PodsView />

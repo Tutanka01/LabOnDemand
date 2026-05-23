@@ -396,9 +396,34 @@
     @apply min-h-10 w-full rounded-lg border border-[var(--border)] bg-white px-2.5 py-2 text-[var(--text)] outline-0;
   }
 
+  .control {
+    @apply min-h-[38px] rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-[var(--text)] outline-0;
+  }
+
+  .control-narrow {
+    @apply w-[140px];
+  }
+
+  .control-wide {
+    @apply w-[150px];
+  }
+
+  .truncate-cell {
+    @apply max-w-[200px] overflow-hidden text-ellipsis;
+  }
+
+  .code-text {
+    @apply font-mono text-[0.82rem];
+  }
+
+  .pre-wrap {
+    @apply m-0 whitespace-pre-wrap text-[0.85rem];
+  }
+
   [data-theme="dark"] .field input,
   [data-theme="dark"] .field select,
   [data-theme="dark"] .field textarea,
+  [data-theme="dark"] .control,
   [data-theme="dark"] .select-trigger,
   [data-theme="dark"] .select-content {
     @apply bg-[#131919];

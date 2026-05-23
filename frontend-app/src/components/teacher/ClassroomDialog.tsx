@@ -99,9 +99,9 @@ export function ClassroomDialog({
               </div>
               <div className="field full">
                 <label htmlFor="description">Description (optionnelle)</label>
-                <textarea id="description" rows={3} style={{ minHeight: 80, resize: "vertical" }} {...form.register("description")} />
+                <textarea className="min-h-20 resize-y" id="description" rows={3} {...form.register("description")} />
               </div>
-              <div className="actions-row field full" style={{ justifyContent: "space-between" }}>
+              <div className="actions-row field full justify-between">
                 {isEdit ? (
                   <Button type="button" onClick={() => setStep("csv")}>
                     <Upload size={16} /> Importer etudiants (CSV)
@@ -118,7 +118,7 @@ export function ClassroomDialog({
               </div>
             </form>
           ) : (
-            <div style={{ display: "grid", gap: 16 }}>
+            <div className="grid gap-4">
               <div className="field full">
                 <label htmlFor="csv">Fichier CSV (format: username,email,full_name)</label>
                 <input
@@ -129,7 +129,7 @@ export function ClassroomDialog({
                 />
               </div>
               {csvImportMutation.error ? <ErrorState>{csvImportMutation.error.message}</ErrorState> : null}
-              <div className="actions-row" style={{ justifyContent: "end" }}>
+              <div className="actions-row justify-end">
                 <Button onClick={() => setStep("form")}>Retour</Button>
                 <Button
                   variant="primary"

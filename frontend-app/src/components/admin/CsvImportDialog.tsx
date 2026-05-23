@@ -50,7 +50,7 @@ export function CsvImportDialog({
           </div>
 
           {result ? (
-            <div style={{ display: "grid", gap: 12 }}>
+            <div className="grid gap-3">
               <div className="actions-row">
                 <span className="badge green">Crees: {result.created}</span>
                 <span className="badge amber">Ignorés: {result.skipped}</span>
@@ -67,13 +67,13 @@ export function CsvImportDialog({
               <Button onClick={() => onOpenChange(false)}>Fermer</Button>
             </div>
           ) : (
-            <div style={{ display: "grid", gap: 16 }}>
+            <div className="grid gap-4">
               <div className="field full">
                 <label htmlFor="csv-file">Fichier CSV (format: username,email,full_name,password,role)</label>
                 <input id="csv-file" type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
               </div>
               {mutation.error ? <ErrorState>{mutation.error.message}</ErrorState> : null}
-              <div className="actions-row" style={{ justifyContent: "end" }}>
+              <div className="actions-row justify-end">
                 <Button onClick={() => onOpenChange(false)}>Annuler</Button>
                 <Button variant="primary" disabled={!file || mutation.isPending} onClick={() => file && mutation.mutate(file)}>
                   <Upload size={16} /> {mutation.isPending ? "Import..." : "Importer"}

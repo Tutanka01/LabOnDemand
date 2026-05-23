@@ -206,7 +206,7 @@ function ProfileDialog({
               {user.auth_provider === "oidc" ? <span className="muted">Compte gere par SSO.</span> : null}
             </div>
             {profileMut.error ? <ErrorState>{profileMut.error.message}</ErrorState> : null}
-            <div className="actions-row field full" style={{ justifyContent: "end" }}>
+            <div className="actions-row field full justify-end">
               <Button onClick={() => profileMut.mutate()} disabled={profileMut.isPending} variant="primary">
                 {profileMut.isPending ? "Enregistrement..." : t.save}
               </Button>
@@ -215,8 +215,7 @@ function ProfileDialog({
 
           {user.auth_provider !== "oidc" ? (
             <form
-              className="form-grid"
-              style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--border)" }}
+              className="form-grid mt-[18px] border-t border-[var(--border)] pt-[18px]"
               onSubmit={(e) => {
                 e.preventDefault();
                 passwordMut.mutate();
@@ -232,7 +231,7 @@ function ProfileDialog({
                 <input id="new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
               </div>
               {passwordMut.error ? <ErrorState>{passwordMut.error.message}</ErrorState> : null}
-              <div className="actions-row field full" style={{ justifyContent: "end" }}>
+              <div className="actions-row field full justify-end">
                 <Button type="submit" disabled={passwordMut.isPending || !oldPassword || !newPassword}>
                   {passwordMut.isPending ? "Modification..." : t.changePassword}
                 </Button>

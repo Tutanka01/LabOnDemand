@@ -74,7 +74,7 @@ export function AuditLogViewer() {
   };
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <div className="grid gap-5">
       {stats.data ? (
         <section className="metric-grid">
           <MetricCard label="Total" value={stats.data.total || 0} icon={<Eye size={18} />} />
@@ -99,15 +99,15 @@ export function AuditLogViewer() {
       {stats.data?.last_7_days ? (
         <section className="panel">
           <div className="section-head"><h2>Activite 7 jours</h2></div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 8, alignItems: "end" }}>
+          <div className="grid grid-cols-7 items-end gap-2">
             {Object.entries(stats.data.last_7_days).map(([day, count]) => {
               const max = Math.max(...Object.values(stats.data!.last_7_days || { x: 1 }));
               return (
-                <div key={day} style={{ display: "grid", gap: 6 }}>
-                  <div className="meter-track" style={{ height: 72, display: "flex", alignItems: "end" }}>
+                <div className="grid gap-1.5" key={day}>
+                  <div className="meter-track flex h-[72px] items-end">
                     <div className="meter-fill" style={{ width: "100%", height: `${Math.max(6, (count / Math.max(max, 1)) * 100)}%` }} />
                   </div>
-                  <span className="muted" style={{ fontSize: "0.75rem" }}>{day}</span>
+                  <span className="muted text-xs">{day}</span>
                 </div>
               );
             })}
@@ -120,21 +120,21 @@ export function AuditLogViewer() {
           <h2>Filtres</h2>
           <Button onClick={handleExport}><Download size={16} /> Export JSON</Button>
         </div>
-        <div className="actions-row" style={{ flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <div className="actions-row mb-3.5 gap-2.5">
           <SearchBox placeholder="Recherche texte..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
           <input
             placeholder="Evenement"
             value={event}
             onChange={(e) => { setEvent(e.target.value); setPage(1); }}
-            style={{ minHeight: 38, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, width: 150 }}
+            className="control control-wide"
           />
           <input
             placeholder="Categorie"
             value={category}
             onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-            style={{ minHeight: 38, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, width: 140 }}
+            className="control control-narrow"
           />
-          <select value={level} onChange={(e) => { setLevel(e.target.value); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+          <select className="control" value={level} onChange={(e) => { setLevel(e.target.value); setPage(1); }}>
             <option value="">Tous niveaux</option>
             <option value="INFO">INFO</option>
             <option value="WARNING">WARNING</option>
@@ -144,11 +144,11 @@ export function AuditLogViewer() {
             placeholder="Utilisateur"
             value={username}
             onChange={(e) => { setUsername(e.target.value); setPage(1); }}
-            style={{ minHeight: 38, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, width: 140 }}
+            className="control control-narrow"
           />
-          <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }} />
-          <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }} />
-          <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} style={{ minHeight: 38, border: "1px solid var(--border)", borderRadius: 8, padding: "0 8px" }}>
+          <input className="control" type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+          <input className="control" type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+          <select className="control" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
             <option value={25}>25 / page</option>
             <option value={50}>50 / page</option>
             <option value={100}>100 / page</option>
@@ -204,7 +204,7 @@ export function AuditLogViewer() {
             <h2>Detail: {selectedEntry.event}</h2>
             <Button onClick={() => setSelectedEntry(null)}>Fermer</Button>
           </div>
-          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: "0.85rem" }}>
+          <pre className="pre-wrap">
             {JSON.stringify(selectedEntry, null, 2)}
           </pre>
         </section>

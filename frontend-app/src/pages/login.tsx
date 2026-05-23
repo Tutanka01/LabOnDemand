@@ -89,8 +89,8 @@ function LoginPage() {
               Continuer avec SSO
             </Button>
           ) : (
-            <p className="muted" style={{ textAlign: "center" }}>
-              Pas encore de compte ? <a href="register.html" style={{ color: "var(--primary)", fontWeight: 700 }}>S'inscrire</a>
+            <p className="muted text-center">
+              Pas encore de compte ? <a className="font-bold text-[var(--primary)]" href="register.html">S'inscrire</a>
             </p>
           )}
         </form>

@@ -19,7 +19,7 @@ function AccessDenied() {
   }, [countdown]);
 
   return (
-    <main className="auth-form-panel" style={{ minHeight: "100vh" }}>
+    <main className="auth-form-panel min-h-screen">
       <section className="card auth-card">
         <Lock size={28} />
         <h1>Acces refuse</h1>

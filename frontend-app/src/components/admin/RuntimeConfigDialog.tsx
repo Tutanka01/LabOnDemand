@@ -104,12 +104,12 @@ export function RuntimeConfigDialog({
             <div className="field"><label>CPU limit</label><input {...form.register("min_cpu_limit")} /></div>
             <div className="field"><label>Memory limit</label><input {...form.register("min_memory_limit")} /></div>
             <div className="field">
-              <label><input type="checkbox" {...form.register("allowed_for_students")} style={{ marginRight: 8 }} />Etudiants autorises</label>
+              <label className="flex items-center gap-2"><input type="checkbox" {...form.register("allowed_for_students")} />Etudiants autorises</label>
             </div>
             <div className="field">
-              <label><input type="checkbox" {...form.register("active")} style={{ marginRight: 8 }} />Actif</label>
+              <label className="flex items-center gap-2"><input type="checkbox" {...form.register("active")} />Actif</label>
             </div>
-            <div className="actions-row field full" style={{ justifyContent: "end" }}>
+            <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
                 {mutation.isPending ? "..." : isEdit ? "Mettre a jour" : "Creer"}

@@ -81,58 +81,26 @@ export function TerminalDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content
-          style={{
-            position: "fixed",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            width: "min(960px, calc(100vw - 32px))",
-            height: "min(560px, calc(100vh - 80px))",
-            display: "flex",
-            flexDirection: "column",
-            background: "#111617",
-            borderRadius: 8,
-            overflow: "hidden",
-            zIndex: 52,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-          }}
+          className="fixed left-1/2 top-1/2 z-[52] flex h-[min(560px,calc(100vh-80px))] w-[min(960px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-[#111617] shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
           aria-describedby={undefined}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "10px 14px",
-              borderBottom: "1px solid #2f3d3b",
-              flexShrink: 0,
-            }}
-          >
+          <div className="flex shrink-0 items-center justify-between border-b border-[#2f3d3b] px-3.5 py-2.5">
             <Dialog.Title asChild>
-              <span
-                style={{
-                  color: "#9fb0ad",
-                  fontFamily: "monospace",
-                  fontSize: "0.85rem",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
+              <span className="flex items-center gap-2 font-mono text-[0.85rem] text-[#9fb0ad]">
                 <TermIcon size={15} />
                 {namespace} / {pod}
               </span>
             </Dialog.Title>
             <Dialog.Close asChild>
               <IconButton
+                className="border-0 bg-transparent text-[#9fb0ad]"
                 aria-label="Fermer"
-                style={{ color: "#9fb0ad", border: "none", background: "transparent" }}
               >
                 <X size={17} />
               </IconButton>
             </Dialog.Close>
           </div>
-          <div ref={containerRef} style={{ flex: 1, minHeight: 0, padding: "4px" }} />
+          <div className="min-h-0 flex-1 p-1" ref={containerRef} />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

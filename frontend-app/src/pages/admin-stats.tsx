@@ -43,7 +43,7 @@ function AdminStatsContent() {
               value={
                 <>
                   {stats.data.ready_deployments ?? "-"}
-                  <span className="muted" style={{ fontSize: "0.85rem", marginLeft: 6 }}>
+                  <span className="muted ml-1.5 text-[0.85rem]">
                     / {stats.data.total_deployments ?? "-"}
                   </span>
                 </>
@@ -86,8 +86,8 @@ function AdminStatsContent() {
                       <th>Roles</th>
                       <th>Version</th>
                       <th>Pods</th>
-                      <th style={{ minWidth: 200 }}>CPU</th>
-                      <th style={{ minWidth: 200 }}>Memoire</th>
+                      <th className="min-w-[200px]">CPU</th>
+                      <th className="min-w-[200px]">Memoire</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -116,7 +116,7 @@ function AdminStatsContent() {
                           </td>
                           <td>{node.pods ?? "-"}</td>
                           <td>
-                            <div className="resource-meter" style={{ minWidth: 180 }}>
+                            <div className="resource-meter min-w-[180px]">
                               <div className="meter-head">
                                 <span>
                                   {cpuDisplay(node.cpu_usage_m || 0)} /{" "}
@@ -133,7 +133,7 @@ function AdminStatsContent() {
                             </div>
                           </td>
                           <td>
-                            <div className="resource-meter" style={{ minWidth: 180 }}>
+                            <div className="resource-meter min-w-[180px]">
                               <div className="meter-head">
                                 <span>
                                   {memoryDisplay(node.mem_usage_mi || 0)} /{" "}
@@ -156,7 +156,7 @@ function AdminStatsContent() {
                 </table>
               </div>
             ) : (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontSize: "0.8rem" }}>
+              <pre className="pre-wrap text-[0.8rem]">
                 {JSON.stringify(stats.data, null, 2)}
               </pre>
             )}
