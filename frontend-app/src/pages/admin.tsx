@@ -3,26 +3,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   Boxes,
-  Cpu,
-  Download,
   Edit2,
-  ExternalLink,
   FileJson,
-  Package,
-  PauseCircle,
-  PlayCircle,
   Plus,
   RefreshCw,
-  Search,
   Sliders,
   Trash2,
   Upload,
   Users,
   Wrench,
+  PlayCircle,
+  PauseCircle,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { AppShell, PageHeader } from "../components/AppShell";
+import { PageHeader } from "../components/AppShell";
 import {
   Button,
   ConfirmDialog,
@@ -37,7 +31,6 @@ import {
   TabList,
   TabTrigger,
   Tabs,
-  ToastContainer,
   showToast,
 } from "../components/ui";
 import { UserDialog } from "../components/admin/UserDialog";
@@ -59,11 +52,13 @@ import {
   getUsers,
   setDeploymentLifecycle,
 } from "../lib/api";
-import { authProviderLabel, fullDate, roleLabel, shortDate, ttl } from "../lib/format";
-import { QueryProvider } from "../lib/query";
+import { authProviderLabel, roleLabel, shortDate, ttl } from "../lib/format";
+import { useI18n } from "../lib/i18n";
 
-function AdminPage() {
+export default function AdminPage() {
   const queryClient = useQueryClient();
+  const { locale, t } = useI18n();
+
   const initialTab = window.location.hash?.replace("#", "") || new URLSearchParams(window.location.search).get("tab") || "users";
   const [tab, setTab] = useState(initialTab);
   const [userFilter, setUserFilter] = useState("");
@@ -106,28 +101,37 @@ function AdminPage() {
 
   const deleteUserMut = useMutation({
     mutationFn: (userId: number) => deleteUser(userId),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["users"] }); showToast("Utilisateur supprime", "success"); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["users"] }); showToast(locale === "fr" ? "Utilisateur supprimé" : "User deleted", "success"); },
   });
 
   const deleteTemplateMut = useMutation({
     mutationFn: (id: string | number) => deleteTemplate(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["templates-all"] }); showToast("Template supprime", "success"); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["templates-all"] });
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      showToast(locale === "fr" ? "Template supprimé" : "Template deleted", "success");
+    },
   });
 
   const deleteRuntimeMut = useMutation({
     mutationFn: (id: number) => deleteRuntimeConfig(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["runtime-configs"] }); showToast("Runtime supprime", "success"); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["runtime-configs"] });
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      queryClient.invalidateQueries({ queryKey: ["resource-presets"] });
+      showToast(locale === "fr" ? "Configuration supprimée" : "Configuration deleted", "success");
+    },
   });
 
   const deleteLabMut = useMutation({
     mutationFn: (d: Deployment) => deleteDeployment(d.namespace, d.name),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["deployments-all"] }); showToast("Lab supprime", "success"); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["deployments-all"] }); showToast(locale === "fr" ? "Lab supprimé" : "Lab deleted", "success"); },
   });
 
   const lifecycleMut = useMutation({
     mutationFn: ({ d, action }: { d: Deployment; action: "pause" | "resume" }) =>
       setDeploymentLifecycle(d.namespace, d.name, action),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["deployments-all"] }); showToast("Action executee", "success"); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["deployments-all"] }); showToast(locale === "fr" ? "Action exécutée" : "Action executed", "success"); },
   });
 
   useEffect(() => {
@@ -170,39 +174,38 @@ function AdminPage() {
 
   return (
     <>
-      <ToastContainer />
-      <PageHeader title="Administration" subtitle="Gerer les utilisateurs, templates, configurations et labs etudiants." />
+      <PageHeader title={t("header.admin")} subtitle={locale === "fr" ? "Gérer les utilisateurs, templates, configurations et labs étudiants." : "Manage users, templates, configurations, and student labs."} />
 
       <Tabs value={tab} onChange={setTab}>
         <TabList>
-          <TabTrigger value="users"><Users size={16} /> Utilisateurs</TabTrigger>
-          <TabTrigger value="catalog"><Boxes size={16} /> Catalogue</TabTrigger>
+          <TabTrigger value="users"><Users size={16} /> {locale === "fr" ? "Utilisateurs" : "Users"}</TabTrigger>
+          <TabTrigger value="catalog"><Boxes size={16} /> {locale === "fr" ? "Catalogue" : "Catalog"}</TabTrigger>
           <TabTrigger value="runtimes"><Wrench size={16} /> App Access</TabTrigger>
-          <TabTrigger value="labs"><Activity size={16} /> Labs etudiants</TabTrigger>
+          <TabTrigger value="labs"><Activity size={16} /> {locale === "fr" ? "Labs étudiants" : "Student labs"}</TabTrigger>
           <TabTrigger value="audit"><FileJson size={16} /> Audit</TabTrigger>
         </TabList>
 
         <TabContent value="users">
           <section className="panel">
             <div className="section-head">
-              <h2>Utilisateurs ({(users.data || []).length})</h2>
+              <h2>{locale === "fr" ? `Utilisateurs (${(users.data || []).length})` : `Users (${(users.data || []).length})`}</h2>
               <div className="actions-row">
                 <Button variant="primary" onClick={() => { setEditUser(null); setShowUserDialog(true); }}>
-                  <Plus size={16} /> Nouveau
+                  <Plus size={16} /> {locale === "fr" ? "Nouveau" : "New"}
                 </Button>
                 <Button onClick={() => setShowCsvImport(true)}><Upload size={16} /> CSV</Button>
               </div>
             </div>
             <div className="actions-row mb-3 gap-2.5">
-              <SearchBox placeholder="Rechercher..." value={userFilter} onChange={(e) => setUserFilter(e.target.value)} />
+              <SearchBox placeholder={t("common.search")} value={userFilter} onChange={(e) => setUserFilter(e.target.value)} />
               <select className="control" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-                <option value="">Tous roles</option>
-                <option value="student">Etudiant</option>
-                <option value="teacher">Enseignant</option>
+                <option value="">{locale === "fr" ? "Tous rôles" : "All roles"}</option>
+                <option value="student">{locale === "fr" ? "Étudiant" : "Student"}</option>
+                <option value="teacher">{locale === "fr" ? "Enseignant" : "Teacher"}</option>
                 <option value="admin">Admin</option>
               </select>
               <select className="control" value={authFilter} onChange={(e) => setAuthFilter(e.target.value)}>
-                <option value="">Tous providers</option>
+                <option value="">{locale === "fr" ? "Tous providers" : "All providers"}</option>
                 <option value="local">Local</option>
                 <option value="oidc">SSO</option>
               </select>
@@ -214,30 +217,33 @@ function AdminPage() {
               </select>
             </div>
             {users.isLoading ? <LoadingState /> : null}
-            {users.error ? <ErrorState>Impossible de charger les utilisateurs.</ErrorState> : null}
+            {users.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les utilisateurs." : "Unable to load users."}</ErrorState> : null}
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>ID</th>
-                    <th>Nom</th>
+                    <th>{locale === "fr" ? "Nom" : "Name"}</th>
                     <th>Email</th>
                     <th>Auth</th>
                     <th>Role</th>
-                    <th>Statut</th>
-                    <th>Cree le</th>
+                    <th>{locale === "fr" ? "Statut" : "Status"}</th>
+                    <th>{locale === "fr" ? "Créé le" : "Created at"}</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
+                  {!users.isLoading && !users.error && (users.data || []).length === 0 ? (
+                    <tr><td colSpan={8}>{locale === "fr" ? "Aucun utilisateur ne correspond aux filtres." : "No user matches filters."}</td></tr>
+                  ) : null}
                   {(users.data || []).map((user) => (
                     <tr key={user.id}>
                       <td>{user.id}</td>
                       <td>{user.full_name || user.username}</td>
                       <td>{user.email || "N/A"}</td>
                       <td><span className="badge">{authProviderLabel(user.auth_provider)}</span></td>
-                      <td><span className="badge blue">{roleLabel(user.role)}</span></td>
-                      <td><StatusBadge state={user.is_active ? "active" : "error"} /></td>
+                      <td><span className="badge blue">{roleLabel(user.role, locale)}</span></td>
+                      <td><StatusBadge state={user.is_active ? "active" : "inactive"} /></td>
                       <td>{shortDate(user.created_at)}</td>
                       <td>
                         <div className="actions-row gap-1">
@@ -245,9 +251,9 @@ function AdminPage() {
                           <Button onClick={() => setQuotaUser(user)}><Sliders size={14} /></Button>
                           <ConfirmDialog
                             destructive
-                            title="Supprimer l'utilisateur"
-                            description={`Supprimer ${user.username} definitivement ?`}
-                            confirmLabel="Supprimer"
+                            title={locale === "fr" ? "Supprimer l'utilisateur" : "Delete user"}
+                            description={locale === "fr" ? `Supprimer ${user.username} définitivement ?` : `Delete ${user.username} permanently?`}
+                            confirmLabel={t("common.delete")}
                             trigger={<Button variant="danger"><Trash2 size={14} /></Button>}
                             onConfirm={() => deleteUserMut.mutate(user.id)}
                           />
@@ -267,7 +273,7 @@ function AdminPage() {
             <div className="section-head">
               <h2>Templates ({(templates.data || []).length})</h2>
               <Button variant="primary" onClick={() => { setEditTemplate(null); setShowTemplateDialog(true); }}>
-                <Plus size={16} /> Nouveau template
+                <Plus size={16} /> {locale === "fr" ? "Nouveau template" : "New template"}
               </Button>
             </div>
             {templates.isLoading ? <LoadingState /> : null}
@@ -277,37 +283,42 @@ function AdminPage() {
                 <thead>
                   <tr>
                     <th>Key</th>
-                    <th>Nom</th>
+                    <th>{locale === "fr" ? "Nom" : "Name"}</th>
                     <th>Type</th>
                     <th>Image</th>
                     <th>Port</th>
                     <th>Service</th>
                     <th>Tags</th>
-                    <th>Actif</th>
+                    <th>{locale === "fr" ? "Actif" : "Active"}</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(templates.data || []).map((t) => (
-                    <tr key={String(t.key || t.id)}>
-                      <td>{t.key}</td>
-                      <td>{t.name}</td>
-                      <td><span className="badge">{t.deployment_type}</span></td>
-                      <td className="truncate-cell">{t.default_image}</td>
-                      <td>{t.default_port}</td>
-                      <td>{t.default_service_type}</td>
-                      <td className="lab-meta">{(t.tags || []).map((tag) => <span className="badge" key={tag}>{tag}</span>)}</td>
-                      <td><StatusBadge state={t.active ? "active" : "paused"} /></td>
+                  {!templates.isLoading && !templates.error && (templates.data || []).length === 0 ? (
+                    <tr><td colSpan={9}>{locale === "fr" ? "Aucun template configuré." : "No template configured."}</td></tr>
+                  ) : null}
+                  {(templates.data || []).map((template) => (
+                    <tr key={String(template.key || template.id)}>
+                      <td>{template.key}</td>
+                      <td>{template.name}</td>
+                      <td><span className="badge">{template.deployment_type}</span></td>
+                      <td className="truncate-cell">{template.default_image}</td>
+                      <td>{template.default_port}</td>
+                      <td>{template.default_service_type}</td>
+                      <td className="lab-meta">{(template.tags || []).map((tag) => <span className="badge" key={tag}>{tag}</span>)}</td>
+                      <td><StatusBadge state={template.active ? "active" : "paused"} /></td>
                       <td>
                         <div className="actions-row">
-                          <Button onClick={() => { setEditTemplate(t); setShowTemplateDialog(true); }}><Edit2 size={14} /></Button>
+                          <Button onClick={() => { setEditTemplate(template); setShowTemplateDialog(true); }}><Edit2 size={14} /></Button>
                           <ConfirmDialog
                             destructive
-                            title="Supprimer le template"
-                            description={`Supprimer definitivement ${t.name} ?`}
-                            confirmLabel="Supprimer"
+                            title={locale === "fr" ? "Supprimer le template" : "Delete template"}
+                            description={locale === "fr" ? `Supprimer définitivement ${template.name} ?` : `Permanently delete ${template.name}?`}
+                            confirmLabel={t("common.delete")}
                             trigger={<Button variant="danger"><Trash2 size={14} /></Button>}
-                            onConfirm={() => deleteTemplateMut.mutate(String(t.key || t.id))}
+                            onConfirm={() => {
+                              if (template.id != null) deleteTemplateMut.mutate(template.id);
+                            }}
                           />
                         </div>
                       </td>
@@ -324,7 +335,7 @@ function AdminPage() {
             <div className="section-head">
               <h2>Configurations runtime ({(runtimeConfigs.data || []).length})</h2>
               <Button variant="primary" onClick={() => { setEditRuntime(null); setShowRuntimeDialog(true); }}>
-                <Plus size={16} /> Nouvelle config
+                <Plus size={16} /> {locale === "fr" ? "Nouvelle config" : "New config"}
               </Button>
             </div>
             {runtimeConfigs.isLoading ? <LoadingState /> : null}
@@ -339,12 +350,15 @@ function AdminPage() {
                     <th>Service</th>
                     <th>CPU req/lim</th>
                     <th>Mem req/lim</th>
-                    <th>Etudiants</th>
-                    <th>Actif</th>
+                    <th>{locale === "fr" ? "Étudiants" : "Students"}</th>
+                    <th>{locale === "fr" ? "Actif" : "Active"}</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
+                  {!runtimeConfigs.isLoading && !runtimeConfigs.error && (runtimeConfigs.data || []).length === 0 ? (
+                    <tr><td colSpan={9}>{locale === "fr" ? "Aucune configuration runtime." : "No runtime configuration."}</td></tr>
+                  ) : null}
                   {(runtimeConfigs.data || []).map((rc) => (
                     <tr key={rc.id}>
                       <td><strong>{rc.key}</strong></td>
@@ -360,9 +374,9 @@ function AdminPage() {
                           <Button onClick={() => { setEditRuntime(rc); setShowRuntimeDialog(true); }}><Edit2 size={14} /></Button>
                           <ConfirmDialog
                             destructive
-                            title="Supprimer la config"
-                            description={`Supprimer ${rc.key} ?`}
-                            confirmLabel="Supprimer"
+                            title={locale === "fr" ? "Supprimer la config" : "Delete config"}
+                            description={locale === "fr" ? `Supprimer ${rc.key} ?` : `Delete ${rc.key}?`}
+                            confirmLabel={t("common.delete")}
                             trigger={<Button variant="danger"><Trash2 size={14} /></Button>}
                             onConfirm={() => deleteRuntimeMut.mutate(rc.id)}
                           />
@@ -379,27 +393,27 @@ function AdminPage() {
         <TabContent value="labs">
           <section className="metric-grid">
             <MetricCard label="Total" value={fleetStats.total} icon={<Boxes size={18} />} />
-            <MetricCard label="Actifs" value={fleetStats.active} icon={<Activity size={18} />} />
-            <MetricCard label="En pause" value={fleetStats.paused} icon={<PauseCircle size={18} />} />
-            <MetricCard label="Expires" value={fleetStats.expired} icon={<Activity size={18} />} />
+            <MetricCard label={locale === "fr" ? "Actifs" : "Active"} value={fleetStats.active} icon={<Activity size={18} />} />
+            <MetricCard label={locale === "fr" ? "En pause" : "Paused"} value={fleetStats.paused} icon={<PauseCircle size={18} />} />
+            <MetricCard label={locale === "fr" ? "Expirés" : "Expired"} value={fleetStats.expired} icon={<Activity size={18} />} />
           </section>
           <section className="panel mt-4">
             <div className="section-head">
-              <h2>Fleet etudiant ({filteredFleet.length}/{labFleet.data?.length || 0})</h2>
+              <h2>{locale === "fr" ? `Fleet étudiant (${filteredFleet.length}/${labFleet.data?.length || 0})` : `Student fleet (${filteredFleet.length}/${labFleet.data?.length || 0})`}</h2>
               <Button onClick={() => queryClient.invalidateQueries({ queryKey: ["deployments-all"] })}>
-                <RefreshCw size={16} /> Actualiser
+                <RefreshCw size={16} /> {t("overview.refresh")}
               </Button>
             </div>
             <div className="actions-row mb-3 gap-2.5">
-              <SearchBox placeholder="Nom, namespace, proprietaire..." value={labFilter} onChange={(e) => setLabFilter(e.target.value)} />
+              <SearchBox placeholder={locale === "fr" ? "Nom, namespace, propriétaire..." : "Name, namespace, owner..."} value={labFilter} onChange={(e) => setLabFilter(e.target.value)} />
               <select className="control" value={labStatusFilter} onChange={(e) => setLabStatusFilter(e.target.value)}>
-                <option value="">Tous</option>
-                <option value="active">Actifs</option>
-                <option value="paused">En pause</option>
-                <option value="expired">Expires</option>
+                <option value="">{locale === "fr" ? "Tous" : "All"}</option>
+                <option value="active">{locale === "fr" ? "Actifs" : "Active"}</option>
+                <option value="paused">{locale === "fr" ? "En pause" : "Paused"}</option>
+                <option value="expired">{locale === "fr" ? "Expirés" : "Expired"}</option>
               </select>
               <select className="control" value={labTypeFilter} onChange={(e) => setLabTypeFilter(e.target.value)}>
-                <option value="">Tous types</option>
+                <option value="">{locale === "fr" ? "Tous types" : "All types"}</option>
                 {labTypes.map((type) => <option value={type} key={type}>{type}</option>)}
               </select>
             </div>
@@ -410,8 +424,8 @@ function AdminPage() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Nom</th>
-                      <th>Proprietaire</th>
+                      <th>{locale === "fr" ? "Nom" : "Name"}</th>
+                      <th>{locale === "fr" ? "Propriétaire" : "Owner"}</th>
                       <th>Namespace</th>
                       <th>Type</th>
                       <th>Ready</th>
@@ -437,9 +451,9 @@ function AdminPage() {
                               </Button>
                               <ConfirmDialog
                                 destructive
-                                title="Supprimer le lab"
-                                description={`Supprimer ${d.name} ?`}
-                                confirmLabel="Supprimer"
+                                title={locale === "fr" ? "Supprimer le lab" : "Delete lab"}
+                                description={locale === "fr" ? `Supprimer ${d.name} ?` : `Delete ${d.name}?`}
+                                confirmLabel={t("common.delete")}
                                 trigger={<Button variant="danger"><Trash2 size={14} /></Button>}
                                 onConfirm={() => deleteLabMut.mutate(d)}
                               />
@@ -451,6 +465,10 @@ function AdminPage() {
                   </tbody>
                 </table>
               </div>
+            ) : !labFleet.isLoading && !labFleet.error ? (
+              <EmptyState title={locale === "fr" ? "Aucun lab" : "No labs"}>
+                {locale === "fr" ? "Aucun lab étudiant ne correspond aux filtres." : "No student lab matches filters."}
+              </EmptyState>
             ) : null}
           </section>
         </TabContent>
@@ -468,11 +486,3 @@ function AdminPage() {
     </>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <QueryProvider>
-    <AppShell page="admin" requireRole={["admin"]}>
-      {() => <AdminPage />}
-    </AppShell>
-  </QueryProvider>,
-);

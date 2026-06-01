@@ -340,6 +340,14 @@ export interface DeploymentCredential {
   database?: string;
 }
 
+export interface DeploymentCredentialsResponse {
+  type?: string;
+  wordpress?: DeploymentCredential & { email?: string };
+  database?: DeploymentCredential;
+  secrets?: Record<string, string>;
+  [service: string]: DeploymentCredential | Record<string, string> | string | undefined;
+}
+
 export interface UsageEntry {
   name: string;
   namespace: string;

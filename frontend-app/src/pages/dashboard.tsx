@@ -1,9 +1,9 @@
 import "../styles/main.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Cpu, Database, Gauge, Monitor, Plus, RefreshCw } from "lucide-react";
+import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { AppShell, PageHeader } from "../components/AppShell";
+import { useOutletContext } from "react-router-dom";
+import { PageHeader } from "../components/AppShell";
 import { LabCard } from "../components/LabCard";
 import { TemplateCard } from "../components/TemplateCard";
 import {
@@ -16,7 +16,6 @@ import {
   ResourceMeter,
   SearchBox,
   StatusBadge,
-  ToastContainer,
   showToast,
 } from "../components/ui";
 import {
@@ -31,13 +30,16 @@ import {
 } from "../lib/api";
 import { shortDate } from "../lib/format";
 import type { Deployment, PvcInfo, Template, User } from "../types/api";
-import { QueryProvider } from "../lib/query";
 import { LaunchDialog } from "../components/dashboard/LaunchDialog";
 import { DeploymentDetailsDialog } from "../components/dashboard/DeploymentDetailsDialog";
 import { K8sAdminPanel } from "../components/dashboard/K8sAdminPanel";
+import { useI18n } from "../lib/i18n";
 
-function Dashboard({ user }: { user: User }) {
+export default function DashboardPage() {
+  const user = useOutletContext<User>();
   const queryClient = useQueryClient();
+  const { locale, t } = useI18n();
+
   const [templateQuery, setTemplateQuery] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Deployment | null>(null);
@@ -60,7 +62,7 @@ function Dashboard({ user }: { user: User }) {
     mutationFn: (deployment: Deployment) => deleteDeployment(deployment.namespace, deployment.name),
     onSuccess: () => {
       invalidateDashboard();
-      showToast("Lab supprime", "success");
+      showToast(locale === "fr" ? "Lab supprimé" : "Lab deleted", "success");
     },
   });
 
@@ -70,7 +72,9 @@ function Dashboard({ user }: { user: User }) {
     onSuccess: (_data, variables) => {
       invalidateDashboard();
       showToast(
-        variables.action === "pause" ? "Lab mis en pause" : "Lab repris",
+        variables.action === "pause" 
+          ? (locale === "fr" ? "Lab mis en pause" : "Lab paused") 
+          : (locale === "fr" ? "Lab repris" : "Lab resumed"),
         "success",
       );
     },
@@ -80,7 +84,7 @@ function Dashboard({ user }: { user: User }) {
     mutationFn: (pvc: PvcInfo) => deletePvc(pvc.name, Boolean(pvc.bound)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["pvcs"] });
-      showToast("Volume supprime", "success");
+      showToast(locale === "fr" ? "Volume supprimé" : "Volume deleted", "success");
     },
   });
 
@@ -99,10 +103,9 @@ function Dashboard({ user }: { user: User }) {
 
   return (
     <>
-      <ToastContainer />
       <PageHeader
-        title="Mes environnements de TP"
-        subtitle="Lancez vos labs, retrouvez vos fichiers persistants et surveillez les quotas disponibles."
+        title={t("dashboard.title")}
+        subtitle={locale === "fr" ? "Lancez vos labs, retrouvez vos fichiers persistants et surveillez les quotas disponibles." : "Launch your labs, restore your persistent files, and monitor available resource quotas."}
         actions={
           <>
             <Button
@@ -112,34 +115,34 @@ function Dashboard({ user }: { user: User }) {
               }}
             >
               <Plus size={16} />
-              Lancer un lab
+              {t("dashboard.create_lab")}
             </Button>
             <Button onClick={() => void invalidateDashboard()}>
               <RefreshCw size={16} />
-              Actualiser
+              {t("overview.refresh")}
             </Button>
           </>
         }
       />
 
       <section className="metric-grid">
-        <MetricCard label="Labs actifs" value={activeLabs.length} icon={<Boxes size={18} />} />
-        <MetricCard label="Labs prets" value={readyLabs} icon={<Gauge size={18} />} />
-        <MetricCard label="Volumes" value={pvcItems.length} icon={<Database size={18} />} />
-        <MetricCard label="Labs restants" value={quotas.data?.remaining?.apps ?? "-"} icon={<Cpu size={18} />} />
+        <MetricCard label={locale === "fr" ? "Labs actifs" : "Active labs"} value={activeLabs.length} icon={<Boxes size={18} />} />
+        <MetricCard label={locale === "fr" ? "Labs prêts" : "Ready labs"} value={readyLabs} icon={<Gauge size={18} />} />
+        <MetricCard label={locale === "fr" ? "Volumes" : "Volumes"} value={pvcItems.length} icon={<Database size={18} />} />
+        <MetricCard label={locale === "fr" ? "Labs restants" : "Remaining labs"} value={quotas.data?.remaining?.apps ?? "-"} icon={<Cpu size={18} />} />
       </section>
 
       <section className="grid-2">
         <div className="panel">
           <div className="section-head">
-            <h2>Labs actifs</h2>
+            <h2>{locale === "fr" ? "Labs actifs" : "Active labs"}</h2>
             <StatusBadge state={deployments.isFetching ? "starting" : "running"} />
           </div>
           {deployments.isLoading ? <LoadingState /> : null}
-          {deployments.error ? <ErrorState>Impossible de charger les labs.</ErrorState> : null}
+          {deployments.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les labs." : "Unable to load labs."}</ErrorState> : null}
           {!deployments.isLoading && !deployments.error && activeLabs.length === 0 ? (
-            <EmptyState title="Aucun lab actif">
-              Choisissez un template dans le catalogue pour demarrer votre premier environnement.
+            <EmptyState title={t("dashboard.no_labs")}>
+              {locale === "fr" ? "Choisissez un template dans le catalogue pour démarrer votre premier environnement." : "Choose a template from the catalog to start your first environment."}
             </EmptyState>
           ) : null}
           <div className="lab-list">
@@ -155,9 +158,9 @@ function Dashboard({ user }: { user: User }) {
                       window.open(firstUrl, "_blank", "noopener,noreferrer");
                       return;
                     }
-                    showToast("Aucune URL disponible pour ce lab pour le moment.", "error");
+                    showToast(locale === "fr" ? "Aucune URL disponible pour ce lab pour le moment." : "No URL available for this lab at the moment.", "error");
                   } catch {
-                    showToast("Impossible de recuperer l'URL du lab.", "error");
+                    showToast(locale === "fr" ? "Impossible de récupérer l'URL du lab." : "Failed to retrieve lab URL.", "error");
                   }
                 }}
                 onDetails={setDetailsTarget}
@@ -170,21 +173,21 @@ function Dashboard({ user }: { user: User }) {
 
         <div className="panel">
           <div className="section-head">
-            <h2>Ressources</h2>
+            <h2>{locale === "fr" ? "Vos ressources" : "Your resources"}</h2>
             <Button onClick={() => void queryClient.invalidateQueries({ queryKey: ["quotas"] })}>
-              <RefreshCw size={16} /> Refresh
+              <RefreshCw size={16} /> {t("overview.refresh")}
             </Button>
           </div>
           {quotas.isLoading ? <LoadingState /> : null}
-          {quotas.error ? <ErrorState>Quotas indisponibles.</ErrorState> : null}
+          {quotas.error ? <ErrorState>{locale === "fr" ? "Quotas indisponibles." : "Quotas unavailable."}</ErrorState> : null}
           {quotas.data ? (
             <div className="grid gap-3.5">
-              <ResourceMeter label="Applications" used={quotas.data.usage.apps_used} max={quotas.data.limits.max_apps} />
+              <ResourceMeter label={locale === "fr" ? "Applications" : "Applications"} used={quotas.data.usage.apps_used} max={quotas.data.limits.max_apps} />
               <ResourceMeter label="CPU" used={quotas.data.usage.cpu_m_used} max={quotas.data.limits.max_requests_cpu_m} unit="m" />
-              <ResourceMeter label="Memoire" used={quotas.data.usage.mem_mi_used} max={quotas.data.limits.max_requests_mem_mi} unit="Mi" />
+              <ResourceMeter label={locale === "fr" ? "Mémoire" : "Memory"} used={quotas.data.usage.mem_mi_used} max={quotas.data.limits.max_requests_mem_mi} unit="Mi" />
               {quotas.data.limits.max_storage_gi != null ? (
                 <ResourceMeter
-                  label="Stockage"
+                  label={locale === "fr" ? "Stockage" : "Storage"}
                   used={quotas.data.usage.storage_gi_used || 0}
                   max={quotas.data.limits.max_storage_gi}
                   unit="Gi"
@@ -200,17 +203,26 @@ function Dashboard({ user }: { user: User }) {
       <section className="panel" id="lab-catalog">
         <div className="section-head">
           <div>
-            <h2>Catalogue</h2>
-            <p className="muted">Templates autorises pour votre role {user.role}.</p>
+            <h2>{locale === "fr" ? "Catalogue" : "Catalog"}</h2>
+            <p className="muted">
+              {locale === "fr" ? `Templates autorisés pour votre rôle ${user.role}.` : `Templates authorized for your role ${user.role}.`}
+            </p>
           </div>
           <SearchBox
-            placeholder="Rechercher un template"
+            placeholder={locale === "fr" ? "Rechercher un template..." : "Search template..."}
             value={templateQuery}
             onChange={(e) => setTemplateQuery(e.target.value)}
           />
         </div>
         {templates.isLoading ? <LoadingState /> : null}
-        {templates.error ? <ErrorState>Impossible de charger le catalogue.</ErrorState> : null}
+        {templates.error ? <ErrorState>{locale === "fr" ? "Impossible de charger le catalogue." : "Unable to load catalog."}</ErrorState> : null}
+        {!templates.isLoading && !templates.error && filteredTemplates.length === 0 ? (
+          <EmptyState title={locale === "fr" ? "Aucun template" : "No templates"}>
+            {templateQuery
+              ? (locale === "fr" ? "Aucun template ne correspond à la recherche." : "No template matches the search.")
+              : (locale === "fr" ? "Aucun template actif n'est disponible pour votre rôle." : "No active template is available for your role.")}
+          </EmptyState>
+        ) : null}
         <div className="grid-3">
           {filteredTemplates.map((template) => (
             <TemplateCard
@@ -224,15 +236,17 @@ function Dashboard({ user }: { user: User }) {
 
       <section className="panel">
         <div className="section-head">
-          <h2>Volumes persistants</h2>
+          <h2>{locale === "fr" ? "Mes volumes persistants" : "My persistent volumes"}</h2>
           <Button onClick={() => void queryClient.invalidateQueries({ queryKey: ["pvcs"] })}>
-            <RefreshCw size={16} /> Actualiser
+            <RefreshCw size={16} /> {t("overview.refresh")}
           </Button>
         </div>
         {pvcs.isLoading ? <LoadingState /> : null}
-        {pvcs.error ? <ErrorState>Impossible de charger les volumes.</ErrorState> : null}
+        {pvcs.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les volumes." : "Unable to load volumes."}</ErrorState> : null}
         {!pvcs.isLoading && !pvcs.error && pvcItems.length === 0 ? (
-          <EmptyState title="Aucun volume">Les volumes VS Code et Jupyter apparaitront ici apres creation.</EmptyState>
+          <EmptyState title={locale === "fr" ? "Aucun volume" : "No volumes"}>
+            {locale === "fr" ? "Les volumes VS Code et Jupyter apparaîtront ici après création." : "VS Code and Jupyter volumes will appear here after creation."}
+          </EmptyState>
         ) : null}
         {pvcItems.length ? (
           <div className="table-wrap">
@@ -240,13 +254,13 @@ function Dashboard({ user }: { user: User }) {
               <thead>
                 <tr>
                   <th>Volume</th>
-                  <th>Etat</th>
-                  <th>Capacite</th>
+                  <th>{locale === "fr" ? "État" : "State"}</th>
+                  <th>{locale === "fr" ? "Capacité" : "Capacity"}</th>
                   <th>StorageClass</th>
                   {isAdmin ? <th>Namespace</th> : null}
-                  <th>Acces</th>
-                  <th>Dernier lab</th>
-                  <th>Cree le</th>
+                  <th>{locale === "fr" ? "Accès" : "Access"}</th>
+                  <th>{locale === "fr" ? "Dernier lab" : "Last lab"}</th>
+                  <th>{locale === "fr" ? "Créé le" : "Created at"}</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -256,7 +270,9 @@ function Dashboard({ user }: { user: User }) {
                     <td>{pvc.name}</td>
                     <td>
                       <span className={pvc.bound ? "badge amber" : "badge green"}>
-                        {pvc.bound ? `${pvc.phase || "Bound"} - attache` : `${pvc.phase || "Libre"} - disponible`}
+                        {pvc.bound 
+                          ? (locale === "fr" ? `${pvc.phase || "Bound"} - attaché` : `${pvc.phase || "Bound"} - bound`) 
+                          : (locale === "fr" ? `${pvc.phase || "Libre"} - disponible` : `${pvc.phase || "Available"} - free`)}
                       </span>
                     </td>
                     <td>{pvc.storage || "N/A"}</td>
@@ -268,10 +284,10 @@ function Dashboard({ user }: { user: User }) {
                     <td>
                       <ConfirmDialog
                         destructive
-                        title="Supprimer le volume"
-                        description={`Supprimer ${pvc.name} ? Les donnees stockees dans ce volume seront perdues.`}
-                        confirmLabel="Supprimer"
-                        trigger={<Button variant="danger">Supprimer</Button>}
+                        title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                        description={locale === "fr" ? `Supprimer ${pvc.name} ? Les données stockées dans ce volume seront perdues.` : `Delete ${pvc.name}? Data stored in this volume will be permanently lost.`}
+                        confirmLabel={t("common.delete")}
+                        trigger={<Button variant="danger">{t("common.delete")}</Button>}
                         onConfirm={() => deletePvcMutation.mutate(pvc)}
                       />
                     </td>
@@ -292,7 +308,12 @@ function Dashboard({ user }: { user: User }) {
           onCreated={async (created, name) => {
             setSelectedTemplate(null);
             await invalidateDashboard();
-            showToast(`Deploiement de ${name} en cours. Le lab apparaitra pret des que Kubernetes aura termine.`, "info");
+            showToast(
+              locale === "fr"
+                ? `Déploiement de ${name} en cours. Le lab apparaîtra prêt dès que Kubernetes aura terminé.`
+                : `Deployment of ${name} in progress. The lab will appear ready as soon as Kubernetes finishes.`,
+              "info"
+            );
           }}
         />
       ) : null}
@@ -313,6 +334,7 @@ function Dashboard({ user }: { user: User }) {
 }
 
 function NovncDialog({ deployment, onClose }: { deployment: Deployment; onClose: () => void }) {
+  const { locale } = useI18n();
   const details = useQuery({
     queryKey: ["deployment-details", deployment.namespace, deployment.name],
     queryFn: () => getDeploymentDetails(deployment.namespace, deployment.name),
@@ -328,29 +350,23 @@ function NovncDialog({ deployment, onClose }: { deployment: Deployment; onClose:
         onClick={(e) => e.stopPropagation()}
       >
         <div className="section-head border-b border-[var(--border)] px-4 py-3">
-          <h2>{deployment.name} — Bureau NoVNC</h2>
+          <h2>{deployment.name} — {locale === "fr" ? "Bureau NoVNC" : "NoVNC Desktop"}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Fermer">
-            <Monitor size={17} />
+            <X size={17} />
           </button>
         </div>
         {details.isLoading ? (
           <div className="grid flex-1 place-items-center">
-            <span className="muted">Chargement...</span>
+            <span className="muted">{locale === "fr" ? "Chargement..." : "Loading..."}</span>
           </div>
         ) : novncUrl ? (
           <iframe className="w-full flex-1 border-0" src={novncUrl} title="NoVNC" />
         ) : (
           <div className="grid flex-1 place-items-center">
-            <span className="muted">NoVNC non disponible pour ce lab.</span>
+            <span className="muted">{locale === "fr" ? "NoVNC non disponible pour ce lab." : "NoVNC not available for this lab."}</span>
           </div>
         )}
       </div>
     </div>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <QueryProvider>
-    <AppShell page="dashboard">{(user) => <Dashboard user={user} />}</AppShell>
-  </QueryProvider>,
-);

@@ -1,10 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search, Upload, UserPlus, X } from "lucide-react";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
 import type { User } from "../../types/api";
 import { createAndEnrollStudent, enrollStudents, importStudentsCsv, searchStudents } from "../../lib/api";
 import { Button, ErrorState, IconButton, LoadingState, showToast } from "../ui";
@@ -25,11 +22,18 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [newStudent, setNewStudent] = useState({ username: "", email: "", full_name: "", password: "" });
 
+  const refreshClassroomData = () => {
+    queryClient.invalidateQueries({ queryKey: ["classroom-students", classroomId] });
+    queryClient.invalidateQueries({ queryKey: ["lab-status", classroomId] });
+    queryClient.invalidateQueries({ queryKey: ["classrooms"] });
+    queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+  };
+
   const enrollMutation = useMutation({
     mutationFn: (userIds: number[]) => enrollStudents(classroomId, userIds),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["classroom-students", classroomId] });
-      showToast("Etudiants inscrits", "success");
+      refreshClassroomData();
+      showToast("Étudiants inscrits", "success");
       onOpenChange(false);
       reset();
     },
@@ -38,8 +42,8 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
   const csvMutation = useMutation({
     mutationFn: (file: File) => importStudentsCsv(classroomId, file),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["classroom-students", classroomId] });
-      showToast("Etudiants importes", "success");
+      refreshClassroomData();
+      showToast("Étudiants importés", "success");
       onOpenChange(false);
       reset();
     },
@@ -48,8 +52,8 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
   const createMutation = useMutation({
     mutationFn: () => createAndEnrollStudent(classroomId, newStudent),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["classroom-students", classroomId] });
-      showToast("Compte etudiant cree et inscrit", "success");
+      refreshClassroomData();
+      showToast("Compte étudiant créé et inscrit", "success");
       onOpenChange(false);
       reset();
     },
@@ -91,7 +95,7 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
         <Dialog.Content className="dialog-content panel">
           <div className="section-head">
             <Dialog.Title asChild>
-              <h2>Ajouter des etudiants</h2>
+              <h2>Ajouter des étudiants</h2>
             </Dialog.Title>
             <Dialog.Close asChild>
               <IconButton aria-label="Fermer"><X size={17} /></IconButton>
@@ -103,7 +107,7 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
               <Search size={16} /> Rechercher
             </Button>
             <Button variant={mode === "create" ? "primary" : "default"} onClick={() => setMode("create")}>
-              <UserPlus size={16} /> Creer un compte
+              <UserPlus size={16} /> Créer un compte
             </Button>
             <Button variant={mode === "csv" ? "primary" : "default"} onClick={() => setMode("csv")}>
               <Upload size={16} /> CSV
@@ -148,11 +152,17 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
                     </tbody>
                   </table>
                 </div>
+              ) : query.trim() && !searching ? (
+                <div className="empty-state">
+                  <strong>Aucun étudiant trouvé</strong>
+                  <span>Essayez avec un autre nom d'utilisateur ou email.</span>
+                </div>
               ) : null}
+              {enrollMutation.error ? <ErrorState>{enrollMutation.error.message}</ErrorState> : null}
               <div className="actions-row justify-end">
                 <Button onClick={() => onOpenChange(false)}>Annuler</Button>
                 <Button variant="primary" disabled={selected.size === 0 || enrollMutation.isPending} onClick={() => enrollMutation.mutate([...selected])}>
-                  {enrollMutation.isPending ? "Inscription..." : `Inscrire ${selected.size} etudiant(s)`}
+                  {enrollMutation.isPending ? "Inscription..." : `Inscrire ${selected.size} étudiant(s)`}
                 </Button>
               </div>
             </div>
@@ -193,10 +203,10 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
                   type="password"
                   value={newStudent.password}
                   onChange={(e) => setNewStudent((prev) => ({ ...prev, password: e.target.value }))}
-                  placeholder="12 caracteres min."
+                  placeholder="12 caractères min."
                 />
               </div>
-              <p className="muted field full">Le mot de passe doit contenir au moins 12 caracteres, une majuscule, une minuscule, un chiffre et un caractere special.</p>
+              <p className="muted field full">Le mot de passe doit contenir au moins 12 caractères, une majuscule, une minuscule, un chiffre et un caractère spécial.</p>
               {createMutation.error ? <ErrorState>{createMutation.error.message}</ErrorState> : null}
               <div className="actions-row field full justify-end">
                 <Button onClick={() => setMode("search")}>Retour</Button>
@@ -205,7 +215,7 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
                   disabled={!newStudent.username || !newStudent.email || !newStudent.password || createMutation.isPending}
                   onClick={() => createMutation.mutate()}
                 >
-                  {createMutation.isPending ? "Creation..." : "Creer et inscrire"}
+                  {createMutation.isPending ? "Création..." : "Créer et inscrire"}
                 </Button>
               </div>
             </div>

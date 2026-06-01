@@ -39,7 +39,8 @@ export function ClassroomDialog({
     mutationFn: (data: FormData) => createClassroom(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["classrooms"] });
-      showToast("Classe creee", "success");
+      queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+      showToast("Classe créée", "success");
       onOpenChange(false);
       resetAndClose();
     },
@@ -49,7 +50,8 @@ export function ClassroomDialog({
     mutationFn: (data: FormData) => updateClassroom(classroom!.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["classrooms"] });
-      showToast("Classe mise a jour", "success");
+      queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+      showToast("Classe mise à jour", "success");
       onOpenChange(false);
       resetAndClose();
     },
@@ -59,7 +61,9 @@ export function ClassroomDialog({
     mutationFn: (file: File) => importStudentsCsv(classroom!.id, file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["classroom-students"] });
-      showToast("Etudiants importes", "success");
+      queryClient.invalidateQueries({ queryKey: ["classrooms"] });
+      queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+      showToast("Étudiants importés", "success");
       setStep("form");
       setCsvFile(null);
     },
@@ -104,7 +108,7 @@ export function ClassroomDialog({
               <div className="actions-row field full justify-between">
                 {isEdit ? (
                   <Button type="button" onClick={() => setStep("csv")}>
-                    <Upload size={16} /> Importer etudiants (CSV)
+                    <Upload size={16} /> Importer étudiants (CSV)
                   </Button>
                 ) : (
                   <span />
@@ -112,7 +116,7 @@ export function ClassroomDialog({
                 <div className="actions-row">
                   <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
                   <Button variant="primary" type="submit" disabled={mutation.isPending}>
-                    {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre a jour" : "Creer"}
+                    {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre à jour" : "Créer"}
                   </Button>
                 </div>
               </div>

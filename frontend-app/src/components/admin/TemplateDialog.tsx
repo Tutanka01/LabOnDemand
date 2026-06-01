@@ -59,7 +59,8 @@ export function TemplateDialog({
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["templates-all"] });
-      showToast("Template cree", "success");
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      showToast("Template créé", "success");
       onOpenChange(false);
     },
   });
@@ -72,7 +73,8 @@ export function TemplateDialog({
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["templates-all"] });
-      showToast("Template mis a jour", "success");
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      showToast("Template mis à jour", "success");
       onOpenChange(false);
     },
   });
@@ -99,10 +101,10 @@ export function TemplateDialog({
             <div className="field"><label>Key</label><input {...form.register("key")} disabled={isEdit} /></div>
             <div className="field"><label>Nom</label><input {...form.register("name")} /></div>
             <div className="field full"><label>Description</label><input {...form.register("description")} /></div>
-            <div className="field"><label>Icone (emoji)</label><input {...form.register("icon")} /></div>
-            <div className="field"><label>Type de deploiement</label><input {...form.register("deployment_type")} placeholder="custom, vscode, jupyter..." /></div>
-            <div className="field"><label>Image par defaut</label><input {...form.register("default_image")} /></div>
-            <div className="field"><label>Port par defaut</label><input type="number" {...form.register("default_port", { valueAsNumber: true })} /></div>
+            <div className="field"><label>Icône (emoji ou nom)</label><input {...form.register("icon")} /></div>
+            <div className="field"><label>Type de déploiement</label><input {...form.register("deployment_type")} placeholder="custom, vscode, jupyter..." /></div>
+            <div className="field"><label>Image par défaut</label><input {...form.register("default_image")} /></div>
+            <div className="field"><label>Port par défaut</label><input type="number" {...form.register("default_port", { valueAsNumber: true })} /></div>
             <div className="field">
               <label>Type de service</label>
               <select {...form.register("default_service_type")}>
@@ -111,14 +113,14 @@ export function TemplateDialog({
                 <option value="LoadBalancer">LoadBalancer</option>
               </select>
             </div>
-            <div className="field full"><label>Tags (separes par des virgules)</label><input {...form.register("tags")} /></div>
+            <div className="field full"><label>Tags (séparés par des virgules)</label><input {...form.register("tags")} /></div>
             <div className="field">
               <label className="flex items-center gap-2"><input type="checkbox" {...form.register("active")} />Actif</label>
             </div>
             <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "..." : isEdit ? "Mettre a jour" : "Creer"}
+                {mutation.isPending ? "..." : isEdit ? "Mettre à jour" : "Créer"}
               </Button>
             </div>
           </form>

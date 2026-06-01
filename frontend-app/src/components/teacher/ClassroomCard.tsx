@@ -21,7 +21,8 @@ export function ClassroomCard({
     mutationFn: () => deleteClassroom(classroom.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["classrooms"] });
-      showToast("Classe archivee", "success");
+      queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+      showToast("Classe archivée", "success");
     },
   });
 
@@ -41,7 +42,7 @@ export function ClassroomCard({
         </div>
         <div className="actions-row">
           <Button onClick={() => onSelect(classroom.id)}>
-            <Users size={16} /> Gerer
+            <Users size={16} /> Gérer
           </Button>
           <Button onClick={() => onEdit(classroom)}>
             <Edit2 size={16} />
@@ -57,9 +58,9 @@ export function ClassroomCard({
         </div>
       </div>
       <div className="lab-meta mt-2.5">
-        <span className="badge">{classroom.student_count || 0} etudiants</span>
+        <span className="badge">{classroom.student_count || 0} étudiants</span>
         <span className="badge">{classroom.active_assignment_count || 0} devoirs</span>
-        {classroom.created_at ? <span className="badge">Cree {shortDate(classroom.created_at)}</span> : null}
+        {classroom.created_at ? <span className="badge">Créée {shortDate(classroom.created_at)}</span> : null}
       </div>
     </article>
   );

@@ -1,13 +1,16 @@
 import "../styles/main.css";
 import { LogIn, Lock } from "lucide-react";
 import { useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui";
+import { useI18n } from "../lib/i18n";
 
-function AccessDenied() {
+export default function AccessDeniedPage() {
+  const navigate = useNavigate();
+  const { locale, t } = useI18n();
+  const [searchParams] = useSearchParams();
+  const requiredRole = searchParams.get("role");
   const [countdown, setCountdown] = useState(8);
-  const params = new URLSearchParams(window.location.search);
-  const requiredRole = params.get("role");
 
   useEffect(() => {
     const timer = window.setInterval(() => setCountdown((value) => Math.max(value - 1, 0)), 1000);
@@ -15,29 +18,32 @@ function AccessDenied() {
   }, []);
 
   useEffect(() => {
-    if (countdown === 0) window.location.href = "index.html";
-  }, [countdown]);
+    if (countdown === 0) navigate("/");
+  }, [countdown, navigate]);
 
   return (
     <main className="auth-form-panel min-h-screen">
       <section className="card auth-card">
         <Lock size={28} />
-        <h1>Acces refuse</h1>
+        <h1>{t("error.forbidden") || "Accès refusé"}</h1>
         <p className="sub">
-          Votre role ne permet pas d'ouvrir cette page
-          {requiredRole ? `; role requis: ${requiredRole}.` : "."}
+          {locale === "fr" 
+            ? `Votre rôle ne permet pas d'ouvrir cette page${requiredRole ? `; rôle requis: ${requiredRole}.` : "."}`
+            : `Your role does not allow you to open this page${requiredRole ? `; required role: ${requiredRole}.` : "."}`}
         </p>
-        <span className="badge blue">Retour automatique dans {countdown}s</span>
-        <Button id="back-to-home" variant="primary" onClick={() => (window.location.href = "index.html")}>
-          Retour au dashboard
+        <span className="badge blue">
+          {locale === "fr" 
+            ? `Retour automatique dans ${countdown}s` 
+            : `Redirecting in ${countdown}s`}
+        </span>
+        <Button id="back-to-home" variant="primary" onClick={() => navigate("/")}>
+          {locale === "fr" ? "Retour au dashboard" : "Back to dashboard"}
         </Button>
-        <Button onClick={() => (window.location.href = "login.html")}>
+        <Button onClick={() => navigate("/login")}>
           <LogIn size={16} />
-          Changer de compte
+          {locale === "fr" ? "Changer de compte" : "Switch account"}
         </Button>
       </section>
     </main>
   );
 }
-
-createRoot(document.getElementById("root")!).render(<AccessDenied />);

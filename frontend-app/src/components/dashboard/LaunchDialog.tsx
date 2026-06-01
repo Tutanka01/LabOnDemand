@@ -2,12 +2,13 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
+import { useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { createDeployment, getResourcePresets } from "../../lib/api";
+import { createDeployment, getQuotas, getResourcePresets } from "../../lib/api";
 import { defaultRuntime } from "../../lib/format";
 import type { PvcInfo, Template } from "../../types/api";
-import { Button, ErrorState, FormField, IconButton, LoadingState } from "../ui";
+import { Button, ErrorState, FormField, IconButton, LoadingState, ResourceMeter } from "../ui";
 
 const launchSchema = z.object({
   name: z.string().min(3, "Nom trop court").regex(/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, "Nom DNS Kubernetes invalide"),
@@ -15,6 +16,7 @@ const launchSchema = z.object({
   ram: z.string().min(1),
   image: z.string().min(1, "Image requise"),
   replicas: z.number().min(1).max(5),
+  createService: z.boolean(),
   serviceType: z.enum(["ClusterIP", "NodePort", "LoadBalancer"]),
   servicePort: z.number().min(1).max(65535),
   serviceTargetPort: z.number().min(1).max(65535),
@@ -22,6 +24,23 @@ const launchSchema = z.object({
 });
 
 type LaunchForm = z.infer<typeof launchSchema>;
+
+function parseCpuMillicores(value?: string) {
+  if (!value) return 0;
+  const raw = value.endsWith("m") ? value.slice(0, -1) : value;
+  const numeric = Number(raw);
+  if (Number.isNaN(numeric)) return 0;
+  return value.endsWith("m") ? numeric : numeric * 1000;
+}
+
+function parseMemoryMi(value?: string) {
+  if (!value) return 0;
+  const numeric = Number(value.replace(/[^\d.]/g, ""));
+  if (Number.isNaN(numeric)) return 0;
+  if (value.toLowerCase().endsWith("gi")) return numeric * 1024;
+  if (value.toLowerCase().endsWith("ki")) return numeric / 1024;
+  return numeric;
+}
 
 export function LaunchDialog({
   template,
@@ -39,6 +58,7 @@ export function LaunchDialog({
   const deploymentType = template.deployment_type || template.key || String(template.id || "custom");
   const runtime = defaultRuntime(deploymentType);
   const presets = useQuery({ queryKey: ["resource-presets"], queryFn: getResourcePresets, staleTime: 300_000 });
+  const quotas = useQuery({ queryKey: ["quotas"], queryFn: getQuotas, staleTime: 30_000 });
   const createMutation = useMutation({
     mutationFn: createDeployment,
     onSuccess: (created, variables) => onCreated(created, variables.name),
@@ -62,6 +82,7 @@ export function LaunchDialog({
       ram: optionValue(memoryPresets[Math.min(1, memoryPresets.length - 1)]),
       image: template.default_image || runtime.image,
       replicas: 1,
+      createService: true,
       serviceType: (template.default_service_type as LaunchForm["serviceType"]) || (runtime.serviceType as LaunchForm["serviceType"]),
       servicePort: Number(template.default_port || runtime.port),
       serviceTargetPort: Number(template.default_port || runtime.target),
@@ -76,7 +97,7 @@ export function LaunchDialog({
       name: values.name,
       image: values.image,
       replicas: values.replicas,
-      create_service: deploymentType !== "custom" ? true : values.serviceType !== "ClusterIP",
+      create_service: deploymentType === "custom" ? values.createService : true,
       service_port: values.servicePort,
       service_target_port: values.serviceTargetPort,
       service_type: values.serviceType,
@@ -91,6 +112,28 @@ export function LaunchDialog({
 
   const pvcSupported = deploymentType === "vscode" || deploymentType === "jupyter";
   const custom = deploymentType === "custom";
+  const watchedCpu = form.watch("cpu");
+  const watchedRam = form.watch("ram");
+  const watchedReplicas = form.watch("replicas") || 1;
+  const watchedCreateService = form.watch("createService");
+  const [cpuRequest, cpuLimit] = (watchedCpu || "").split("|");
+  const [memoryRequest, memoryLimit] = (watchedRam || "").split("|");
+  const projected = useMemo(() => {
+    const replicas = custom ? watchedReplicas : 1;
+    const multiPod = deploymentType === "wordpress" || deploymentType === "mysql" || deploymentType === "lamp";
+    const pods = multiPod ? 2 : replicas;
+    const cpuM = parseCpuMillicores(cpuRequest) * pods;
+    const memMi = parseMemoryMi(memoryRequest) * pods;
+    return { apps: 1, pods, cpuM, memMi };
+  }, [cpuRequest, custom, deploymentType, memoryRequest, watchedReplicas]);
+  const quotaOverages = useMemo(() => {
+    if (!quotas.data) return [];
+    const over: string[] = [];
+    if (quotas.data.usage.apps_used + projected.apps > quotas.data.limits.max_apps) over.push("applications");
+    if (quotas.data.usage.cpu_m_used + projected.cpuM > quotas.data.limits.max_requests_cpu_m) over.push("CPU");
+    if (quotas.data.usage.mem_mi_used + projected.memMi > quotas.data.limits.max_requests_mem_mi) over.push("mémoire");
+    return over;
+  }, [projected, quotas.data]);
 
   return (
     <Dialog.Root open onOpenChange={onOpenChange}>
@@ -108,12 +151,12 @@ export function LaunchDialog({
             </Dialog.Close>
           </div>
           <form className="form-grid" onSubmit={submit}>
-            <FormField label="Nom du deploiement" error={form.formState.errors.name?.message} full required>
+            <FormField label="Nom du déploiement" error={form.formState.errors.name?.message} full required>
               <input id="name" {...form.register("name")} />
             </FormField>
 
             <FormField label="CPU" full={false}>
-              <select id="cpu" disabled={student} {...form.register("cpu")}>
+              <select id="cpu" aria-disabled={student} tabIndex={student ? -1 : undefined} className={student ? "disabled" : undefined} {...form.register("cpu")}>
                 {cpuPresets.map((preset) => (
                   <option value={optionValue(preset)} key={optionValue(preset)}>
                     {preset.label} ({preset.request}/{preset.limit})
@@ -122,8 +165,8 @@ export function LaunchDialog({
               </select>
             </FormField>
 
-            <FormField label="Memoire" full={false}>
-              <select id="ram" disabled={student} {...form.register("ram")}>
+            <FormField label="Mémoire" full={false}>
+              <select id="ram" aria-disabled={student} tabIndex={student ? -1 : undefined} className={student ? "disabled" : undefined} {...form.register("ram")}>
                 {memoryPresets.map((preset) => (
                   <option value={optionValue(preset)} key={optionValue(preset)}>
                     {preset.label} ({preset.request}/{preset.limit})
@@ -137,36 +180,48 @@ export function LaunchDialog({
                 <FormField label="Image Docker" full required>
                   <input id="image" {...form.register("image")} />
                 </FormField>
-                <FormField label="Replicas" full={false}>
+                <FormField label="Réplicas" full={false}>
                   <input
                     id="replicas"
                     type="number"
                     min={1}
                     max={student ? 1 : 5}
-                    disabled={student}
+                    aria-disabled={student}
+                    className={student ? "disabled" : undefined}
+                    tabIndex={student ? -1 : undefined}
                     {...form.register("replicas", { valueAsNumber: true })}
                   />
                 </FormField>
-                <FormField label="Service" full={false}>
-                  <select id="serviceType" {...form.register("serviceType")}>
-                    <option value="ClusterIP">ClusterIP</option>
-                    <option value="NodePort">NodePort</option>
-                    <option value="LoadBalancer">LoadBalancer</option>
-                  </select>
+                <FormField label="Accès réseau" full={false}>
+                  <label className="flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] px-2.5">
+                    <input type="checkbox" {...form.register("createService")} />
+                    Créer un service Kubernetes
+                  </label>
                 </FormField>
-                <FormField label="Port externe" full={false}>
-                  <input id="servicePort" type="number" {...form.register("servicePort", { valueAsNumber: true })} />
-                </FormField>
-                <FormField label="Port conteneur" full={false}>
-                  <input id="serviceTargetPort" type="number" {...form.register("serviceTargetPort", { valueAsNumber: true })} />
-                </FormField>
+                {watchedCreateService ? (
+                  <>
+                    <FormField label="Type de service" full={false}>
+                      <select id="serviceType" {...form.register("serviceType")}>
+                        <option value="ClusterIP">ClusterIP</option>
+                        <option value="NodePort">NodePort</option>
+                        <option value="LoadBalancer">LoadBalancer</option>
+                      </select>
+                    </FormField>
+                    <FormField label="Port externe" full={false}>
+                      <input id="servicePort" type="number" {...form.register("servicePort", { valueAsNumber: true })} />
+                    </FormField>
+                    <FormField label="Port conteneur" full={false}>
+                      <input id="serviceTargetPort" type="number" {...form.register("serviceTargetPort", { valueAsNumber: true })} />
+                    </FormField>
+                  </>
+                ) : null}
               </>
             ) : null}
 
             {pvcSupported ? (
               <FormField label="Volume persistant" full>
                 <select id="existingPvcName" {...form.register("existingPvcName")}>
-                  <option value="">Creer un nouveau volume</option>
+                  <option value="">Créer un nouveau volume</option>
                   {pvcs.map((pvc) => (
                     <option value={pvc.name} key={pvc.name}>
                       {pvc.name} - {pvc.storage || "taille inconnue"}
@@ -176,12 +231,33 @@ export function LaunchDialog({
               </FormField>
             ) : null}
 
-            {presets.isLoading ? <LoadingState label="Chargement des presets ressources" /> : null}
-            {student ? <p className="muted field full">Les ressources CPU/RAM sont fixees par la politique etudiante.</p> : null}
+            <div className="field full rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-3">
+              <strong>Résumé du lancement</strong>
+              <div className="lab-meta mt-2">
+                <span className="badge">Pods estimés: {projected.pods}</span>
+                <span className="badge">CPU: {cpuRequest || "-"} / {cpuLimit || "-"}</span>
+                <span className="badge">Mémoire: {memoryRequest || "-"} / {memoryLimit || "-"}</span>
+              </div>
+              {quotas.data ? (
+                <div className="grid gap-2 pt-3">
+                  <ResourceMeter label="Applications après lancement" used={quotas.data.usage.apps_used + projected.apps} max={quotas.data.limits.max_apps} />
+                  <ResourceMeter label="CPU après lancement" used={quotas.data.usage.cpu_m_used + projected.cpuM} max={quotas.data.limits.max_requests_cpu_m} unit="m" />
+                  <ResourceMeter label="Mémoire après lancement" used={quotas.data.usage.mem_mi_used + projected.memMi} max={quotas.data.limits.max_requests_mem_mi} unit="Mi" />
+                </div>
+              ) : null}
+            </div>
+
+            {presets.isLoading || quotas.isLoading ? <LoadingState label="Chargement des politiques de ressources" /> : null}
+            {student ? <p className="muted field full">Les ressources CPU/RAM sont fixées par la politique étudiante côté serveur.</p> : null}
+            {quotaOverages.length ? (
+              <ErrorState title="Quota insuffisant">
+                Le lancement dépasserait: {quotaOverages.join(", ")}.
+              </ErrorState>
+            ) : null}
             {createMutation.error ? <ErrorState>{createMutation.error.message}</ErrorState> : null}
             <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
-              <Button variant="primary" type="submit" disabled={createMutation.isPending}>
+              <Button variant="primary" type="submit" disabled={createMutation.isPending || quotaOverages.length > 0}>
                 {createMutation.isPending ? "Lancement..." : "Lancer le lab"}
               </Button>
             </div>

@@ -60,7 +60,9 @@ export function AssignmentDialog({
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assignments", classroomId] });
-      showToast("Devoir cree", "success");
+      queryClient.invalidateQueries({ queryKey: ["classrooms"] });
+      queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+      showToast("Devoir créé", "success");
       onOpenChange(false);
     },
   });
@@ -69,7 +71,9 @@ export function AssignmentDialog({
     mutationFn: (data: FormData) => updateAssignment(classroomId, assignment!.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assignments", classroomId] });
-      showToast("Devoir mis a jour", "success");
+      queryClient.invalidateQueries({ queryKey: ["classrooms"] });
+      queryClient.invalidateQueries({ queryKey: ["teacher-dashboard"] });
+      showToast("Devoir mis à jour", "success");
       onOpenChange(false);
     },
   });
@@ -113,7 +117,7 @@ export function AssignmentDialog({
             <div className="field full">
               <label htmlFor="template_key">Template</label>
               <select id="template_key" {...form.register("template_key")}>
-                <option value="">Selectionner un template (optionnel)</option>
+                <option value="">Sélectionner un template (optionnel)</option>
                 {templates.map((t) => (
                   <option key={t.key} value={t.key}>{t.name}</option>
                 ))}
@@ -141,7 +145,7 @@ export function AssignmentDialog({
                 className="min-h-[100px] resize-y"
                 id="instructions"
                 rows={5}
-                placeholder="Decrivez le devoir en markdown..."
+                placeholder="Décrivez le devoir en markdown..."
                 {...form.register("instructions")}
               />
             </div>
@@ -153,7 +157,7 @@ export function AssignmentDialog({
             <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre a jour" : "Creer le devoir"}
+                {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre à jour" : "Créer le devoir"}
               </Button>
             </div>
           </form>

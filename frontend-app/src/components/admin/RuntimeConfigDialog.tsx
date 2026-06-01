@@ -1,12 +1,12 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { RuntimeConfig } from "../../types/api";
 import { createRuntimeConfig, updateRuntimeConfig } from "../../lib/api";
-import { Button, ErrorState, IconButton, LoadingState, showToast } from "../ui";
+import { Button, ErrorState, IconButton, showToast } from "../ui";
 
 const schema = z.object({
   key: z.string().min(2).max(50),
@@ -55,7 +55,9 @@ export function RuntimeConfigDialog({
     mutationFn: (data: FormData) => createRuntimeConfig(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-configs"] });
-      showToast("Runtime cree", "success");
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      queryClient.invalidateQueries({ queryKey: ["resource-presets"] });
+      showToast("Runtime créé", "success");
       onOpenChange(false);
     },
   });
@@ -64,7 +66,9 @@ export function RuntimeConfigDialog({
     mutationFn: (data: FormData) => updateRuntimeConfig(config!.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["runtime-configs"] });
-      showToast("Runtime mis a jour", "success");
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      queryClient.invalidateQueries({ queryKey: ["resource-presets"] });
+      showToast("Runtime mis à jour", "success");
       onOpenChange(false);
     },
   });
@@ -104,7 +108,7 @@ export function RuntimeConfigDialog({
             <div className="field"><label>CPU limit</label><input {...form.register("min_cpu_limit")} /></div>
             <div className="field"><label>Memory limit</label><input {...form.register("min_memory_limit")} /></div>
             <div className="field">
-              <label className="flex items-center gap-2"><input type="checkbox" {...form.register("allowed_for_students")} />Etudiants autorises</label>
+              <label className="flex items-center gap-2"><input type="checkbox" {...form.register("allowed_for_students")} />Étudiants autorisés</label>
             </div>
             <div className="field">
               <label className="flex items-center gap-2"><input type="checkbox" {...form.register("active")} />Actif</label>
@@ -112,7 +116,7 @@ export function RuntimeConfigDialog({
             <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "..." : isEdit ? "Mettre a jour" : "Creer"}
+                {mutation.isPending ? "..." : isEdit ? "Mettre à jour" : "Créer"}
               </Button>
             </div>
           </form>

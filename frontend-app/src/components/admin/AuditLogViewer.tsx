@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Download, Eye, RefreshCw, Search } from "lucide-react";
+import { Download, Eye, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { AuditLogEntry } from "../../types/api";
 import { exportAuditLogs, getAuditLogs, getAuditLogStats } from "../../lib/api";
 import { fullDate } from "../../lib/format";
-import { Button, EmptyState, ErrorState, LoadingState, MetricCard, Pagination, SearchBox, StatusBadge, showToast } from "../ui";
+import { Button, EmptyState, ErrorState, LoadingState, MetricCard, Pagination, SearchBox, showToast } from "../ui";
 
 export function AuditLogViewer() {
   const [page, setPage] = useState(1);
@@ -155,6 +155,7 @@ export function AuditLogViewer() {
           </select>
           <Button onClick={() => { setSearch(""); setEvent(""); setCategory(""); setLevel(""); setUsername(""); setDateFrom(""); setDateTo(""); setPage(1); }}>
             <RefreshCw size={16} />
+            <span>Réinitialiser</span>
           </Button>
         </div>
 
@@ -195,6 +196,8 @@ export function AuditLogViewer() {
             </div>
             <Pagination page={page} totalPages={totalPages} onChange={setPage} />
           </>
+        ) : !logs.isLoading && !logs.error ? (
+          <EmptyState title="Aucun log">{search || event || category || level || username || dateFrom || dateTo ? "Aucun événement ne correspond aux filtres." : "Aucun événement d'audit disponible."}</EmptyState>
         ) : null}
       </section>
 

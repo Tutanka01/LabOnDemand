@@ -2,12 +2,13 @@ import "../styles/main.css";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRight, FlaskConical, Lock, ShieldCheck, User } from "lucide-react";
-import { createRoot } from "react-dom/client";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
+import { useNavigate, Link } from "react-router-dom";
 import { z } from "zod";
 import { Button, ErrorState, LoadingState } from "../components/ui";
 import { getCurrentUser, getSsoStatus, login } from "../lib/api";
-import { QueryProvider } from "../lib/query";
+import { useI18n } from "../lib/i18n";
 
 const schema = z.object({
   username: z.string().min(1),
@@ -16,7 +17,10 @@ const schema = z.object({
 
 type LoginForm = z.infer<typeof schema>;
 
-function LoginPage() {
+export default function LoginPage() {
+  const navigate = useNavigate();
+  const { locale, t } = useI18n();
+
   const shouldCheckExistingSession = sessionStorage.getItem("user") !== null;
   const session = useQuery({
     queryKey: ["me"],
@@ -30,13 +34,18 @@ function LoginPage() {
     mutationFn: (values: LoginForm) => login(values.username, values.password),
     onSuccess: (data) => {
       sessionStorage.setItem("user", JSON.stringify(data.user));
-      window.location.href = "index.html";
+      navigate("/");
     }
   });
 
+  useEffect(() => {
+    if (session.data) {
+      navigate("/");
+    }
+  }, [session.data, navigate]);
+
   if (session.data) {
-    window.location.href = "index.html";
-    return <LoadingState label="Session active" />;
+    return <LoadingState label={locale === "fr" ? "Session active" : "Active session"} />;
   }
 
   return (
@@ -49,12 +58,12 @@ function LoginPage() {
           <span>LabOnDemand</span>
         </div>
         <div className="auth-copy">
-          <h1>Acces direct a vos environnements pedagogiques.</h1>
-          <p className="muted">Une interface claire pour demarrer, pauser et retrouver vos labs Kubernetes.</p>
+          <h1>{locale === "fr" ? "Accès direct à vos environnements pédagogiques." : "Direct access to your learning environments."}</h1>
+          <p className="muted">{locale === "fr" ? "Une interface claire pour démarrer, pauser et retrouver vos labs Kubernetes." : "A clean interface to launch, pause, and restore your Kubernetes labs."}</p>
           <div className="auth-list">
-            <span>Templates controles par role</span>
-            <span>Volumes persistants visibles</span>
-            <span>Quotas et etats de labs en temps reel</span>
+            <span>{locale === "fr" ? "Templates contrôlés par rôle" : "Role-controlled templates"}</span>
+            <span>{locale === "fr" ? "Volumes persistants visibles" : "Visible persistent volumes"}</span>
+            <span>{locale === "fr" ? "Quotas et états de labs en temps réel" : "Real-time quotas and lab statuses"}</span>
           </div>
         </div>
         <span className="muted">© 2026 LabOnDemand</span>
@@ -63,34 +72,37 @@ function LoginPage() {
       <section className="auth-form-panel">
         <form className="card auth-card" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
           <div>
-            <h1>Connexion</h1>
-            <p className="sub">Connectez-vous pour acceder a vos laboratoires.</p>
+            <h1>{t("login.title")}</h1>
+            <p className="sub">{t("login.info")}</p>
           </div>
-          {mutation.error ? <ErrorState title="Connexion impossible">{mutation.error.message}</ErrorState> : null}
+          {mutation.error ? <ErrorState title={t("login.error")}>{mutation.error.message}</ErrorState> : null}
           <div className="field">
             <label htmlFor="username">
-              <User size={16} /> Nom d'utilisateur
+              <User size={16} /> {t("login.username")}
             </label>
             <input id="username" autoComplete="username" {...form.register("username")} />
           </div>
           <div className="field">
             <label htmlFor="password">
-              <Lock size={16} /> Mot de passe
+              <Lock size={16} /> {t("login.password")}
             </label>
             <input id="password" type="password" autoComplete="current-password" {...form.register("password")} />
           </div>
           <Button className="btn-login" variant="primary" type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? "Connexion..." : "Se connecter"}
+            {mutation.isPending ? (locale === "fr" ? "Connexion..." : "Signing in...") : t("login.submit")}
             <ArrowRight size={16} />
           </Button>
           {sso.data ? (
             <Button type="button" onClick={() => (window.location.href = "/api/v1/auth/sso/login")}>
               <ShieldCheck size={16} />
-              Continuer avec SSO
+              {t("login.sso_continue")}
             </Button>
           ) : (
             <p className="muted text-center">
-              Pas encore de compte ? <a className="font-bold text-[var(--primary)]" href="register.html">S'inscrire</a>
+              {locale === "fr" ? "Pas encore de compte ?" : "Don't have an account?"}{" "}
+              <Link className="font-bold text-[var(--primary)]" to="/register">
+                {locale === "fr" ? "S'inscrire" : "Register"}
+              </Link>
             </p>
           )}
         </form>
@@ -98,9 +110,3 @@ function LoginPage() {
     </main>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <QueryProvider>
-    <LoginPage />
-  </QueryProvider>
-);

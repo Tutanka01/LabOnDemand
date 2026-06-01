@@ -1,12 +1,13 @@
 import "../styles/main.css";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, FlaskConical, ShieldCheck, UserPlus } from "lucide-react";
-import { createRoot } from "react-dom/client";
+import { Link } from "react-router-dom";
 import { Button } from "../components/ui";
 import { getSsoStatus } from "../lib/api";
-import { QueryProvider } from "../lib/query";
+import { useI18n } from "../lib/i18n";
 
-function RegisterPage() {
+export default function RegisterPage() {
+  const { locale, t } = useI18n();
   const sso = useQuery({ queryKey: ["sso"], queryFn: getSsoStatus });
 
   return (
@@ -19,15 +20,16 @@ function RegisterPage() {
           <span>LabOnDemand</span>
         </div>
         <div className="auth-copy">
-          <h1>Creation de compte controlee.</h1>
+          <h1>{t("register.title")}</h1>
           <p className="muted">
-            Les comptes locaux sont crees par un administrateur. Quand le SSO est actif, utilisez votre fournisseur
-            d'identite institutionnel.
+            {locale === "fr" 
+              ? "Création de compte contrôlée. Les comptes locaux sont créés par un administrateur. Quand le SSO est actif, utilisez votre fournisseur d'identité institutionnel." 
+              : "Controlled account creation. Local accounts are created by an administrator. When SSO is active, use your institutional identity provider."}
           </p>
           <div className="auth-list">
-            <span>Roles et quotas valides avant activation</span>
-            <span>Comptes SSO rattaches automatiquement</span>
-            <span>Creation locale reservee a l'administration</span>
+            <span>{locale === "fr" ? "Rôles et quotas validés avant activation" : "Roles and quotas validated before activation"}</span>
+            <span>{locale === "fr" ? "Comptes SSO rattachés automatiquement" : "SSO accounts linked automatically"}</span>
+            <span>{locale === "fr" ? "Création locale réservée à l'administration" : "Local creation restricted to administration"}</span>
           </div>
         </div>
         <span className="muted">© 2026 LabOnDemand</span>
@@ -37,37 +39,36 @@ function RegisterPage() {
         <div className="card auth-card">
           <UserPlus size={28} />
           <div>
-            <h1>Inscription indisponible</h1>
+            <h1>{locale === "fr" ? "Inscription indisponible" : "Registration unavailable"}</h1>
             <p className="sub">
-              Demandez la creation de votre compte a un administrateur LabOnDemand, ou connectez-vous via SSO si votre
-              etablissement l'a active.
+              {locale === "fr"
+                ? "Demandez la création de votre compte à un administrateur LabOnDemand, ou connectez-vous via SSO si votre établissement l'a activé."
+                : "Request your account creation from a LabOnDemand administrator, or sign in via SSO if your institution has enabled it."}
             </p>
           </div>
 
           {sso.data ? (
             <Button variant="primary" type="button" onClick={() => (window.location.href = "/api/v1/auth/sso/login")}>
               <ShieldCheck size={16} />
-              Continuer avec SSO
+              {t("register.sso_managed") || "Continuer avec SSO"}
             </Button>
           ) : null}
 
-          <Button type="button" onClick={() => (window.location.href = "admin.html#users")}>
-            <UserPlus size={16} />
-            Espace administrateur
-          </Button>
+          <Link to="/admin" className="w-full">
+            <Button type="button" className="w-full">
+              <UserPlus size={16} />
+              {locale === "fr" ? "Espace administrateur" : "Administrator space"}
+            </Button>
+          </Link>
 
-          <Button type="button" onClick={() => (window.location.href = "login.html")}>
-            Se connecter
-            <ArrowRight size={16} />
-          </Button>
+          <Link to="/login" className="w-full">
+            <Button type="button" className="w-full">
+              {t("register.login") || "Se connecter"}
+              <ArrowRight size={16} />
+            </Button>
+          </Link>
         </div>
       </section>
     </main>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <QueryProvider>
-    <RegisterPage />
-  </QueryProvider>,
-);

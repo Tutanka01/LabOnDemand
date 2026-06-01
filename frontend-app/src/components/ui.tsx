@@ -12,6 +12,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { useI18n } from "../lib/i18n";
 
 type ButtonVariant = "default" | "primary" | "danger" | "ghost";
 type BadgeTone = "default" | "green" | "amber" | "red" | "blue";
@@ -84,7 +85,7 @@ export function SearchBox(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="search">
       <Search size={17} />
-      <input {...props} />
+      <input aria-label={typeof props.placeholder === "string" ? props.placeholder : "Search"} {...props} />
     </label>
   );
 }
@@ -103,15 +104,24 @@ export function MetricCard({ label, value, icon, hint }: { label: string; value:
 }
 
 export function StatusBadge({ state }: { state?: string | null }) {
+  const { locale } = useI18n();
   const value = (state || "unknown").toLowerCase();
-  if (value === "running" || value === "active" || value === "ready") return <Badge tone="green">Actif</Badge>;
-  if (value === "paused") return <Badge tone="amber">En pause</Badge>;
-  if (value === "starting" || value === "mixed" || value === "pending") return <Badge tone="blue">Initialisation</Badge>;
-  if (value === "error" || value === "failed") return <Badge tone="red">Erreur</Badge>;
-  if (value === "expired" || value === "deleted") return <Badge tone="red">Expire</Badge>;
-  if (value === "archived") return <Badge tone="amber">Archive</Badge>;
-  if (value === "none") return <Badge>Aucun</Badge>;
-  return <Badge>Inconnu</Badge>;
+  if (value === "running" || value === "active" || value === "ready") {
+    return <Badge tone="green">{locale === "fr" ? "Actif" : "Active"}</Badge>;
+  }
+  if (value === "paused") return <Badge tone="amber">{locale === "fr" ? "En pause" : "Paused"}</Badge>;
+  if (value === "starting" || value === "mixed" || value === "pending") {
+    return <Badge tone="blue">{locale === "fr" ? "Initialisation" : "Starting"}</Badge>;
+  }
+  if (value === "inactive" || value === "disabled") {
+    return <Badge tone="amber">{locale === "fr" ? "Inactif" : "Inactive"}</Badge>;
+  }
+  if (value === "error" || value === "failed") return <Badge tone="red">{locale === "fr" ? "Erreur" : "Error"}</Badge>;
+  if (value === "expired" || value === "deleted") return <Badge tone="red">{locale === "fr" ? "Expiré" : "Expired"}</Badge>;
+  if (value === "archived") return <Badge tone="amber">{locale === "fr" ? "Archivé" : "Archived"}</Badge>;
+  if (value === "ok" || value === "success") return <Badge tone="green">{locale === "fr" ? "OK" : "OK"}</Badge>;
+  if (value === "none") return <Badge>{locale === "fr" ? "Aucun" : "None"}</Badge>;
+  return <Badge>{locale === "fr" ? "Inconnu" : "Unknown"}</Badge>;
 }
 
 export function ResourceMeter({ label, used, max, unit = "" }: { label: string; used?: number; max?: number; unit?: string }) {
@@ -175,6 +185,7 @@ export function ConfirmDialog({
   destructive?: boolean;
   onConfirm: () => void | Promise<void>;
 }) {
+  const { t } = useI18n();
   return (
     <Dialog.Root>
       <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
@@ -194,7 +205,7 @@ export function ConfirmDialog({
           <Dialog.Description className="muted">{description}</Dialog.Description>
           <ActionRow className="mt-[18px] justify-end">
             <Dialog.Close asChild>
-              <Button>Annuler</Button>
+              <Button>{t("common.cancel")}</Button>
             </Dialog.Close>
             <Dialog.Close asChild>
               <Button variant={destructive ? "danger" : "primary"} onClick={() => void onConfirm()}>
@@ -258,12 +269,14 @@ export function Pagination({
     <div className="pagination">
       <Button disabled={page <= 1} onClick={() => onChange(page - 1)}>
         <ChevronLeft size={16} />
+        <span className="sr-only">Previous page</span>
       </Button>
       <span className="muted">
         {page} / {totalPages}
       </span>
       <Button disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
         <ChevronRight size={16} />
+        <span className="sr-only">Next page</span>
       </Button>
     </div>
   );

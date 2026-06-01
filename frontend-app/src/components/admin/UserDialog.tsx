@@ -12,7 +12,7 @@ const schema = z.object({
   username: z.string().min(3, "Minimum 3 caracteres"),
   email: z.string().email("Email invalide").or(z.literal("")).optional(),
   full_name: z.string().optional(),
-  password: z.string().min(8, "Minimum 8 caracteres").or(z.literal("")).optional(),
+  password: z.string().min(12, "Minimum 12 caractères").or(z.literal("")).optional(),
   role: z.enum(["student", "teacher", "admin"]),
   is_active: z.boolean(),
 });
@@ -57,7 +57,7 @@ export function UserDialog({
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      showToast("Utilisateur cree", "success");
+      showToast("Utilisateur créé", "success");
       onOpenChange(false);
     },
   });
@@ -74,7 +74,7 @@ export function UserDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      showToast("Utilisateur mis a jour", "success");
+      showToast("Utilisateur mis à jour", "success");
       onOpenChange(false);
     },
   });
@@ -97,10 +97,24 @@ export function UserDialog({
 
           {mutation.error ? <ErrorState>{mutation.error.message}</ErrorState> : null}
 
-          <form className="form-grid" onSubmit={form.handleSubmit((data) => mutation.mutate(data))}>
+          {ssoEnabled && !isEdit ? (
+            <p className="muted mb-3">SSO est actif. Créez un compte local seulement si cet utilisateur ne doit pas passer par l'IdP.</p>
+          ) : null}
+
+          <form
+            className="form-grid"
+            onSubmit={form.handleSubmit((data) => {
+              if (!isEdit && !data.password) {
+                form.setError("password", { message: "Mot de passe requis pour un compte local" });
+                return;
+              }
+              mutation.mutate(data);
+            })}
+          >
             <div className="field full">
               <label htmlFor="username">Nom d'utilisateur</label>
               <input id="username" disabled={isEdit} {...form.register("username")} />
+              {form.formState.errors.username ? <span className="badge red">{form.formState.errors.username.message}</span> : null}
             </div>
             <div className="field">
               <label htmlFor="email">Email</label>
@@ -116,16 +130,17 @@ export function UserDialog({
                   Mot de passe {isEdit ? "(laisser vide pour conserver)" : ""}
                 </label>
                 <input id="password" type="password" {...form.register("password")} />
+                {form.formState.errors.password ? <span className="badge red">{form.formState.errors.password.message}</span> : null}
               </div>
             ) : (
               <div className="field">
-                <span className="muted">Utilisateur SSO - mot de passe gere par l'IdP</span>
+                <span className="muted">Utilisateur SSO - mot de passe géré par l'IdP</span>
               </div>
             )}
             <div className="field">
               <label htmlFor="role">Role</label>
               <select id="role" {...form.register("role")}>
-                <option value="student">Etudiant</option>
+                <option value="student">Étudiant</option>
                 <option value="teacher">Enseignant</option>
                 <option value="admin">Administrateur</option>
               </select>
@@ -139,7 +154,7 @@ export function UserDialog({
             <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre a jour" : "Creer"}
+                {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre à jour" : "Créer"}
               </Button>
             </div>
           </form>

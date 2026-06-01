@@ -1,14 +1,14 @@
 import "../styles/main.css";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, HardDrive, Server } from "lucide-react";
-import { createRoot } from "react-dom/client";
-import { AppShell, PageHeader } from "../components/AppShell";
+import { PageHeader } from "../components/AppShell";
 import { ErrorState, LoadingState, MetricCard } from "../components/ui";
 import { getClusterStats } from "../lib/api";
 import { cpuDisplay, memoryDisplay } from "../lib/format";
-import { QueryProvider } from "../lib/query";
+import { useI18n } from "../lib/i18n";
 
-function AdminStatsContent() {
+export default function AdminStatsPage() {
+  const { locale } = useI18n();
   const stats = useQuery({
     queryKey: ["cluster-stats"],
     queryFn: getClusterStats,
@@ -20,20 +20,20 @@ function AdminStatsContent() {
   return (
     <>
       <PageHeader
-        title="Stats cluster"
-        subtitle="Vue detaillee de l'etat du cluster Kubernetes — rafraichissement automatique toutes les 30s."
+        title={locale === "fr" ? "Stats cluster" : "Cluster stats"}
+        subtitle={locale === "fr" ? "Vue détaillée de l'état du cluster Kubernetes — rafraîchissement automatique toutes les 30s." : "Detailed view of the Kubernetes cluster status — auto-refresh every 30s."}
       />
 
-      {stats.isLoading ? <LoadingState label="Recuperation des metriques cluster..." /> : null}
+      {stats.isLoading ? <LoadingState label={locale === "fr" ? "Récupération des métriques cluster..." : "Retrieving cluster metrics..."} /> : null}
       {stats.error ? (
-        <ErrorState>Stats cluster indisponibles. Verifiez la connexion a l'API Kubernetes.</ErrorState>
+        <ErrorState>{locale === "fr" ? "Stats cluster indisponibles. Vérifiez la connexion à l'API Kubernetes." : "Cluster stats unavailable. Check the connection to the Kubernetes API."}</ErrorState>
       ) : null}
 
       {stats.data ? (
         <>
           <section className="metric-grid">
             <MetricCard
-              label="Noeuds"
+              label={locale === "fr" ? "Nœuds" : "Nodes"}
               value={nodes.length}
               icon={<Server size={18} />}
               hint="Total"
@@ -55,7 +55,7 @@ function AdminStatsContent() {
               label="Pods"
               value={stats.data.total_pods ?? "-"}
               icon={<Activity size={18} />}
-              hint="Tous namespaces"
+              hint={locale === "fr" ? "Tous namespaces" : "All namespaces"}
             />
             <MetricCard
               label="Namespaces"
@@ -67,12 +67,14 @@ function AdminStatsContent() {
 
           <section className="panel">
             <div className="section-head">
-              <h2>Noeuds du cluster</h2>
+              <h2>{locale === "fr" ? "Nœuds du cluster" : "Cluster nodes"}</h2>
               <span className="badge blue">
                 {stats.isFetching
-                  ? "Actualisation..."
+                  ? (locale === "fr" ? "Actualisation..." : "Refreshing...")
                   : stats.dataUpdatedAt
-                    ? `Mis a jour ${new Date(stats.dataUpdatedAt).toLocaleTimeString("fr-FR")}`
+                    ? (locale === "fr" 
+                        ? `Mis à jour ${new Date(stats.dataUpdatedAt).toLocaleTimeString("fr-FR")}` 
+                        : `Updated at ${new Date(stats.dataUpdatedAt).toLocaleTimeString()}`)
                     : ""}
               </span>
             </div>
@@ -82,12 +84,12 @@ function AdminStatsContent() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Noeud</th>
+                      <th>{locale === "fr" ? "Nœud" : "Node"}</th>
                       <th>Roles</th>
                       <th>Version</th>
                       <th>Pods</th>
                       <th className="min-w-[200px]">CPU</th>
-                      <th className="min-w-[200px]">Memoire</th>
+                      <th className="min-w-[200px]">{locale === "fr" ? "Mémoire" : "Memory"}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -166,11 +168,3 @@ function AdminStatsContent() {
     </>
   );
 }
-
-createRoot(document.getElementById("root")!).render(
-  <QueryProvider>
-    <AppShell page="admin-stats" requireRole={["admin"]}>
-      {() => <AdminStatsContent />}
-    </AppShell>
-  </QueryProvider>,
-);
