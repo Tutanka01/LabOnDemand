@@ -229,6 +229,7 @@ class EnrollStudentsRequest(BaseModel):
 class AssignmentBase(BaseModel):
     title: str = Field(..., min_length=2, max_length=200)
     instructions: Optional[str] = None
+    deliverables: Optional[str] = None
     template_key: Optional[str] = Field(None, max_length=50)
     cpu_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
     ram_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
@@ -242,6 +243,7 @@ class AssignmentCreate(AssignmentBase):
 class AssignmentUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=2, max_length=200)
     instructions: Optional[str] = None
+    deliverables: Optional[str] = None
     template_key: Optional[str] = Field(None, max_length=50)
     cpu_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
     ram_preset: Optional[str] = Field(None, pattern=r"^(very-low|low|medium|high|very-high)$")
@@ -287,3 +289,79 @@ class StudentLabStatus(BaseModel):
     lab_expires_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
     enrolled_at: datetime
+
+
+# ====== Assignment Submissions (MVP-1) ======
+class SubmissionLink(BaseModel):
+    label: Optional[str] = Field(None, max_length=120)
+    url: str = Field(..., min_length=1, max_length=2000)
+
+
+class AssignmentSubmissionCreate(BaseModel):
+    text: Optional[str] = Field(None, max_length=20000)
+    links: Optional[List[SubmissionLink]] = None
+
+
+class SubmissionGradeRequest(BaseModel):
+    grade: Optional[str] = Field(None, max_length=20)
+    feedback: Optional[str] = Field(None, max_length=20000)
+
+
+class AssignmentSubmissionResponse(BaseModel):
+    id: int
+    assignment_id: int
+    user_id: int
+    attempt_no: int
+    status: str
+    text: Optional[str] = None
+    links: List[SubmissionLink] = []
+    deployment_id: Optional[int] = None
+    lab_snapshot: Optional[Dict] = None
+    submitted_at: Optional[datetime] = None
+    is_late: bool = False
+    due_at_snapshot: Optional[datetime] = None
+    grade: Optional[str] = None
+    feedback: Optional[str] = None
+    graded_by: Optional[int] = None
+    graded_at: Optional[datetime] = None
+
+
+class StudentAssignmentItem(BaseModel):
+    """Un devoir tel que vu par l'étudiant (vue liste 'Mes devoirs')."""
+    id: int
+    classroom_id: int
+    classroom_name: Optional[str] = None
+    title: str
+    instructions: Optional[str] = None
+    template_key: Optional[str] = None
+    due_at: Optional[datetime] = None
+    # Lab poussé par le prof (push deploy-all)
+    lab_ready: bool = False
+    lab_deployment_name: Optional[str] = None
+    lab_namespace: Optional[str] = None
+    lab_status: Optional[str] = None
+    # Statut dérivé de la soumission
+    submission_status: str = "not_started"  # not_started | submitted | graded
+    submitted_at: Optional[datetime] = None
+    is_late: bool = False
+    grade: Optional[str] = None
+
+
+class StudentAssignmentDetail(StudentAssignmentItem):
+    """Détail d'un devoir + la soumission de l'étudiant si elle existe."""
+    deliverables: Optional[str] = None
+    submission: Optional[AssignmentSubmissionResponse] = None
+
+
+class TeacherSubmissionRow(BaseModel):
+    """Une ligne du tableau de correction (un étudiant inscrit)."""
+    user_id: int
+    username: str
+    email: Optional[str] = None
+    submission_id: Optional[int] = None
+    submission_status: str = "not_started"  # not_started | submitted | graded
+    submitted_at: Optional[datetime] = None
+    is_late: bool = False
+    grade: Optional[str] = None
+    lab_deployment_name: Optional[str] = None
+    lab_status: Optional[str] = None

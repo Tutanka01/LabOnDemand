@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   BookOpen,
   CheckCircle2,
+  ClipboardList,
   GraduationCap,
   LayoutGrid,
   Monitor,
@@ -16,7 +17,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
 import {
   Button,
@@ -574,6 +575,12 @@ function AssignmentsView({
                   <Button variant="primary" onClick={() => onDeploy(a.id)} disabled={isDeploying}>
                     <Rocket size={16} /> {t("assignment.distribute")}
                   </Button>
+                  <Link
+                    to={`/teacher/classrooms/${a.classroom_id}/assignments/${a.id}/submissions`}
+                    className="btn inline-flex items-center gap-1 no-underline"
+                  >
+                    <ClipboardList size={16} /> {t("assignment.view_submissions")}
+                  </Link>
                   <Button onClick={() => onEdit(a)}>{locale === "fr" ? "Modifier" : "Modify"}</Button>
                   <ConfirmDialog
                     destructive

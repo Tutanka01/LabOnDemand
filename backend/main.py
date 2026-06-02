@@ -213,6 +213,7 @@ from .routers import (
     audit_router,
     classrooms_router,
     teacher_router,
+    student_router,
 )
 
 app.include_router(auth_router)
@@ -226,6 +227,7 @@ app.include_router(quotas_router)
 app.include_router(audit_router)
 app.include_router(classrooms_router)
 app.include_router(teacher_router)
+app.include_router(student_router)
 
 # ============= ENDPOINTS DE BASE =============
 

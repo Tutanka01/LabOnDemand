@@ -166,6 +166,41 @@ MIGRATIONS: list[tuple[str, str]] = [
         "CONSTRAINT fk_qo_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
         ")",
     ),
+    # MVP devoirs — énoncé "livrables attendus" sur les devoirs
+    (
+        "add_assignments_deliverables",
+        "ALTER TABLE assignments ADD COLUMN deliverables TEXT NULL",
+    ),
+    # MVP devoirs — table des soumissions étudiantes
+    (
+        "create_assignment_submissions",
+        "CREATE TABLE IF NOT EXISTS assignment_submissions ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "assignment_id INTEGER NOT NULL,"
+        "user_id INTEGER NOT NULL,"
+        "attempt_no INTEGER NOT NULL DEFAULT 1,"
+        "status VARCHAR(20) NOT NULL DEFAULT 'submitted',"
+        "text TEXT NULL,"
+        "links TEXT NULL,"
+        "deployment_id INTEGER NULL,"
+        "lab_snapshot TEXT NULL,"
+        "submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "is_late BOOLEAN NOT NULL DEFAULT FALSE,"
+        "due_at_snapshot DATETIME NULL,"
+        "grade VARCHAR(20) NULL,"
+        "feedback TEXT NULL,"
+        "graded_by INTEGER NULL,"
+        "graded_at DATETIME NULL,"
+        "updated_at DATETIME NULL,"
+        "CONSTRAINT uq_submission_assignment_user UNIQUE (assignment_id, user_id),"
+        "INDEX idx_sub_assignment (assignment_id),"
+        "INDEX idx_sub_user (user_id),"
+        "INDEX idx_sub_deployment (deployment_id),"
+        "CONSTRAINT fk_sub_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_sub_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_sub_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
+        ")",
+    ),
 ]
 
 

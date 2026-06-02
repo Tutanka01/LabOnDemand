@@ -29,6 +29,7 @@ import { Button, ErrorState, IconButton, LoadingState, SearchBox, showToast, Toa
 
 const nav = [
   { to: "/", labelKey: "header.home", icon: LayoutDashboard, roles: ["student", "teacher", "admin"] },
+  { to: "/labs", labelKey: "header.catalog", icon: Boxes, roles: ["student"] },
   { to: "/teacher", labelKey: "header.my_classes", icon: Users, roles: ["teacher", "admin"] },
   { to: "/admin", labelKey: "header.admin", icon: Shield, roles: ["admin"] },
   { to: "/admin-stats", labelKey: "header.stats", icon: BarChart3, roles: ["admin"] },

@@ -13,9 +13,10 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -27,6 +28,7 @@ from ..deployment_service import deployment_service
 from ..models import (
     Assignment,
     AssignmentDeployment,
+    AssignmentSubmission,
     Classroom,
     Deployment,
     Enrollment,
@@ -37,6 +39,7 @@ from ..models import (
 from ..schemas import (
     AssignmentCreate,
     AssignmentResponse,
+    AssignmentSubmissionResponse,
     AssignmentUpdate,
     BulkSpawnReport,
     BulkSpawnResult,
@@ -45,6 +48,9 @@ from ..schemas import (
     ClassroomUpdate,
     EnrollStudentsRequest,
     StudentLabStatus,
+    SubmissionGradeRequest,
+    SubmissionLink,
+    TeacherSubmissionRow,
 )
 from ..security import get_current_user, is_teacher_or_admin
 from ..security import get_password_hash, validate_password_strength
@@ -590,6 +596,187 @@ async def deploy_assignment_to_class(
         skipped=skipped,
         errors=errors,
         results=list(results),
+    )
+
+
+# ── SUBMISSIONS / CORRECTION ─────────────────────────────────────────────────
+
+
+def _parse_links(raw: Optional[str]) -> List[SubmissionLink]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [SubmissionLink(**l) for l in data if isinstance(l, dict) and l.get("url")]
+
+
+def _get_assignment_or_404(cid: int, aid: int, db: Session) -> Assignment:
+    asgn = db.query(Assignment).filter(Assignment.id == aid, Assignment.classroom_id == cid).first()
+    if not asgn:
+        raise HTTPException(status_code=404, detail="Devoir introuvable")
+    return asgn
+
+
+@classrooms_router.get("/{cid}/assignments/{aid}/submissions", response_model=List[TeacherSubmissionRow], dependencies=[Depends(is_teacher_or_admin)])
+def list_submissions(
+    cid: int,
+    aid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Une ligne par étudiant inscrit (ceux qui n'ont pas rendu = not_started)."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+
+    enrollments = (
+        db.query(Enrollment)
+        .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
+        .all()
+    )
+    submissions = {
+        s.user_id: s
+        for s in db.query(AssignmentSubmission).filter(AssignmentSubmission.assignment_id == aid).all()
+    }
+
+    rows: List[TeacherSubmissionRow] = []
+    for enr in enrollments:
+        student = db.query(User).filter(User.id == enr.user_id).first()
+        if not student:
+            continue
+        sub = submissions.get(student.id)
+        lab = (
+            db.query(Deployment).filter(Deployment.id == sub.deployment_id).first()
+            if sub and sub.deployment_id
+            else None
+        )
+        rows.append(
+            TeacherSubmissionRow(
+                user_id=student.id,
+                username=student.username,
+                email=student.email,
+                submission_id=sub.id if sub else None,
+                submission_status=sub.status if sub else "not_started",
+                submitted_at=sub.submitted_at if sub else None,
+                is_late=bool(sub.is_late) if sub else False,
+                grade=sub.grade if sub else None,
+                lab_deployment_name=lab.name if lab else None,
+                lab_status=lab.status if lab else None,
+            )
+        )
+    return rows
+
+
+@classrooms_router.get("/{cid}/assignments/{aid}/submissions/{sid}", response_model=AssignmentSubmissionResponse, dependencies=[Depends(is_teacher_or_admin)])
+def get_submission_detail(
+    cid: int,
+    aid: int,
+    sid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Détail complet d'une soumission pour la vue de correction."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+
+    sub = (
+        db.query(AssignmentSubmission)
+        .filter(AssignmentSubmission.id == sid, AssignmentSubmission.assignment_id == aid)
+        .first()
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail="Soumission introuvable")
+
+    snapshot = None
+    if sub.lab_snapshot:
+        try:
+            snapshot = json.loads(sub.lab_snapshot)
+        except (ValueError, TypeError):
+            snapshot = None
+
+    return AssignmentSubmissionResponse(
+        id=sub.id,
+        assignment_id=sub.assignment_id,
+        user_id=sub.user_id,
+        attempt_no=sub.attempt_no,
+        status=sub.status,
+        text=sub.text,
+        links=_parse_links(sub.links),
+        deployment_id=sub.deployment_id,
+        lab_snapshot=snapshot,
+        submitted_at=sub.submitted_at,
+        is_late=sub.is_late,
+        due_at_snapshot=sub.due_at_snapshot,
+        grade=sub.grade,
+        feedback=sub.feedback,
+        graded_by=sub.graded_by,
+        graded_at=sub.graded_at,
+    )
+
+
+@classrooms_router.post("/{cid}/assignments/{aid}/submissions/{sid}/grade", response_model=AssignmentSubmissionResponse, dependencies=[Depends(is_teacher_or_admin)])
+def grade_submission(
+    cid: int,
+    aid: int,
+    sid: int,
+    payload: SubmissionGradeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Corrige une soumission : note + feedback, passe le statut à 'graded'."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+
+    sub = (
+        db.query(AssignmentSubmission)
+        .filter(AssignmentSubmission.id == sid, AssignmentSubmission.assignment_id == aid)
+        .first()
+    )
+    if not sub:
+        raise HTTPException(status_code=404, detail="Soumission introuvable")
+
+    sub.grade = payload.grade
+    sub.feedback = payload.feedback
+    sub.status = "graded"
+    sub.graded_by = current_user.id
+    sub.graded_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(sub)
+
+    audit_logger.info(
+        "submission_graded",
+        extra={"extra_fields": {"assignment_id": aid, "submission_id": sid, "grader_id": current_user.id, "grade": payload.grade}},
+    )
+
+    snapshot = None
+    if sub.lab_snapshot:
+        try:
+            snapshot = json.loads(sub.lab_snapshot)
+        except (ValueError, TypeError):
+            snapshot = None
+    return AssignmentSubmissionResponse(
+        id=sub.id,
+        assignment_id=sub.assignment_id,
+        user_id=sub.user_id,
+        attempt_no=sub.attempt_no,
+        status=sub.status,
+        text=sub.text,
+        links=_parse_links(sub.links),
+        deployment_id=sub.deployment_id,
+        lab_snapshot=snapshot,
+        submitted_at=sub.submitted_at,
+        is_late=sub.is_late,
+        due_at_snapshot=sub.due_at_snapshot,
+        grade=sub.grade,
+        feedback=sub.feedback,
+        graded_by=sub.graded_by,
+        graded_at=sub.graded_at,
     )
 
 

@@ -248,6 +248,7 @@ export interface Assignment {
   classroom_id: number;
   title: string;
   instructions?: string | null;
+  deliverables?: string | null;
   template_key?: string | null;
   cpu_preset?: string | null;
   ram_preset?: string | null;
@@ -255,6 +256,68 @@ export interface Assignment {
   status?: string;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface SubmissionLink {
+  label?: string | null;
+  url: string;
+}
+
+export type SubmissionStatus = "not_started" | "submitted" | "graded";
+
+export interface AssignmentSubmission {
+  id: number;
+  assignment_id: number;
+  user_id: number;
+  attempt_no: number;
+  status: SubmissionStatus | string;
+  text?: string | null;
+  links: SubmissionLink[];
+  deployment_id?: number | null;
+  lab_snapshot?: Record<string, unknown> | null;
+  submitted_at?: string | null;
+  is_late: boolean;
+  due_at_snapshot?: string | null;
+  grade?: string | null;
+  feedback?: string | null;
+  graded_by?: number | null;
+  graded_at?: string | null;
+}
+
+export interface StudentAssignmentItem {
+  id: number;
+  classroom_id: number;
+  classroom_name?: string | null;
+  title: string;
+  instructions?: string | null;
+  template_key?: string | null;
+  due_at?: string | null;
+  lab_ready: boolean;
+  lab_deployment_name?: string | null;
+  lab_namespace?: string | null;
+  lab_status?: string | null;
+  submission_status: SubmissionStatus | string;
+  submitted_at?: string | null;
+  is_late: boolean;
+  grade?: string | null;
+}
+
+export interface StudentAssignmentDetail extends StudentAssignmentItem {
+  deliverables?: string | null;
+  submission?: AssignmentSubmission | null;
+}
+
+export interface TeacherSubmissionRow {
+  user_id: number;
+  username: string;
+  email?: string | null;
+  submission_id?: number | null;
+  submission_status: SubmissionStatus | string;
+  submitted_at?: string | null;
+  is_late: boolean;
+  grade?: string | null;
+  lab_deployment_name?: string | null;
+  lab_status?: string | null;
 }
 
 export interface BulkSpawnResult {

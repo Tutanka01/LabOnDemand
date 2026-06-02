@@ -1,5 +1,6 @@
 import type {
   Assignment,
+  AssignmentSubmission,
   AuditLogEntry,
   AuditLogStats,
   BulkSpawnReport,
@@ -16,8 +17,12 @@ import type {
   ResourcePresets,
   RuntimeConfig,
   RuntimeConfigForm,
+  StudentAssignmentDetail,
+  StudentAssignmentItem,
   StudentLabStatus,
+  SubmissionLink,
   TeacherDashboard,
+  TeacherSubmissionRow,
   Template,
   User,
   UserListParams,
@@ -538,6 +543,7 @@ export async function createAssignment(
   data: {
     title: string;
     instructions?: string;
+    deliverables?: string;
     template_key?: string;
     cpu_preset?: string;
     ram_preset?: string;
@@ -587,4 +593,50 @@ export async function searchStudents(query: string): Promise<User[]> {
 
 export async function getClassroomLabStatus(cid: number): Promise<StudentLabStatus[]> {
   return apiFetch<StudentLabStatus[]>(`/api/v1/classrooms/${cid}/students`);
+}
+
+// ─── Student assignments (Mes devoirs) ──────────────────
+
+export async function getStudentAssignments(): Promise<StudentAssignmentItem[]> {
+  return apiFetch<StudentAssignmentItem[]>("/api/v1/student/assignments");
+}
+
+export async function getStudentAssignment(aid: number): Promise<StudentAssignmentDetail> {
+  return apiFetch<StudentAssignmentDetail>(`/api/v1/student/assignments/${aid}`);
+}
+
+export async function submitAssignment(
+  aid: number,
+  data: { text?: string; links?: SubmissionLink[] },
+): Promise<AssignmentSubmission> {
+  return apiFetch<AssignmentSubmission>(`/api/v1/student/assignments/${aid}/submit`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ─── Teacher corrections ────────────────────────────────
+
+export async function getAssignmentSubmissions(cid: number, aid: number): Promise<TeacherSubmissionRow[]> {
+  return apiFetch<TeacherSubmissionRow[]>(`/api/v1/classrooms/${cid}/assignments/${aid}/submissions`);
+}
+
+export async function getSubmissionDetail(
+  cid: number,
+  aid: number,
+  sid: number,
+): Promise<AssignmentSubmission> {
+  return apiFetch<AssignmentSubmission>(`/api/v1/classrooms/${cid}/assignments/${aid}/submissions/${sid}`);
+}
+
+export async function gradeSubmission(
+  cid: number,
+  aid: number,
+  sid: number,
+  data: { grade?: string; feedback?: string },
+): Promise<AssignmentSubmission> {
+  return apiFetch<AssignmentSubmission>(
+    `/api/v1/classrooms/${cid}/assignments/${aid}/submissions/${sid}/grade`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
 }

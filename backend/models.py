@@ -158,7 +158,8 @@ class Assignment(Base):
     id = Column(Integer, primary_key=True, index=True)
     classroom_id = Column(Integer, ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(200), nullable=False)
-    instructions = Column(Text, nullable=True)
+    instructions = Column(Text, nullable=True)  # énoncé du devoir (Markdown)
+    deliverables = Column(Text, nullable=True)  # ce qu'il faut rendre (Markdown)
     template_key = Column(String(50), nullable=True)
     cpu_preset = Column(String(20), nullable=True)
     ram_preset = Column(String(20), nullable=True)
@@ -180,6 +181,41 @@ class AssignmentDeployment(Base):
     spawn_status = Column(String(20), nullable=False)  # ok | skipped | error
     spawn_error = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AssignmentSubmission(Base):
+    """Preuve de travail rendue par un étudiant pour un devoir (MVP-1 : texte + liens).
+
+    Une seule ligne par (assignment, étudiant) : la re-soumission met à jour la même
+    ligne et incrémente ``attempt_no`` (on corrige toujours la dernière version).
+    """
+
+    __tablename__ = "assignment_submissions"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "user_id", name="uq_submission_assignment_user"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    attempt_no = Column(Integer, nullable=False, default=1)
+    # submitted | graded
+    status = Column(String(20), nullable=False, default="submitted")
+    text = Column(Text, nullable=True)
+    # JSON encodé : liste de {"label": str|None, "url": str}
+    links = Column(Text, nullable=True)
+    # Lab lié au moment du rendu (peut disparaître ensuite : voir lab_snapshot)
+    deployment_id = Column(Integer, ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True)
+    # JSON encodé : {name, namespace, deployment_type, status, created_at}
+    lab_snapshot = Column(Text, nullable=True)
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+    is_late = Column(Boolean, default=False, nullable=False)
+    due_at_snapshot = Column(DateTime(timezone=True), nullable=True)
+    grade = Column(String(20), nullable=True)  # libre : "15/20", "A"...
+    feedback = Column(Text, nullable=True)
+    graded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    graded_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
 # Modèle pour la configuration des runtimes (ex: vscode, jupyter)
