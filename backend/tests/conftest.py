@@ -365,7 +365,7 @@ def inactive_template(db) -> Template:
 def sample_runtime_config(db) -> RuntimeConfig:
     rc = RuntimeConfig(
         key="vscode",
-        default_image="codercom/code-server:latest",
+        default_image="codercom/code-server:4.121.0-39",
         target_port=8080,
         default_service_type="NodePort",
         allowed_for_students=True,

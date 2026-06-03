@@ -742,6 +742,70 @@ async def get_deployment_credentials(
                 response["wordpress"]["url"] = wp_url
             return response
 
+        if app_type == "vscode":
+            vscode_url = None
+            if deployment_service._should_attach_ingress("vscode"):
+                try:
+                    host = deployment_service._build_ingress_host(
+                        stack_name, current_user
+                    )
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    vscode_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+                except Exception:
+                    pass
+            response = {
+                "type": "vscode",
+                "vscode": {
+                    "username": dec("CODE_SERVER_USERNAME") or "coder",
+                    "password": dec("PASSWORD"),
+                },
+            }
+            if vscode_url:
+                response["vscode"]["url"] = vscode_url
+            return response
+
+        if app_type == "jupyter":
+            jupyter_url = None
+            if deployment_service._should_attach_ingress("jupyter"):
+                try:
+                    host = deployment_service._build_ingress_host(
+                        stack_name, current_user
+                    )
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    jupyter_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+                except Exception:
+                    pass
+            response = {
+                "type": "jupyter",
+                "jupyter": {"token": dec("JUPYTER_TOKEN")},
+            }
+            if jupyter_url:
+                response["jupyter"]["url"] = jupyter_url
+            return response
+
+        if app_type == "netbeans":
+            netbeans_url = None
+            if deployment_service._should_attach_ingress("netbeans"):
+                try:
+                    host = deployment_service._build_ingress_host(
+                        stack_name, current_user
+                    )
+                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+                    netbeans_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+                except Exception:
+                    pass
+            response = {
+                "type": "netbeans",
+                "netbeans": {
+                    "username": dec("VNC_USERNAME") or "kasm_user",
+                    "password": dec("VNC_PW"),
+                    "view_only_password": dec("VNC_VIEW_ONLY_PW"),
+                },
+            }
+            if netbeans_url:
+                response["netbeans"]["url"] = netbeans_url
+            return response
+
         if app_type == "mysql":
             pma_url_hint = "http://<NODE_IP>:<NODE_PORT>/"
             if deployment_service._should_attach_ingress("mysql"):

@@ -846,6 +846,30 @@ export function createDeploymentsModule({
                 </div>
             `;
         }
+        if (creds.type === 'jupyter') {
+            return `
+                <div class="credentials-grid">
+                    <div class="cred-card">
+                        <h5><i class="fab fa-python"></i> Jupyter</h5>
+                        ${creds.jupyter?.url ? `<div class="cred-row"><span>URL</span><code id="jupyter-url">${creds.jupyter.url}</code><button class="copy-btn" data-target="jupyter-url"><i class="fas fa-copy"></i></button></div>` : ''}
+                        <div class="cred-row"><span>Token</span><code id="jupyter-token">${creds.jupyter?.token || ''}</code><button class="copy-btn" data-target="jupyter-token"><i class="fas fa-copy"></i></button></div>
+                    </div>
+                </div>
+            `;
+        }
+        if (creds.type === 'netbeans') {
+            return `
+                <div class="credentials-grid">
+                    <div class="cred-card">
+                        <h5><i class="fas fa-desktop"></i> NetBeans / VNC</h5>
+                        ${creds.netbeans?.url ? `<div class="cred-row"><span>URL</span><code id="netbeans-url">${creds.netbeans.url}</code><button class="copy-btn" data-target="netbeans-url"><i class="fas fa-copy"></i></button></div>` : ''}
+                        <div class="cred-row"><span>Utilisateur</span><code id="netbeans-user">${creds.netbeans?.username || ''}</code><button class="copy-btn" data-target="netbeans-user"><i class="fas fa-copy"></i></button></div>
+                        <div class="cred-row"><span>Mot de passe</span><code id="netbeans-pass">${creds.netbeans?.password || ''}</code><button class="copy-btn" data-target="netbeans-pass"><i class="fas fa-copy"></i></button></div>
+                        ${creds.netbeans?.view_only_password ? `<div class="cred-row"><span>Lecture seule</span><code id="netbeans-view-pass">${creds.netbeans.view_only_password}</code><button class="copy-btn" data-target="netbeans-view-pass"><i class="fas fa-copy"></i></button></div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
         const entries = Object.entries(creds.secrets || {});
         if (!entries.length) return '<p class="muted">Aucun identifiant trouvé.</p>';
         return `

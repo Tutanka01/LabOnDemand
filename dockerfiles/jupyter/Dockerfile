@@ -24,6 +24,6 @@ EXPOSE 8888
 # On revient à l'utilisateur jovyan pour démarrer Jupyter
 USER jovyan
 
-# Configuration de Jupyter sans token ou mot de passe pour faciliter l'accès
+# Jupyter lit JUPYTER_TOKEN si fourni par l'orchestrateur.
 ENV JUPYTER_ENABLE_LAB=yes
-CMD ["start-notebook.sh", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+CMD ["start-notebook.sh"]

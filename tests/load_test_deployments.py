@@ -72,11 +72,11 @@ def _load_template_presets() -> Dict[str, TemplatePreset]:
 
     return {
         "vscode": TemplatePreset(
-            image="tutanka01/k8s:vscode",
+            image="codercom/code-server:4.121.0-39",
             create_service=True,
             service_type="NodePort",
             service_port=8080,
-            service_target_port=80,
+            service_target_port=8080,
         ),
         "jupyter": TemplatePreset(
             image="tutanka01/k8s:jupyter",

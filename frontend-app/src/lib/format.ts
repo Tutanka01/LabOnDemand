@@ -109,7 +109,7 @@ export function memoryDisplay(mi: number | string): string {
 export function defaultRuntime(deploymentType: string) {
   const defaults: Record<string, { image: string; port: number; target: number; serviceType: string }> = {
     jupyter: { image: "tutanka01/k8s:jupyter", port: 8888, target: 8888, serviceType: "NodePort" },
-    vscode: { image: "tutanka01/k8s:vscode", port: 8080, target: 8080, serviceType: "NodePort" },
+    vscode: { image: "codercom/code-server:4.121.0-39", port: 8080, target: 8080, serviceType: "NodePort" },
     netbeans: { image: "tutanka01/labondemand:netbeansjava", port: 6901, target: 6901, serviceType: "NodePort" },
     wordpress: { image: "bitnamilegacy/wordpress:6.8.2-debian-12-r5", port: 8080, target: 8080, serviceType: "NodePort" },
     lamp: { image: "php:8.2-apache", port: 8080, target: 80, serviceType: "NodePort" },

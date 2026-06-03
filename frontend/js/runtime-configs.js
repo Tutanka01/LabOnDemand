@@ -29,7 +29,7 @@
               </div>
               <div class="form-group">
                 <label for="rc-image"><i class="fas fa-box"></i> Image par défaut</label>
-                <input type="text" id="rc-image" maxlength="200" placeholder="ex: tutanka01/k8s:vscode">
+                <input type="text" id="rc-image" maxlength="200" placeholder="ex: codercom/code-server:4.121.0-39">
               </div>
             </div>
             <div class="form-row">

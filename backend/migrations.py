@@ -201,6 +201,58 @@ MIGRATIONS: list[tuple[str, str]] = [
         "CONSTRAINT fk_sub_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
         ")",
     ),
+    # MVP-2 — grading_mode sur les devoirs (none|self_check|graded)
+    (
+        "add_assignments_grading_mode",
+        "ALTER TABLE assignments ADD COLUMN grading_mode VARCHAR(20) NOT NULL DEFAULT 'none'",
+    ),
+    # MVP-2 — batterie de tests (probes) d'un devoir
+    (
+        "create_grading_specs",
+        "CREATE TABLE IF NOT EXISTS grading_specs ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "assignment_id INTEGER NOT NULL UNIQUE,"
+        "grader_image VARCHAR(300) NULL,"
+        "timeout_seconds INTEGER NOT NULL DEFAULT 120,"
+        "checks TEXT NULL,"
+        "custom_script TEXT NULL,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "updated_at DATETIME NULL,"
+        "INDEX idx_gs_assignment (assignment_id),"
+        "CONSTRAINT fk_gs_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE"
+        ")",
+    ),
+    # MVP-2 — exécutions du Grader Pod
+    (
+        "create_grading_runs",
+        "CREATE TABLE IF NOT EXISTS grading_runs ("
+        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
+        "assignment_id INTEGER NOT NULL,"
+        "user_id INTEGER NOT NULL,"
+        "submission_id INTEGER NULL,"
+        "deployment_id INTEGER NULL,"
+        "trigger VARCHAR(20) NOT NULL,"
+        "status VARCHAR(20) NOT NULL DEFAULT 'queued',"
+        "started_at DATETIME NULL,"
+        "finished_at DATETIME NULL,"
+        "total_checks INTEGER NULL,"
+        "passed_checks INTEGER NULL,"
+        "score_suggestion VARCHAR(20) NULL,"
+        "results TEXT NULL,"
+        "error VARCHAR(500) NULL,"
+        "result_token_hash VARCHAR(64) NULL,"
+        "token_used_at DATETIME NULL,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
+        "INDEX idx_gr_assignment (assignment_id),"
+        "INDEX idx_gr_user (user_id),"
+        "INDEX idx_gr_submission (submission_id),"
+        "INDEX idx_gr_status (status),"
+        "CONSTRAINT fk_gr_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_gr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
+        "CONSTRAINT fk_gr_submission FOREIGN KEY (submission_id) REFERENCES assignment_submissions(id) ON DELETE SET NULL,"
+        "CONSTRAINT fk_gr_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
+        ")",
+    ),
 ]
 
 

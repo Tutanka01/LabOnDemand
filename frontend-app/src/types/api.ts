@@ -254,8 +254,69 @@ export interface Assignment {
   ram_preset?: string | null;
   due_at?: string | null;
   status?: string;
+  grading_mode?: "none" | "self_check" | "graded";
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+// ====== Grading Spec & Runs (MVP-2) ======
+
+export type ProbeKind = "http" | "tcp" | "sql" | "file" | "command" | "script";
+export type ProbeVantage = "outside" | "inside";
+export type ProbeVisibility = "student" | "summary" | "teacher_only";
+export type GradingMode = "none" | "self_check" | "graded";
+export type GradingRunStatus = "queued" | "running" | "done" | "error";
+export type GradingRunTrigger = "student_self" | "on_submit" | "teacher";
+export type ProbeStatus = "pass" | "fail" | "error" | "skip";
+
+export interface Probe {
+  id: string;
+  name: string;
+  kind: ProbeKind;
+  vantage: ProbeVantage;
+  config: Record<string, unknown>;
+  expect: Record<string, unknown>;
+  weight: number;
+  visibility: ProbeVisibility;
+}
+
+export interface GradingSpec {
+  id: number;
+  assignment_id: number;
+  grader_image?: string | null;
+  timeout_seconds: number;
+  checks: Probe[];
+  custom_script?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProbeResult {
+  id: string;
+  name: string;
+  status: ProbeStatus;
+  message?: string | null;
+  output?: string | null;
+  weight: number;
+  visibility: ProbeVisibility;
+}
+
+export interface GradingRun {
+  id: number;
+  assignment_id: number;
+  user_id: number;
+  submission_id?: number | null;
+  deployment_id?: number | null;
+  trigger: GradingRunTrigger;
+  status: GradingRunStatus;
+  started_at?: string | null;
+  finished_at?: string | null;
+  total_checks?: number | null;
+  passed_checks?: number | null;
+  score_suggestion?: string | null;
+  results?: ProbeResult[] | null;
+  error?: string | null;
+  created_at?: string | null;
 }
 
 export interface SubmissionLink {
@@ -398,14 +459,20 @@ export interface DeploymentCredential {
   service?: string;
   username?: string;
   password?: string;
+  token?: string;
+  view_only_password?: string;
   host?: string;
   port?: number;
   database?: string;
+  url?: string;
 }
 
 export interface DeploymentCredentialsResponse {
   type?: string;
   wordpress?: DeploymentCredential & { email?: string };
+  vscode?: DeploymentCredential;
+  jupyter?: DeploymentCredential;
+  netbeans?: DeploymentCredential;
   database?: DeploymentCredential;
   secrets?: Record<string, string>;
   [service: string]: DeploymentCredential | Record<string, string> | string | undefined;

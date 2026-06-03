@@ -215,15 +215,21 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
 
   const addCredential = (service: string, cred?: DeploymentCredential & { email?: string }) => {
     if (!cred) return;
+    if (cred.url) rows.push({ service, label: "URL", value: cred.url });
     if (cred.host) rows.push({ service, label: "Host", value: cred.host });
     if (cred.port) rows.push({ service, label: "Port", value: cred.port });
     if (cred.database) rows.push({ service, label: "Database", value: cred.database });
     if (cred.username) rows.push({ service, label: locale === "fr" ? "Identifiant" : "Username", value: cred.username });
     if (cred.email) rows.push({ service, label: "Email", value: cred.email });
+    if (cred.token) rows.push({ service, label: "Token", value: cred.token, secret: true });
     if (cred.password) rows.push({ service, label: locale === "fr" ? "Mot de passe" : "Password", value: cred.password, secret: true });
+    if (cred.view_only_password) rows.push({ service, label: locale === "fr" ? "Mot de passe lecture seule" : "View-only password", value: cred.view_only_password, secret: true });
   };
 
   addCredential("WordPress", credentials.wordpress as DeploymentCredential & { email?: string });
+  addCredential("VS Code", credentials.vscode as DeploymentCredential);
+  addCredential("Jupyter", credentials.jupyter as DeploymentCredential);
+  addCredential("NetBeans", credentials.netbeans as DeploymentCredential);
   addCredential(locale === "fr" ? "Base de données" : "Database", credentials.database as DeploymentCredential);
 
   if (credentials.secrets && typeof credentials.secrets === "object") {
@@ -233,7 +239,7 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
   }
 
   Object.entries(credentials).forEach(([service, value]) => {
-    if (["type", "wordpress", "database", "secrets"].includes(service)) return;
+    if (["type", "wordpress", "vscode", "jupyter", "netbeans", "database", "secrets"].includes(service)) return;
     if (isCredential(value)) addCredential(value.service || service, value);
   });
 

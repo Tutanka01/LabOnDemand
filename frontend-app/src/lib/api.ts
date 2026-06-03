@@ -9,7 +9,10 @@ import type {
   Deployment,
   DeploymentCredentialsResponse,
   DeploymentDetails,
+  GradingRun,
+  GradingSpec,
   PaginatedResponse,
+  Probe,
   PodInfo,
   PvcInfo,
   QuotaOverride,
@@ -548,6 +551,7 @@ export async function createAssignment(
     cpu_preset?: string;
     ram_preset?: string;
     due_at?: string;
+    grading_mode?: string;
   },
 ): Promise<Assignment> {
   return apiFetch<Assignment>(`/api/v1/classrooms/${cid}/assignments`, {
@@ -639,4 +643,51 @@ export async function gradeSubmission(
     `/api/v1/classrooms/${cid}/assignments/${aid}/submissions/${sid}/grade`,
     { method: "POST", body: JSON.stringify(data) },
   );
+}
+
+// ─── Grading Spec (MVP-2) ────────────────────────────────
+
+export async function getGradingSpec(cid: number, aid: number): Promise<GradingSpec | null> {
+  try {
+    return await apiFetch<GradingSpec>(`/api/v1/classrooms/${cid}/assignments/${aid}/grading-spec`);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+export async function saveGradingSpec(
+  cid: number,
+  aid: number,
+  data: {
+    grader_image?: string | null;
+    timeout_seconds?: number;
+    checks: Probe[];
+    custom_script?: string | null;
+  },
+): Promise<GradingSpec> {
+  return apiFetch<GradingSpec>(`/api/v1/classrooms/${cid}/assignments/${aid}/grading-spec`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ─── Grading Runs (MVP-2) ────────────────────────────────
+
+export async function runTestsStudent(aid: number): Promise<GradingRun> {
+  return apiFetch<GradingRun>(`/api/v1/student/assignments/${aid}/run-tests`, { method: "POST" });
+}
+
+export async function getGradingRun(aid: number, runId: number): Promise<GradingRun> {
+  return apiFetch<GradingRun>(`/api/v1/student/assignments/${aid}/grading-runs/${runId}`);
+}
+
+export async function testNow(cid: number, aid: number): Promise<GradingRun> {
+  return apiFetch<GradingRun>(`/api/v1/classrooms/${cid}/assignments/${aid}/test-now`, { method: "POST" });
+}
+
+export async function runTestsAll(cid: number, aid: number): Promise<{ queued: number }> {
+  return apiFetch<{ queued: number }>(`/api/v1/classrooms/${cid}/assignments/${aid}/run-tests-all`, {
+    method: "POST",
+  });
 }

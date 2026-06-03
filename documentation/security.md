@@ -199,9 +199,50 @@ du callback. Toute non-concordance retourne `400 Bad Request`.
 
 ---
 
+## RBAC pédagogique (classes et devoirs)
+
+Le système de classes introduit des règles RBAC supplémentaires au-dessus du RBAC K8s.
+
+### Accès teacher
+
+Un teacher peut :
+- Créer, modifier, archiver ses propres classes (`owner_id = current_user.id`)
+- Inscrire et retirer des étudiants de ses classes
+- Créer, modifier, archiver des devoirs dans ses classes
+- Déclencher un déploiement en masse pour toute la classe (bulk-spawn)
+- Consulter toutes les soumissions de ses devoirs
+- Noter manuellement une soumission (grade + feedback)
+
+Un teacher **ne peut pas** :
+- Voir ou modifier les classes d'un autre teacher
+- Accéder aux labs K8s des étudiants directement (sauf admin)
+
+### Accès student
+
+Un student peut :
+- Voir uniquement les devoirs des classes où il est inscrit (`enrolled_at IS NOT NULL`, `removed_at IS NULL`)
+- Soumettre une fois par devoir (UNIQUE `assignment_id, user_id` — la soumission est mise à jour si elle existe déjà)
+- Consulter son propre résultat de correction, avec la visibilité limitée par `Probe.visibility`
+
+### Visibilité des résultats de correction (GradingSpec)
+
+Chaque sonde (`Probe`) dans une `GradingSpec` a un niveau de visibilité :
+
+| Visibilité | Visible par l'étudiant | Visible par l'enseignant |
+|---|---|---|
+| `student` | oui (nom, résultat, poids) | oui |
+| `summary` | résumé agrégé seulement | oui complet |
+| `teacher_only` | non | oui complet |
+
+Cela permet de masquer les sondes de sécurité ou les critères de notation interne à l'enseignant.
+
+---
+
 ## Audit trail
 
 Toutes les actions sensibles sont tracées dans `logs/audit.log` :
+
+### Actions système et accès
 
 | Événement | Champs |
 |-----------|--------|
@@ -213,9 +254,26 @@ Toutes les actions sensibles sont tracées dans `logs/audit.log` :
 | `user_deleted` | user_id, username, sessions_revoked, namespace_deleted |
 | `quota_override_set` | target_user_id, admin_user_id, max_apps, max_cpu_m, expires_at |
 | `users_imported_csv` | created, errors, skipped |
-| `user_namespace_cleanup` | user_id, namespace, status |
-| `deployment_deleted` | namespace, name, user_id, deployment_type |
 | `oidc_user_created` | username, role |
+
+### Actions K8s
+
+| Événement | Champs |
+|-----------|--------|
+| `deployment_deleted` | namespace, name, user_id, deployment_type |
+| `user_namespace_cleanup` | user_id, namespace, status |
+
+### Actions pédagogiques
+
+| Événement | Champs |
+|-----------|--------|
+| `classroom_created` | classroom_id, name, owner_id |
+| `classroom_archived` | classroom_id, name, owner_id |
+| `students_enrolled` | classroom_id, count, enrolled_by |
+| `assignment_created` | assignment_id, classroom_id, title, grading_mode |
+| `assignment_bulk_spawn` | assignment_id, total, ok, skipped, error |
+| `submission_created` | submission_id, assignment_id, user_id, is_late |
+| `submission_graded` | submission_id, assignment_id, graded_by, grade |
 
 ---
 

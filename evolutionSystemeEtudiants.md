@@ -13,9 +13,9 @@
 
 ---
 
-# Etat d'avancement (MVP-1 livre)
+# Etat d'avancement
 
-**Fait** (phase 1 — le devoir devient reel) :
+**Fait — Phase 1 / MVP-1 (le devoir devient reel)** :
 - Backend : modele `AssignmentSubmission` (1 ligne/etudiant/devoir, upsert), router etudiant
   `/api/v1/student/assignments` (liste, detail, submit, submission), endpoints de correction
   cote prof (liste des rendus, detail, grade), champ `deliverables` ajoute a `Assignment`,
@@ -27,10 +27,32 @@
 - Lab provisionne par **push prof** (reutilise `deploy-all`) ; rendu = **texte + liens**
   (pas d'upload de fichiers).
 
-**Reste a faire** : tout le reste du document — notamment les **probes / Grader Pod**
-(phase 2), le **start-lab a la demande** par l'etudiant, le bouton « Je suis bloque » et les
-evenements pedagogiques (phase 3-4), les **Lab Blueprints** versionnes (phase 5), le SSO et
-les quotas par classe (phase 6), l'assistant IA (phase 7).
+**Fait — Phase 2 / MVP-2 briques 1 & 2 (modele + ecriture des tests)** :
+- Backend : modeles `GradingSpec` (batterie de probes par devoir, `checks` JSON) et
+  `GradingRun` (execution + resultats, token usage unique), champ `grading_mode` sur
+  `Assignment`, 3 migrations idempotentes, schemas Pydantic `Probe / GradingSpecCreate /
+  GradingSpecResponse / GradingRunResponse / GradingRunCallbackRequest`.
+- Backend : endpoints `GET/POST /api/v1/classrooms/{cid}/assignments/{aid}/grading-spec`
+  (upsert avec activation automatique du `grading_mode`).
+- Frontend : onglet **« Tests automatiques »** dans le dialogue de creation/edition de devoir
+  (liste de probes, formulaire par kind HTTP/TCP/SQL/Fichier/Commande/Script avec champs
+  specifiques, section « Script avance » depliable, selecteur `grading_mode` + timeout,
+  sauvegarde independante ou integree au save du devoir), types TypeScript (`Probe,
+  GradingSpec, GradingRun...`), appels API (`getGradingSpec, saveGradingSpec, runTestsStudent,
+  getGradingRun, testNow, runTestsAll`), CSS probe editor, i18n 65+ cles FR/EN.
+- Build TypeScript/Vite confirme propre.
+
+**Reste a faire (MVP-2)** :
+- Brique 3 : image Grader (`dockerfiles/grader/`), service `grader_service.py` (Job K8s
+  isole, NetworkPolicy, ServiceAccount sans droits, token hash, TTL).
+- Brique 4 : endpoints d'execution (`run-tests` etudiant, `test-now` / `run-tests-all` prof,
+  hook `on_submit`, endpoint interne token-authentifie).
+- Brique 5 : UI triage — progression check par check etudiant, colonne verdict `x/5` +
+  note suggeree prof.
+- Brique 6 : tests backend (K8s mocke), reconciliation cleanup, validation securite.
+
+**Phase 3 et suivantes** : cockpit prof avance, start-lab a la demande, bouton « Je suis
+bloque », Lab Blueprints, SSO, assistant IA.
 
 ---
 

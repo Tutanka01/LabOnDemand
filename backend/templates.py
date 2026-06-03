@@ -5,6 +5,8 @@ Principe KISS : données structurées simples
 from typing import Dict, List, Any
 from .models import UserRole
 
+VSCODE_IMAGE = "codercom/code-server:4.121.0-39"
+
 def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
     """
     Retourne les templates de déploiement disponibles
@@ -56,9 +58,9 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
             {
                 "id": "vscode",
                 "name": "VS Code Online",
-                "description": "Environnement VS Code dans le navigateur, idéal pour TP et démos. Mot de passe par défaut: labondemand.",
+                "description": "Environnement VS Code dans le navigateur, idéal pour TP et démos. Mot de passe généré automatiquement.",
                 "icon": "fa-solid fa-code",
-                "default_image": "tutanka01/k8s:vscode",
+                "default_image": VSCODE_IMAGE,
                 "default_port": 8080,
                 "deployment_type": "vscode",
                 "default_service_type": "NodePort",
@@ -150,7 +152,7 @@ class DeploymentConfig:
     """
     
     VSCODE_CONFIG = {
-        "image": "tutanka01/k8s:vscode",
+        "image": VSCODE_IMAGE,
         "target_port": 8080,
         "service_type": "NodePort",
         "min_cpu_request": "150m",

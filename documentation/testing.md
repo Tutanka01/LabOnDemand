@@ -1,6 +1,6 @@
 ---
 title: Tests
-summary: Guide des tests automatisés de LabOnDemand — installation, lancement de la suite pytest, organisation des fichiers de test et configuration des mocks.
+summary: Guide des tests automatisés de LabOnDemand — lancement via Docker Compose, organisation des fichiers de test, fixtures disponibles et configuration des mocks.
 read_when: |
   - Tu écris ou modifies des tests dans backend/tests/
   - Tu veux lancer la suite de tests et interpréter les résultats
@@ -9,41 +9,35 @@ read_when: |
 
 # Tests
 
-## Installation rapide
-
-```bash
-# Depuis la racine du projet
-pip install -r requirements.txt -r backend/requirements-test.txt
-```
-
-> **Note** : la version de `bcrypt` doit rester `>=4.0.1,<4.1` (contrainte de `passlib`).
-> Sur Python 3.14, assurez-vous que `pydantic-core` est bien installé.
-
----
-
 ## Lancer les tests
 
-Toutes les commandes se lancent depuis **la racine du projet** :
+La suite pytest tourne entièrement en mémoire — aucune dépendance externe (MariaDB, Redis, Kubernetes) n'est requise.
 
 ```bash
-# Suite complète
-PYTHONPATH=. pytest backend/tests/ -q
+# Depuis un conteneur déjà démarré (recommandé)
+docker compose exec api python -m pytest backend/tests/ -q
 
 # Avec affichage des logs (utile pour déboguer)
-PYTHONPATH=. pytest backend/tests/ -q -s
+docker compose exec api python -m pytest backend/tests/ -q -s
 
 # Un seul fichier
-PYTHONPATH=. pytest backend/tests/test_auth.py -q
+docker compose exec api python -m pytest backend/tests/test_classrooms.py -q
 
 # Un seul test
-PYTHONPATH=. pytest backend/tests/test_auth.py::test_login_success -v
+docker compose exec api python -m pytest backend/tests/test_auth.py::test_login_success -v
 
 # Stopper au premier échec
-PYTHONPATH=. pytest backend/tests/ -x -q
+docker compose exec api python -m pytest backend/tests/ -x -q
 
 # Relancer uniquement les tests en échec
-PYTHONPATH=. pytest backend/tests/ --lf -q
+docker compose exec api python -m pytest backend/tests/ --lf -q
 ```
+
+> **Alternative hors Docker** (si tu as un virtualenv configuré) :
+> ```bash
+> PYTHONPATH=. pytest backend/tests/ -q
+> ```
+> Voir `documentation/development-setup.md` pour les prérequis.
 
 ---
 
@@ -52,8 +46,9 @@ PYTHONPATH=. pytest backend/tests/ --lf -q
 | Fichier | Périmètre |
 |---|---|
 | `test_health.py` | Endpoints publics (`/`, `/status`, `/health`) |
-| `test_auth.py` | Login, logout, `/me`, changement de mot de passe, SSO |
-| `test_users.py` | CRUD utilisateurs, RBAC par rôle |
+| `test_auth.py` | Login, logout, `/me`, changement de mot de passe |
+| `test_sso.py` | Flow OIDC complet, mapping de rôle, réconciliation par email |
+| `test_users.py` | CRUD utilisateurs, RBAC par rôle, import CSV |
 | `test_templates.py` | CRUD templates, validation des champs |
 | `test_runtime_configs.py` | CRUD configurations runtime |
 | `test_deployments.py` | Cycle de vie déploiement (créer, pause, resume, supprimer) |
@@ -61,7 +56,9 @@ PYTHONPATH=. pytest backend/tests/ --lf -q
 | `test_monitoring.py` | Stats cluster, ping, namespaces (RBAC admin/teacher) |
 | `test_quotas.py` | Résumé des quotas par rôle |
 | `test_security.py` | Validation des mots de passe, hachage, RBAC HTTP, sessions |
-| `test_migrations.py` | Idempotence des migrations SQL |
+| `test_classrooms.py` | Classrooms CRUD, inscriptions, devoirs, déploiement en masse |
+| `test_submissions.py` | Soumissions étudiants, notation manuelle, statut de correction |
+| `test_migrations.py` | Idempotence des 18 migrations SQL |
 | `test_seed.py` | Idempotence du seeding (admin, templates, runtime configs) |
 
 ---
@@ -101,8 +98,8 @@ L'ordre d'initialisation dans `conftest.py` est critique :
 | `admin_user` | `User` | Utilisateur admin en base |
 | `teacher_user` | `User` | Utilisateur enseignant en base |
 | `student_user` | `User` | Utilisateur étudiant en base |
-| `inactive_user` | `User` | Utilisateur désactivé |
-| `oidc_user` | `User` | Utilisateur SSO (auth_provider=oidc) |
+| `inactive_user` | `User` | Utilisateur désactivé (`is_active=False`) |
+| `oidc_user` | `User` | Utilisateur SSO (`auth_provider=oidc`, `external_id` défini) |
 | `mock_k8s` | `dict` | Mocks K8s : `{"apps": ..., "core": ..., "networking": ...}` |
 | `sample_template` | `Template` | Template actif en base |
 | `sample_runtime_config` | `RuntimeConfig` | Config runtime active en base |
@@ -120,8 +117,23 @@ async def test_mon_endpoint(admin_client, mock_k8s):
     assert "clé" in r.json()
 ```
 
-Les tests **async** sont détectés automatiquement (`asyncio_mode = auto` dans `pytest.ini`).
-Pour les tests qui touchent Kubernetes, ajouter la fixture `mock_k8s`.
+Les tests **async** sont détectés automatiquement (`asyncio_mode = auto` dans `pytest.ini`). Pour les tests qui touchent Kubernetes, ajouter la fixture `mock_k8s`.
+
+### Exemple : test d'une route classrooms
+
+```python
+async def test_teacher_can_create_classroom(teacher_client):
+    r = await teacher_client.post("/api/v1/classrooms", json={
+        "name": "INF101",
+        "description": "Programmation objet"
+    })
+    assert r.status_code == 200
+    assert r.json()["name"] == "INF101"
+
+async def test_student_cannot_create_classroom(student_client):
+    r = await student_client.post("/api/v1/classrooms", json={"name": "X"})
+    assert r.status_code == 403
+```
 
 ---
 

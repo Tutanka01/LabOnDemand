@@ -165,6 +165,8 @@ class Assignment(Base):
     ram_preset = Column(String(20), nullable=True)
     due_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(20), default="active", nullable=False)
+    # none | self_check | graded — contrôle si un Grader Pod est lancé
+    grading_mode = Column(String(20), default="none", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -216,6 +218,68 @@ class AssignmentSubmission(Base):
     graded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     graded_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# ====== Grading (MVP-2) ======
+
+class GradingSpec(Base):
+    """Batterie de tests (probes) définie par l'enseignant pour un devoir.
+
+    Une seule ligne par devoir. Les probes sont stockées en JSON dans ``checks``.
+    """
+
+    __tablename__ = "grading_specs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(
+        Integer, ForeignKey("assignments.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    # Image grader à utiliser (None → image plateforme par défaut)
+    grader_image = Column(String(300), nullable=True)
+    # Délai max d'exécution du Job grader en secondes
+    timeout_seconds = Column(Integer, nullable=False, default=120)
+    # JSON : liste de Probe {id, name, kind, vantage, config, expect, weight, visibility}
+    checks = Column(Text, nullable=True)
+    # Script bash/python fourni par l'enseignant (contrat JSON de sortie, §8)
+    custom_script = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class GradingRun(Base):
+    """Exécution du Grader Pod contre le lab d'un étudiant.
+
+    Cycle de vie : queued → running → done | error.
+    Le résultat brut (verdict par probe) est stocké en JSON dans ``results``.
+    """
+
+    __tablename__ = "grading_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Soumission liée (nullable : un run peut précéder le rendu formel)
+    submission_id = Column(Integer, ForeignKey("assignment_submissions.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Lab ciblé par le grader
+    deployment_id = Column(Integer, ForeignKey("deployments.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Qui a déclenché ce run
+    trigger = Column(String(20), nullable=False)  # student_self | on_submit | teacher
+    # queued | running | done | error
+    status = Column(String(20), nullable=False, default="queued", index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    total_checks = Column(Integer, nullable=True)
+    passed_checks = Column(Integer, nullable=True)
+    # Somme pondérée des probes passées (indicatif, non contraignant)
+    score_suggestion = Column(String(20), nullable=True)
+    # JSON : [{id, name, status, message, output, weight, visibility}]
+    results = Column(Text, nullable=True)
+    error = Column(String(500), nullable=True)
+    # Sécurité du callback Grader → API : hash SHA-256 du token usage unique
+    result_token_hash = Column(String(64), nullable=True)
+    token_used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 # Modèle pour la configuration des runtimes (ex: vscode, jupyter)

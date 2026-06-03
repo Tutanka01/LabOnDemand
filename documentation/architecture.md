@@ -1,6 +1,6 @@
 ---
 title: Architecture LabOnDemand
-summary: Vue d'ensemble des composants techniques — FastAPI, MariaDB, Redis, Kubernetes, Nginx — structure du dépôt et flux de données entre les couches.
+summary: Vue d'ensemble des composants techniques — FastAPI, MariaDB, Redis, Kubernetes, Nginx, React — structure du dépôt, modèle de données complet et flux de données entre les couches.
 read_when: |
   - Tu découvres le projet et veux comprendre comment les composants s'articulent
   - Tu travailles sur une nouvelle fonctionnalité et dois situer où coder
@@ -13,6 +13,8 @@ read_when: |
 
 LabOnDemand est une plateforme multi-tenant permettant aux **enseignants et étudiants** de déployer des environnements de laboratoire Kubernetes (Jupyter, VS Code, LAMP, WordPress, MySQL/phpMyAdmin…) sans connaissance de Kubernetes. L'accès est contrôlé par un RBAC à trois rôles, les ressources sont isolées par namespace utilisateur, et la plateforme peut être connectée à un IdP universitaire via OIDC/SSO.
 
+En plus des labs individuels, la plateforme propose un **système pédagogique complet** : classes, devoirs avec déploiement en masse, soumissions, et correction automatisée par sondes.
+
 ---
 
 ## Vue d'ensemble des composants
@@ -20,22 +22,23 @@ LabOnDemand est une plateforme multi-tenant permettant aux **enseignants et étu
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Navigateur                                                      │
-│  ├── Static files (Nginx)   frontend/                            │
+│  ├── React/Vite SPA (Nginx)  frontend-app/                       │
 │  └── REST API (FastAPI 0.115) backend/                           │
 │         │                                                        │
 │         ├── Auth + sessions  security.py  ◄──► Redis             │
 │         ├── Auth OIDC/SSO    sso.py + auth_router.py             │
-│         ├── CRUD déploiements routers/    ◄──► Kubernetes API    │
-│         ├── BDD               database.py ◄──► MariaDB           │
-│         └── Tâches de fond    tasks/cleanup.py (asyncio)         │
+│         ├── Labs K8s         routers/k8s_*  ◄──► Kubernetes API  │
+│         ├── Classes/Devoirs  routers/classrooms.py               │
+│         ├── Étudiant         routers/student.py                  │
+│         ├── Audit logs       routers/audit_logs.py               │
+│         ├── BDD              database.py  ◄──► MariaDB            │
+│         └── Tâches de fond   tasks/cleanup.py (asyncio)          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Technologies** : Python 3.11, FastAPI, SQLAlchemy 2, MariaDB, Redis, kubernetes-client, Nginx, Docker Compose.
+**Technologies** : Python 3.13, FastAPI 0.115, SQLAlchemy 2, MariaDB, Redis, kubernetes-client 32, Nginx, React 18, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
 
-Redis est utilisé comme store de sessions authentifié et reste sur le réseau
-interne. Les origines CORS sont autorisées explicitement côté application; le
-proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
+Redis est utilisé comme store de sessions authentifié et reste sur le réseau interne. Les origines CORS sont autorisées explicitement côté application ; le proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
 
 ---
 
@@ -44,59 +47,64 @@ proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
 ```
 LabOnDemand/
 ├── backend/
-│   ├── main.py                  # Point d'entrée FastAPI, bootstrap, tâche de nettoyage
-│   ├── config.py                # Tous les paramètres (env vars, valeurs par défaut)
-│   ├── models.py                # ORM SQLAlchemy (User, Deployment, UserQuotaOverride, Template, RuntimeConfig)
-│   ├── schemas.py               # Pydantic schemas (validation entrée/sortie)
-│   ├── database.py              # Moteur SQLAlchemy + SessionLocal
-│   ├── security.py              # Sessions, hachage bcrypt, dépendances FastAPI, delete_user_sessions()
-│   ├── migrations.py            # Migrations SQL idempotentes (CREATE TABLE IF NOT EXISTS / ALTER TABLE)
-│   ├── seed.py                  # Données initiales (admin, templates, runtime configs)
-│   ├── k8s_utils.py             # Labels, namespaces, quotas (get_role_limits + UserQuotaOverride)
-│   ├── templates.py             # DeploymentConfig : lecture templates depuis la BDD
-│   ├── deployment_service.py    # DeploymentService : orchestration K8s + cleanup_user_namespace()
-│   ├── session_store.py         # Redis store (TTL par clé, scan par user_id)
-│   ├── sso.py                   # OIDC : discovery (TTL configurable), exchange, userinfo, map_role
-│   ├── logging_config.py        # Logging structuré JSON (app.log, access.log, audit.log)
-│   ├── error_handlers.py        # Gestionnaire d'exception global
-│   ├── auth_router.py           # Endpoints /auth/* (login, SSO, users, quota-override, CSV import)
-│   ├── routers/                 # Endpoints K8s découpés par domaine
-│   │   ├── k8s_deployments.py   # CRUD déploiements (liste, détails, create*, delete, pause, resume)
-│   │   ├── k8s_storage.py       # PersistentVolumeClaims
-│   │   ├── k8s_terminal.py      # WebSocket exec (terminal pod)
-│   │   ├── k8s_templates.py     # Templates CRUD + resource-presets
+│   ├── main.py                     # Point d'entrée FastAPI, bootstrap, tâche de nettoyage
+│   ├── config.py                   # Tous les paramètres (env vars, valeurs par défaut)
+│   ├── models.py                   # ORM SQLAlchemy (voir section Modèle de données)
+│   ├── schemas.py                  # Pydantic schemas (validation entrée/sortie)
+│   ├── database.py                 # Moteur SQLAlchemy + SessionLocal
+│   ├── security.py                 # Sessions, hachage bcrypt, dépendances FastAPI
+│   ├── migrations.py               # Migrations SQL idempotentes (18 migrations)
+│   ├── seed.py                     # Données initiales (admin, templates, runtime configs)
+│   ├── k8s_utils.py                # Labels, namespaces, quotas (get_role_limits + UserQuotaOverride)
+│   ├── templates.py                # DeploymentConfig : lecture templates depuis la BDD
+│   ├── deployment_service.py       # DeploymentService : orchestration K8s + cleanup
+│   ├── session_store.py            # Redis store (TTL par clé, scan par user_id)
+│   ├── sso.py                      # OIDC : discovery (TTL configurable), exchange, userinfo, map_role
+│   ├── logging_config.py           # Logging structuré JSON (app.log, access.log, audit.log)
+│   ├── error_handlers.py           # Gestionnaire d'exception global
+│   ├── auth_router.py              # /auth/* (login, SSO, users, quota-override, CSV import)
+│   ├── routers/                    # Endpoints découpés par domaine
+│   │   ├── k8s_deployments.py      # CRUD déploiements (liste, create*, pause, resume, delete)
+│   │   ├── k8s_storage.py          # PersistentVolumeClaims
+│   │   ├── k8s_terminal.py         # WebSocket exec (terminal pod)
+│   │   ├── k8s_templates.py        # Templates CRUD + resource-presets
 │   │   ├── k8s_runtime_configs.py  # Runtime configs CRUD
-│   │   ├── k8s_monitoring.py    # Stats cluster, namespaces, pods, usage
-│   │   ├── quotas.py            # Résumé de quota utilisateur
-│   │   └── _helpers.py          # Utilitaires partagés (raise_k8s_http, audit_logger)
-│   ├── services/                # Mixins de déploiement (stacks multi-conteneurs)
-│   │   ├── wordpress_deploy.py  # Stack WordPress + MariaDB
-│   │   ├── mysql_deploy.py      # Stack MySQL + phpMyAdmin
-│   │   └── lamp_deploy.py       # Stack LAMP (Apache + PHP + MySQL + phpMyAdmin)
-│   └── tasks/                   # Tâches de fond asyncio
-│       └── cleanup.py           # Nettoyage labs expirés + namespaces orphelins
-├── frontend/
-│   ├── index.html / script.js   # Dashboard principal (déploiements, quotas)
-│   ├── admin.html / js/admin.js # Gestion des utilisateurs et quotas (admin)
-│   ├── admin-stats.html         # Statistiques cluster (admin)
-│   ├── login.html / js/login.js
-│   ├── register.html / js/register.js
-│   ├── js/api.js                # window.api() partagé + checkSsoStatus()
-│   ├── js/auth.js               # AuthManager (vérification session + redirection)
-│   ├── js/darkmode.js           # Toggle mode sombre/clair (localStorage + prefers-color-scheme)
-│   ├── js/templates.js          # CRUD templates (admin)
-│   ├── js/runtime-configs.js    # CRUD runtime configs (admin)
-│   ├── js/dashboard/            # Modules du dashboard
-│   │   ├── deployments.js       # Affichage et actions (pause, resume, delete)
-│   │   ├── resources.js         # PVCs + quotas
-│   │   ├── state.js             # État global
-│   │   ├── statusView.js        # Vue statut des pods
-│   │   └── utils.js             # Utilitaires UI
-│   ├── css/admin.css / quotas.css / …
-│   └── style.css                # Styles globaux (variables, dark mode, utilitaires)
-├── documentation/               # Documentation détaillée (ce dossier)
-├── dockerfiles/                 # Dockerfiles images de déploiement
-└── compose.yaml                 # Docker Compose (dev/local)
+│   │   ├── k8s_monitoring.py       # Stats cluster, namespaces, pods, usage
+│   │   ├── quotas.py               # Résumé de quota utilisateur
+│   │   ├── classrooms.py           # Classes, inscriptions, devoirs, soumissions, correction
+│   │   ├── student.py              # Vue étudiant : devoirs, soumissions, statut de correction
+│   │   ├── audit_logs.py           # Journal d'audit (admin)
+│   │   └── _helpers.py             # Utilitaires partagés (raise_k8s_http, audit_logger)
+│   ├── services/                   # Mixins de déploiement (stacks multi-conteneurs)
+│   │   ├── wordpress_deploy.py     # Stack WordPress + MariaDB
+│   │   ├── mysql_deploy.py         # Stack MySQL + phpMyAdmin
+│   │   └── lamp_deploy.py          # Stack LAMP (Apache + PHP + MySQL + phpMyAdmin)
+│   ├── tasks/                      # Tâches de fond asyncio
+│   │   └── cleanup.py              # Nettoyage labs expirés + namespaces orphelins
+│   └── tests/                      # Suite pytest (18 fichiers, SQLite in-memory)
+├── frontend-app/                   # SPA React/TypeScript/Vite (frontend principal)
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── admin/              # Gestion utilisateurs, templates, runtime configs
+│   │   │   ├── dashboard/          # Déploiements, quotas, terminal, détails lab
+│   │   │   └── teacher/            # Classes, devoirs, soumissions, correction
+│   │   ├── lib/
+│   │   │   ├── api.ts              # Client HTTP (fetch wrappé, gestion erreurs)
+│   │   │   └── format.ts           # Formatage dates, tailles, statuts
+│   │   ├── hooks/                  # React Query hooks (TanStack Query)
+│   │   ├── types/api.ts            # Types TypeScript des réponses API
+│   │   ├── locales/                # Traductions i18n
+│   │   │   ├── fr.json             # Français
+│   │   │   └── en.json             # Anglais
+│   │   └── styles/main.css         # Tailwind + variables CSS
+│   ├── Dockerfile                  # Build Node.js 20 → runtime Nginx:alpine
+│   └── package.json
+├── frontend/                       # Ancien frontend HTML/Vanilla JS (legacy, non utilisé)
+├── documentation/                  # Documentation détaillée (ce dossier)
+├── dockerfiles/                    # Dockerfiles images de déploiement (vscode, etc.)
+├── nginx/                          # Configuration Nginx
+├── tests/                          # Tests d'intégration / charge
+└── compose.yaml                    # Docker Compose (dev/local)
 ```
 
 > `*` = endpoint rate-limité (10 créations / 5 min par IP)
@@ -136,7 +144,30 @@ LabOnDemand/
 
 ---
 
+## Flux d'un devoir (Classroom → Assignment → Submission)
+
+```
+Teacher  POST /api/v1/classrooms                     → crée une classe
+Teacher  POST /api/v1/classrooms/{id}/enroll         → inscrit des étudiants
+Teacher  POST /api/v1/classrooms/{id}/assignments    → crée un devoir (template, CPU/RAM, due_at)
+Teacher  POST /api/v1/assignments/{id}/bulk-spawn    → déploie le lab sur tous les étudiants
+
+Student  GET  /api/v1/student/assignments            → liste les devoirs de ses classes
+Student  GET  /api/v1/student/assignments/{id}       → détail + lien vers son lab
+Student  POST /api/v1/student/assignments/{id}/submit → soumet (texte + liens)
+
+Teacher  GET  /api/v1/classrooms/{id}/submissions    → liste toutes les soumissions
+Teacher  POST /api/v1/assignments/{id}/grade         → note manuellement (grade + feedback)
+
+[Auto]   GradingSpec + GradingRun                   → correction automatique par sondes
+Student  GET  /api/v1/student/assignments/{id}/grading-status → résultat de correction
+```
+
+---
+
 ## Modèle de données
+
+### Utilisateurs et accès
 
 ```
 users
@@ -145,45 +176,105 @@ users
   is_active, auth_provider (local|oidc), external_id  ← UNIQUE (identifiant SSO)
   created_at, updated_at
 
-deployments                        ← IMP-1 (traçabilité)
-  id, user_id (FK→users)
-  name, deployment_type, namespace, stack_name
-  status (active|paused|expired|deleted)
-  created_at, deleted_at, last_seen_at, expires_at
-  cpu_requested, mem_requested
-
-user_quota_overrides               ← IMP-3 (dérogations admin)
+user_quota_overrides               ← dérogations admin (IMP-3)
   id, user_id (FK→users, UNIQUE)
   max_apps, max_cpu_m, max_mem_mi, max_storage_gi
   expires_at (NULL = permanent), created_at, created_by
+```
 
+### Labs Kubernetes
+
+```
 templates
   id, key, name, deployment_type, default_image, default_port
   default_service_type, tags, active, created_at
 
 runtime_configs
   id, key, default_image, target_port, default_service_type
-  allowed_for_students, min_cpu_request, min_memory_request
-  min_cpu_limit, min_memory_limit, active, created_at
+  allowed_for_students, min_cpu/memory_request, min_cpu/memory_limit, active
+
+deployments                        ← traçabilité TTL (IMP-1)
+  id, user_id (FK→users)
+  name, deployment_type, namespace, stack_name
+  status (active|paused|expired|deleted)
+  created_at, deleted_at, last_seen_at, expires_at
+  cpu_requested, mem_requested
+```
+
+### Système pédagogique
+
+```
+classrooms
+  id, name, description, owner_id (FK→users), archived, created_at, updated_at
+
+enrollments
+  id, classroom_id (FK CASCADE), user_id (FK CASCADE)
+  enrolled_at, removed_at
+  UNIQUE (classroom_id, user_id)
+
+assignments
+  id, classroom_id (FK CASCADE), title, instructions (Text MD), deliverables (Text MD)
+  template_key, cpu_preset, ram_preset
+  due_at, status (active|archived)
+  grading_mode (none|self_check|graded)
+  created_at, updated_at
+
+assignment_deployments             ← lien devoir ↔ lab étudiant
+  id, assignment_id (FK CASCADE), user_id (FK CASCADE)
+  deployment_id (FK SET NULL)
+  spawn_status (ok|skipped|error), spawn_error
+  created_at
+
+assignment_submissions             ← soumissions étudiants (MVP-1)
+  id, assignment_id (FK CASCADE), user_id (FK CASCADE)
+  attempt_no, status (submitted|graded)
+  text (Text), links (JSON), deployment_id (FK SET NULL), lab_snapshot (JSON)
+  submitted_at, is_late, due_at_snapshot
+  grade (ex. "15/20"), feedback (Text), graded_by (FK→users), graded_at
+  UNIQUE (assignment_id, user_id)
+```
+
+### Correction automatique (MVP-2)
+
+```
+grading_specs                      ← configuration de la correction par sondes
+  id, assignment_id (FK CASCADE, UNIQUE)
+  grader_image, timeout_seconds (10–600, défaut 120)
+  checks (JSON: liste de Probe), custom_script (Text)
+  created_at, updated_at
+
+  Probe: { id, name, kind (http|tcp|sql|file|command|script),
+           vantage (outside|inside), config (Dict), expect (Dict),
+           weight (0–100), visibility (student|summary|teacher_only) }
+
+grading_runs                       ← historique des exécutions de correction
+  id, assignment_id, user_id, submission_id, deployment_id
+  trigger (student_self|on_submit|teacher)
+  status (queued|running|done|error)
+  started_at, finished_at
+  total_checks, passed_checks, score_suggestion
+  results (JSON: liste de ProbeResult), error
+  result_token_hash (SHA-256), token_used_at
+  created_at
 ```
 
 ---
 
 ## RBAC (contrôle d'accès par rôle)
 
-| Rôle    | Déploiements | Quotas CPU/RAM | Templates | Utilisateurs | Quota override |
-|---------|-------------|----------------|-----------|--------------|----------------|
-| student | ses propres  | faibles         | lecture   | —            | —              |
-| teacher | ses propres  | moyens          | lecture   | —            | —              |
-| admin   | tous         | élevés          | CRUD      | CRUD         | CRUD           |
+| Rôle    | Labs K8s     | Quotas CPU/RAM | Templates | Utilisateurs | Classes / Devoirs         | Quota override |
+|---------|-------------|----------------|-----------|--------------|---------------------------|----------------|
+| student | ses propres  | faibles         | lecture   | —            | lecture (inscrits)         | —              |
+| teacher | ses propres  | moyens          | lecture   | —            | CRUD (ses classes)         | —              |
+| admin   | tous         | élevés          | CRUD      | CRUD         | accès complet              | CRUD           |
 
-Les quotas par défaut (définis dans `k8s_utils.get_role_limits()`) peuvent être
-surchargés individuellement via `UserQuotaOverride`. Voir `documentation/resource-limits.md`.
+Règles complémentaires :
+- Un teacher ne voit que les classes dont il est `owner_id`.
+- Un student ne voit que les devoirs des classes où il est inscrit (`enrolled_at IS NOT NULL, removed_at IS NULL`).
+- Les opérations sensibles sur un lab (détails, identifiants, pause, terminal, suppression) : propriétaire **ou** admin uniquement — un teacher n'a pas d'accès transverse aux labs d'autres utilisateurs.
+- `role_override = true` sur un utilisateur indique que son rôle ne peut pas être modifié par synchronisation SSO.
 
-Les actions sur un lab (détails, identifiants, pause, reprise, suppression,
-terminal) suivent une règle owner/admin : le propriétaire du lab est autorisé,
-un admin est autorisé, et un teacher n'a pas d'accès transverse implicite aux
-labs d'autres utilisateurs.
+Les quotas par défaut (définis dans `k8s_utils.get_role_limits()`) peuvent être surchargés individuellement via `UserQuotaOverride`. Voir `documentation/resource-limits.md`.
 
 ---
 
@@ -191,25 +282,19 @@ labs d'autres utilisateurs.
 
 - Token opaque 32 octets (URL-safe) stocké dans le cookie HttpOnly `session_id`
 - Payload `{user_id, username, role}` conservé côté serveur dans Redis (TTL = `SESSION_EXPIRY_HOURS`)
-- À la **suppression d'un utilisateur** : toutes ses sessions Redis sont invalidées immédiatement
-  via `security.delete_user_sessions(user_id)` (scan par pattern `session:*`)
+- À la **suppression d'un utilisateur** : toutes ses sessions Redis sont invalidées immédiatement via `security.delete_user_sessions(user_id)` (scan par pattern `session:*`)
 - Au **logout** : seule la session active est supprimée
 
 ---
 
 ## Cycle de vie des labs (TTL)
 
-Chaque déploiement peut avoir une date d'expiration `expires_at` calculée lors de
-la création selon le rôle (configurable via env, voir `documentation/lifecycle.md`).
+Chaque déploiement peut avoir une date d'expiration `expires_at` calculée lors de la création selon le rôle (configurable via env, voir `documentation/lifecycle.md`).
 
-La tâche de fond `backend/tasks/cleanup.py` tourne toutes les `CLEANUP_INTERVAL_MINUTES`
-minutes et :
+La tâche de fond `backend/tasks/cleanup.py` tourne toutes les `CLEANUP_INTERVAL_MINUTES` minutes et :
 1. Met en pause les déploiements dont `expires_at ≤ now` et synchronise la DB
-2. Supprime définitivement les labs en pause par labels Kubernetes après `LAB_GRACE_PERIOD_DAYS`
-3. Supprime les namespaces Kubernetes orphelins (user supprimé mais namespace présent),
-   avec deux garde-fous pour protéger les namespaces SSO :
-   - déploiements actifs encore rattachés en DB → skip
-   - namespace créé depuis moins de `ORPHAN_NS_GRACE_DAYS` jours → skip
+2. Supprime définitivement les labs en pause après `LAB_GRACE_PERIOD_DAYS`
+3. Supprime les namespaces Kubernetes orphelins avec deux garde-fous SSO
 
 ---
 
@@ -220,11 +305,10 @@ DELETE /api/v1/auth/users/{id}
   │
   ├─ 1. delete_user_sessions(user_id)     → invalide toutes les sessions Redis
   ├─ 2. cleanup_user_namespace(user_id)   → supprime le namespace K8s (labondemand-user-N)
-  └─ 3. db.delete(user)                   → supprime la ligne en base (CASCADE → deployments, overrides)
+  └─ 3. db.delete(user)                   → supprime la ligne en base (CASCADE → deployments, overrides, classes…)
 ```
 
-Les étapes 1 et 2 sont non-bloquantes : une erreur K8s ou Redis n'empêche pas la
-suppression en base. Tout est tracé dans `logs/audit.log`.
+Les étapes 1 et 2 sont non-bloquantes : une erreur K8s ou Redis n'empêche pas la suppression en base. Tout est tracé dans `logs/audit.log`.
 
 ---
 
@@ -234,7 +318,7 @@ suppression en base. Tout est tracé dans `logs/audit.log`.
 
 ```json
 {
-  "status": "healthy",   // ou "degraded" si un composant est en erreur
+  "status": "healthy",
   "db":    "ok",
   "redis": "ok",
   "k8s":   "ok",
@@ -242,29 +326,31 @@ suppression en base. Tout est tracé dans `logs/audit.log`.
 }
 ```
 
-Utilisé par Docker Compose (`healthcheck`), le monitoring externe, et les outils
-de déploiement CI/CD.
+Utilisé par Docker Compose (`healthcheck`), le monitoring externe, et les outils de déploiement CI/CD.
 
 ---
 
 ## Ingress (optionnel)
 
-Lorsque `INGRESS_ENABLED=true`, chaque déploiement reçoit automatiquement
-un objet Ingress avec un sous-domaine de la forme :
+Lorsque `INGRESS_ENABLED=true`, chaque déploiement reçoit automatiquement un objet Ingress avec un sous-domaine de la forme :
 
 ```
 {name}-u{user_id}.{INGRESS_BASE_DOMAIN}
 ```
 
-Compatible Traefik et Nginx Ingress Controller. TLS via `INGRESS_TLS_SECRET`.
+Compatible Traefik et Nginx Ingress Controller. TLS via `INGRESS_TLS_SECRET`. Les types de déploiement concernés sont configurables via `INGRESS_AUTO_TYPES`.
 
 ---
 
-## Mode sombre (dark mode)
+## Frontend (frontend-app/)
 
-Le frontend gère un mode sombre natif CSS via :
-- La propriété `data-theme="dark"` sur `<html>` (toggle via bouton 🌙 dans le header)
-- La `@media (prefers-color-scheme: dark)` comme valeur par défaut système
-- La persistance dans `localStorage` (clé `labondemand-theme`)
-- Le script `frontend/js/darkmode.js` initialisé **avant** le chargement du DOM
-  pour éviter tout flash de contenu blanc
+L'interface est une SPA React 18 / TypeScript / Vite compilée dans une image Nginx. Elle n'est **jamais servie directement par Node.js en production** — uniquement via le conteneur `frontend`.
+
+Bibliothèques clés :
+- **Radix UI** : composants accessibles (dialog, dropdown, tabs, tooltip…)
+- **TanStack Query** : fetching et cache des données serveur
+- **TanStack Table** : tableaux triables/filtrables (liste des déploiements, soumissions…)
+- **Xterm.js** : terminal WebSocket intégré dans le dashboard
+- **lucide-react** : icônes
+
+L'UI est bilingue (français / anglais). Les chaînes de traduction sont dans `frontend-app/src/locales/fr.json` et `en.json`. Toute nouvelle chaîne visible doit être ajoutée dans les deux fichiers.

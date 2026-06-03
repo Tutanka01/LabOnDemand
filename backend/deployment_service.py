@@ -6,6 +6,7 @@ Principe KISS : une classe focalisée sur la création de déploiements
 import datetime
 import logging
 import re
+import secrets
 from typing import Dict, Any, Optional, List, Tuple
 from fastapi import HTTPException
 from kubernetes import client
@@ -877,6 +878,20 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     "ingresses",
                 )
 
+        if resolved["app_type"] in {"vscode", "jupyter", "netbeans"}:
+            secrets = self.core_v1.list_namespaced_secret(
+                resolved["namespace"], label_selector=label_selector
+            )
+            for secret in secrets.items or []:
+                secret_name = secret.metadata.name
+                ignore_404(
+                    lambda secret_name=secret_name: self.core_v1.delete_namespaced_secret(
+                        secret_name, resolved["namespace"]
+                    ),
+                    secret_name,
+                    "secrets",
+                )
+
         if delete_persistent:
             pvcs = self.core_v1.list_namespaced_persistent_volume_claim(
                 resolved["namespace"], label_selector=label_selector
@@ -1390,6 +1405,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         main_port_name: Optional[str] = None,
         extra_container_ports: Optional[List[Dict[str, Any]]] = None,
         env_vars: Optional[List[Dict[str, Any]]] = None,
+        env_from: Optional[List[Dict[str, Any]]] = None,
+        command: Optional[List[str]] = None,
+        args: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Crée le manifeste du déploiement"""
         ports: List[Dict[str, Any]] = []
@@ -1419,6 +1437,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             container_spec["ports"] = ports
         if env_vars:
             container_spec["env"] = env_vars
+        if env_from:
+            container_spec["envFrom"] = env_from
+        if command:
+            container_spec["command"] = command
+        if args:
+            container_spec["args"] = args
 
         return {
             "apiVersion": "apps/v1",
@@ -1888,8 +1912,16 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         extra_container_ports: Optional[List[Dict[str, Any]]] = None
         additional_service_ports: Optional[List[Dict[str, Any]]] = None
         container_env: Optional[List[Dict[str, Any]]] = None
+        container_env_from: Optional[List[Dict[str, Any]]] = None
+        container_command: Optional[List[str]] = None
+        container_args: Optional[List[str]] = None
+        generated_credentials: Optional[Dict[str, Dict[str, str]]] = None
+        generated_secret_name: Optional[str] = None
+        generated_secret_data: Optional[Dict[str, str]] = None
         if deployment_type == "netbeans":
             main_port_name = "novnc"
+            vnc_password = secrets.token_urlsafe(18)
+            view_only_password = secrets.token_urlsafe(18)
             extra_container_ports = [
                 {"containerPort": 5901, "name": "vnc"},
                 {"containerPort": 4901, "name": "audio"},
@@ -1903,12 +1935,73 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 {"name": "KASM_ENABLE_SSL", "value": "false"},
                 {"name": "KASM_NO_VNC_SSL", "value": "1"},
                 {"name": "KASM_REQUIRE_SSL", "value": "false"},
-                {"name": "VNC_PW", "value": "password"},
-                {"name": "VNC_VIEW_ONLY_PW", "value": "password"},
             ]
+            generated_secret_name = f"{name}-secret"
+            generated_secret_data = {
+                "VNC_USERNAME": "kasm_user",
+                "VNC_PW": vnc_password,
+                "VNC_VIEW_ONLY_PW": view_only_password,
+            }
+            generated_credentials = {
+                "netbeans": {
+                    "username": "kasm_user",
+                    "password": vnc_password,
+                    "view_only_password": view_only_password,
+                }
+            }
+            container_env_from = [{"secretRef": {"name": generated_secret_name}}]
+        elif deployment_type == "jupyter":
+            jupyter_token = secrets.token_urlsafe(24)
+            generated_secret_name = f"{name}-secret"
+            generated_secret_data = {"JUPYTER_TOKEN": jupyter_token}
+            generated_credentials = {"jupyter": {"token": jupyter_token}}
+            container_env = [{"name": "JUPYTER_ENABLE_LAB", "value": "yes"}]
+            container_env_from = [{"secretRef": {"name": generated_secret_name}}]
+            container_command = ["/bin/sh", "-lc"]
+            container_args = [
+                (
+                    "exec start-notebook.sh "
+                    "--ServerApp.token=\"${JUPYTER_TOKEN}\" "
+                    "--ServerApp.password='' "
+                    "--NotebookApp.token=\"${JUPYTER_TOKEN}\" "
+                    "--NotebookApp.password=''"
+                )
+            ]
+        elif deployment_type == "vscode":
+            generated_secret_name = f"{name}-secret"
+            generated_secret_data = {
+                "CODE_SERVER_USERNAME": "coder",
+                "PASSWORD": secrets.token_urlsafe(18),
+            }
+            generated_credentials = {
+                "vscode": {
+                    "username": generated_secret_data["CODE_SERVER_USERNAME"],
+                    "password": generated_secret_data["PASSWORD"],
+                }
+            }
+            container_env_from = [{"secretRef": {"name": generated_secret_name}}]
 
         created_objects: List[Tuple[str, str]] = []
         try:
+            if generated_secret_name and generated_secret_data:
+                secret_labels = {
+                    **labels,
+                    "app": name,
+                    "stack-name": name,
+                    "component": "credentials",
+                }
+                secret_manifest = {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": {"name": generated_secret_name, "labels": secret_labels},
+                    "type": "Opaque",
+                    "stringData": generated_secret_data,
+                }
+                self.core_v1.create_namespaced_secret(
+                    effective_namespace, secret_manifest
+                )
+                created_objects.append(("secret", generated_secret_name))
+
             # Créer le déploiement
             deployment_manifest = self.create_deployment_manifest(
                 name,
@@ -1923,6 +2016,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 main_port_name=main_port_name,
                 extra_container_ports=extra_container_ports,
                 env_vars=container_env,
+                env_from=container_env_from,
+                command=container_command,
+                args=container_args,
             )
 
             # Persistance best-effort pour VSCode/Jupyter
@@ -2146,7 +2242,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 ):
                     result_message += (
                         f" VS Code Online sera accessible à l'adresse "
-                        f"http://<IP_DU_NOEUD>:{node_port}/ (mot de passe: labondemand)"
+                        f"http://<IP_DU_NOEUD>:{node_port}/"
                     )
 
                 if deployment_type == "netbeans":
@@ -2172,14 +2268,18 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             "protocol": "http",
                             "secure": False,
                             "username": "kasm_user",
-                            "password": "password",
+                            "password": generated_credentials["netbeans"]["password"]
+                            if generated_credentials
+                            else None,
                         },
                         "vnc": {
                             "description": "Client VNC classique (optionnel)",
                             "target_port": 5901,
                             "node_port": _find_node_port("vnc", 5901),
                             "username": "kasm_user",
-                            "password": "password",
+                            "password": generated_credentials["netbeans"]["password"]
+                            if generated_credentials
+                            else None,
                         },
                         "audio": {
                             "description": "Flux audio (Websocket Kasm)",
@@ -2210,6 +2310,8 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 },
                 "connection_hints": connection_hints,
             }
+            if generated_credentials:
+                result["credentials"] = generated_credentials
 
             audit_logger.info(
                 "deployment_created",

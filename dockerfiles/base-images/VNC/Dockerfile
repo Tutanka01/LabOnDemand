@@ -68,7 +68,7 @@ LABEL org.opencontainers.image.authors="makhal" \
 
 # Variables d'environnement pour l'exécution
 ENV HOME=/home/lod-user \
-    VNC_PW=password \
+    VNC_PW=changeme \
     VNC_RESOLUTION=1600x900 \
     LANG='fr_FR.UTF-8' \
     TZ='Europe/Paris'

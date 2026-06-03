@@ -650,7 +650,7 @@ function createDashboardApp() {
                         <h3>Jupyter Notebook</h3>
                         <p>Environnement interactif pour Python et data science.</p>
                     </div>
-                    <div class=\"card service-card\" data-service=\"VS Code\" data-icon=\"fa-solid fa-code\" data-deployment-type=\"vscode\" data-default-image=\"tutanka01/k8s:vscode\" data-default-port=\"8080\" data-default-service-type=\"NodePort\">
+                    <div class=\"card service-card\" data-service=\"VS Code\" data-icon=\"fa-solid fa-code\" data-deployment-type=\"vscode\" data-default-image=\"codercom/code-server:4.121.0-39\" data-default-port=\"8080\" data-default-service-type=\"NodePort\">
                         <div class=\"service-icon-wrap\"><i class=\"fa-solid fa-code service-icon\"></i></div>
                         <h3>VS Code</h3>
                         <p>Éditeur de code accessible via le navigateur.</p>
@@ -719,7 +719,7 @@ function createDashboardApp() {
                 serviceTargetPort = 8888;
             } else if (deploymentType === 'vscode') {
                 // VS Code a des paramètres prédéfinis
-                image = 'tutanka01/k8s:vscode'; // Image prédéfinie côté serveur
+                image = 'codercom/code-server:4.121.0-39'; // Image prédéfinie côté serveur
                 createService = true;
                 serviceType = 'NodePort';
                 servicePort = 8080;
@@ -1214,7 +1214,7 @@ function createDashboardApp() {
                                 urlTemplate: undefined,
                                 protocol: novncInfo.protocol,
                                 secure: novncInfo.secure,
-                                credentials: deployment.type === 'netbeans' ? { username: 'kasm_user', password: 'password' } : undefined,
+                                credentials: deployment.type === 'netbeans' ? { username: 'kasm_user' } : undefined,
                                 expiresAt: deployment.expires_at || null,
                                 createdAt: deployment.created_at || null,
                             });

@@ -32,6 +32,7 @@ from ..models import (
     Classroom,
     Deployment,
     Enrollment,
+    GradingSpec,
     Template,
     User,
     UserRole,
@@ -47,6 +48,9 @@ from ..schemas import (
     ClassroomResponse,
     ClassroomUpdate,
     EnrollStudentsRequest,
+    GradingSpecCreate,
+    GradingSpecResponse,
+    Probe,
     StudentLabStatus,
     SubmissionGradeRequest,
     SubmissionLink,
@@ -777,6 +781,109 @@ def grade_submission(
         feedback=sub.feedback,
         graded_by=sub.graded_by,
         graded_at=sub.graded_at,
+    )
+
+
+# ── GRADING SPEC (MVP-2) ───────────────────────────────────────────────────────
+
+
+@classrooms_router.get(
+    "/{cid}/assignments/{aid}/grading-spec",
+    response_model=GradingSpecResponse,
+    dependencies=[Depends(is_teacher_or_admin)],
+)
+def get_grading_spec(
+    cid: int,
+    aid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retourne la GradingSpec d'un devoir (probes + script optionnel)."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+
+    spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == aid).first()
+    if not spec:
+        raise HTTPException(status_code=404, detail="Aucune GradingSpec pour ce devoir")
+
+    checks = []
+    if spec.checks:
+        try:
+            raw = json.loads(spec.checks)
+            checks = [Probe(**p) for p in raw] if isinstance(raw, list) else []
+        except (ValueError, TypeError):
+            checks = []
+
+    return GradingSpecResponse(
+        id=spec.id,
+        assignment_id=spec.assignment_id,
+        grader_image=spec.grader_image,
+        timeout_seconds=spec.timeout_seconds,
+        checks=checks,
+        custom_script=spec.custom_script,
+        created_at=spec.created_at,
+        updated_at=spec.updated_at,
+    )
+
+
+@classrooms_router.post(
+    "/{cid}/assignments/{aid}/grading-spec",
+    response_model=GradingSpecResponse,
+    dependencies=[Depends(is_teacher_or_admin)],
+)
+def upsert_grading_spec(
+    cid: int,
+    aid: int,
+    payload: GradingSpecCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Crée ou remplace la GradingSpec d'un devoir (upsert)."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    asgn = _get_assignment_or_404(cid, aid, db)
+
+    checks_json = json.dumps([p.model_dump() for p in payload.checks])
+
+    spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == aid).first()
+    if spec:
+        spec.grader_image = payload.grader_image
+        spec.timeout_seconds = payload.timeout_seconds
+        spec.checks = checks_json
+        spec.custom_script = payload.custom_script
+        spec.updated_at = datetime.now(timezone.utc)
+    else:
+        spec = GradingSpec(
+            assignment_id=aid,
+            grader_image=payload.grader_image,
+            timeout_seconds=payload.timeout_seconds,
+            checks=checks_json,
+            custom_script=payload.custom_script,
+        )
+        db.add(spec)
+
+    # Activer le grading_mode si pas encore activé et qu'il y a des probes
+    if asgn.grading_mode == "none" and (payload.checks or payload.custom_script):
+        asgn.grading_mode = "self_check"
+
+    db.commit()
+    db.refresh(spec)
+
+    audit_logger.info(
+        "grading_spec_upserted",
+        extra={"extra_fields": {"assignment_id": aid, "probe_count": len(payload.checks)}},
+    )
+
+    return GradingSpecResponse(
+        id=spec.id,
+        assignment_id=spec.assignment_id,
+        grader_image=spec.grader_image,
+        timeout_seconds=spec.timeout_seconds,
+        checks=payload.checks,
+        custom_script=spec.custom_script,
+        created_at=spec.created_at,
+        updated_at=spec.updated_at,
     )
 
 

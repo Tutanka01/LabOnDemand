@@ -68,3 +68,23 @@ def test_seed_runtime_configs_vscode_exists(db):
     vscode = db.query(RuntimeConfig).filter(RuntimeConfig.key == "vscode").first()
     assert vscode is not None
     assert vscode.active is True
+    assert vscode.default_image == "codercom/code-server:4.121.0-39"
+
+
+def test_seed_runtime_configs_updates_legacy_vscode_image(db):
+    db.add(
+        RuntimeConfig(
+            key="vscode",
+            default_image="tutanka01/k8s:vscode",
+            target_port=8080,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            active=True,
+        )
+    )
+    db.commit()
+
+    seed_runtime_configs(db)
+
+    vscode = db.query(RuntimeConfig).filter(RuntimeConfig.key == "vscode").one()
+    assert vscode.default_image == "codercom/code-server:4.121.0-39"

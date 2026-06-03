@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .models import User, UserRole, Template, RuntimeConfig
 from .security import get_password_hash
-from .templates import get_deployment_templates
+from .templates import VSCODE_IMAGE, get_deployment_templates
 
 logger = logging.getLogger("labondemand.seed")
 
@@ -113,7 +113,7 @@ def seed_templates(db: Session) -> None:
 _DEFAULT_RUNTIME_CONFIGS: list[dict] = [
     {
         "key": "vscode",
-        "default_image": "tutanka01/k8s:vscode",
+        "default_image": VSCODE_IMAGE,
         "target_port": 8080,
         "default_service_type": "NodePort",
         "allowed_for_students": True,
@@ -175,8 +175,21 @@ def _ensure_runtime_config(db: Session, cfg: dict) -> None:
     if not existing:
         db.add(RuntimeConfig(active=True, **cfg))
         db.commit()
-    elif existing.allowed_for_students is None:
+        return
+
+    changed = False
+    if existing.allowed_for_students is None:
         existing.allowed_for_students = True
+        changed = True
+
+    legacy_images = {
+        "vscode": {"tutanka01/k8s:vscode", "codercom/code-server:latest"},
+    }
+    if existing.default_image in legacy_images.get(key, set()):
+        existing.default_image = cfg["default_image"]
+        changed = True
+
+    if changed:
         db.commit()
 
 
