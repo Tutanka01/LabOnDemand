@@ -319,6 +319,15 @@ export interface GradingRun {
   created_at?: string | null;
 }
 
+/** Probe telle qu'exposée à l'étudiant : nom + type, sans la config interne. */
+export interface StudentProbe {
+  id: string;
+  name: string;
+  kind: ProbeKind | string;
+  weight: number;
+  visibility: ProbeVisibility;
+}
+
 export interface SubmissionLink {
   label?: string | null;
   url: string;
@@ -343,6 +352,8 @@ export interface AssignmentSubmission {
   feedback?: string | null;
   graded_by?: number | null;
   graded_at?: string | null;
+  /** Dernier Grading Run (vue prof : résultats détaillés non filtrés). */
+  grading_run?: GradingRun | null;
 }
 
 export interface StudentAssignmentItem {
@@ -366,6 +377,10 @@ export interface StudentAssignmentItem {
 export interface StudentAssignmentDetail extends StudentAssignmentItem {
   deliverables?: string | null;
   submission?: AssignmentSubmission | null;
+  // Tests boîte noire (MVP-2)
+  grading_mode: GradingMode | string;
+  visible_probes: StudentProbe[];
+  latest_run?: GradingRun | null;
 }
 
 export interface TeacherSubmissionRow {
@@ -379,6 +394,11 @@ export interface TeacherSubmissionRow {
   grade?: string | null;
   lab_deployment_name?: string | null;
   lab_status?: string | null;
+  // Verdict du dernier Grading Run (colonne de triage « 4/5 »)
+  grading_status?: GradingRunStatus | null;
+  grading_passed?: number | null;
+  grading_total?: number | null;
+  score_suggestion?: string | null;
 }
 
 export interface BulkSpawnResult {

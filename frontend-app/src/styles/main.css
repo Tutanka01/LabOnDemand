@@ -838,6 +838,62 @@
   margin-top: 8px;
 }
 
+/* ── Triage des tests boîte noire (Grader Pod) ─────────────────────────── */
+.tests-panel {
+  border-left: 4px solid var(--accent-blue, var(--primary));
+}
+.grading-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.grading-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.grading-check-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.grading-check-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.grading-check-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.grading-check-message {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.grading-check-output {
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: var(--surface-muted, var(--surface-soft));
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+}
+
 .submission-link-row {
   display: flex;
   gap: 8px;

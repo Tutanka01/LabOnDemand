@@ -58,6 +58,7 @@ LabOnDemand/
 │   ├── k8s_utils.py                # Labels, namespaces, quotas (get_role_limits + UserQuotaOverride)
 │   ├── templates.py                # DeploymentConfig : lecture templates depuis la BDD
 │   ├── deployment_service.py       # DeploymentService : orchestration K8s + cleanup
+│   ├── grader_service.py           # Grader Pod : Job isolé, NetworkPolicy, watcher pull (voir grader-pod.md)
 │   ├── session_store.py            # Redis store (TTL par clé, scan par user_id)
 │   ├── sso.py                      # OIDC : discovery (TTL configurable), exchange, userinfo, map_role
 │   ├── logging_config.py           # Logging structuré JSON (app.log, access.log, audit.log)
@@ -80,7 +81,7 @@ LabOnDemand/
 │   │   ├── mysql_deploy.py         # Stack MySQL + phpMyAdmin
 │   │   └── lamp_deploy.py          # Stack LAMP (Apache + PHP + MySQL + phpMyAdmin)
 │   ├── tasks/                      # Tâches de fond asyncio
-│   │   └── cleanup.py              # Nettoyage labs expirés + namespaces orphelins
+│   │   └── cleanup.py              # Nettoyage labs expirés + namespaces orphelins + runs grader bloqués
 │   └── tests/                      # Suite pytest (18 fichiers, SQLite in-memory)
 ├── frontend-app/                   # SPA React/TypeScript/Vite (frontend principal)
 │   ├── src/
@@ -102,6 +103,7 @@ LabOnDemand/
 ├── frontend/                       # Ancien frontend HTML/Vanilla JS (legacy, non utilisé)
 ├── documentation/                  # Documentation détaillée (ce dossier)
 ├── dockerfiles/                    # Dockerfiles images de déploiement (vscode, etc.)
+│   └── grader/                     # Image Grader Pod (Dockerfile + grader.py + contrat, voir grader-pod.md)
 ├── nginx/                          # Configuration Nginx
 ├── tests/                          # Tests d'intégration / charge
 └── compose.yaml                    # Docker Compose (dev/local)
@@ -147,20 +149,23 @@ LabOnDemand/
 ## Flux d'un devoir (Classroom → Assignment → Submission)
 
 ```
-Teacher  POST /api/v1/classrooms                     → crée une classe
-Teacher  POST /api/v1/classrooms/{id}/enroll         → inscrit des étudiants
-Teacher  POST /api/v1/classrooms/{id}/assignments    → crée un devoir (template, CPU/RAM, due_at)
-Teacher  POST /api/v1/assignments/{id}/bulk-spawn    → déploie le lab sur tous les étudiants
+Teacher  POST /api/v1/classrooms                                  → crée une classe
+Teacher  POST /api/v1/classrooms/{cid}/students                   → inscrit des étudiants
+Teacher  POST /api/v1/classrooms/{cid}/assignments                → crée un devoir (template, CPU/RAM, due_at)
+Teacher  POST /api/v1/classrooms/{cid}/assignments/{aid}/deploy-all → déploie le lab sur tous les étudiants
 
-Student  GET  /api/v1/student/assignments            → liste les devoirs de ses classes
-Student  GET  /api/v1/student/assignments/{id}       → détail + lien vers son lab
-Student  POST /api/v1/student/assignments/{id}/submit → soumet (texte + liens)
+Student  GET  /api/v1/student/assignments                         → liste les devoirs de ses classes
+Student  GET  /api/v1/student/assignments/{aid}                   → détail + lab + probes visibles + dernier run
+Student  POST /api/v1/student/assignments/{aid}/submit            → soumet (texte + liens)
+Student  POST /api/v1/student/assignments/{aid}/run-tests         → lance les tests (self-check)
+Student  GET  /api/v1/student/assignments/{aid}/grading-runs/{id} → suivi (filtré par visibilité)
 
-Teacher  GET  /api/v1/classrooms/{id}/submissions    → liste toutes les soumissions
-Teacher  POST /api/v1/assignments/{id}/grade         → note manuellement (grade + feedback)
+Teacher  GET  /api/v1/classrooms/{cid}/assignments/{aid}/submissions          → tableau de triage (+ verdict)
+Teacher  POST /api/v1/classrooms/{cid}/assignments/{aid}/submissions/{sid}/grade → note (grade + feedback)
+Teacher  POST /api/v1/classrooms/{cid}/assignments/{aid}/test-now             → tests sur le lab de démo
+Teacher  POST /api/v1/classrooms/{cid}/assignments/{aid}/run-tests-all        → tests sur toute la classe
 
-[Auto]   GradingSpec + GradingRun                   → correction automatique par sondes
-Student  GET  /api/v1/student/assignments/{id}/grading-status → résultat de correction
+[Grader] GradingSpec → GradingRun : Job K8s isolé, verdict lu dans les logs (pull). Voir grader-pod.md
 ```
 
 ---
@@ -246,17 +251,22 @@ grading_specs                      ← configuration de la correction par sondes
   Probe: { id, name, kind (http|tcp|sql|file|command|script),
            vantage (outside|inside), config (Dict), expect (Dict),
            weight (0–100), visibility (student|summary|teacher_only) }
+  MVP-2 : kinds outside http/tcp/sql + script exécutés ; file/command (inside) → skip.
 
 grading_runs                       ← historique des exécutions de correction
   id, assignment_id, user_id, submission_id, deployment_id
   trigger (student_self|on_submit|teacher)
   status (queued|running|done|error)
   started_at, finished_at
-  total_checks, passed_checks, score_suggestion
+  total_checks, passed_checks, score_suggestion (ex. "15/20")
   results (JSON: liste de ProbeResult), error
-  result_token_hash (SHA-256), token_used_at
+  result_token_hash (SHA-256), token_used_at   ← réservés à un futur mode push (non utilisés en MVP-2)
   created_at
 ```
+
+> Exécution = **Grader Pod** : Job K8s éphémère et isolé, verdict récupéré via les logs
+> (modèle *pull*). Orchestration dans `backend/grader_service.py` + image `dockerfiles/grader/`.
+> Détails : [`grader-pod.md`](grader-pod.md).
 
 ---
 

@@ -42,17 +42,31 @@
   getGradingRun, testNow, runTestsAll`), CSS probe editor, i18n 65+ cles FR/EN.
 - Build TypeScript/Vite confirme propre.
 
-**Reste a faire (MVP-2)** :
-- Brique 3 : image Grader (`dockerfiles/grader/`), service `grader_service.py` (Job K8s
-  isole, NetworkPolicy, ServiceAccount sans droits, token hash, TTL).
-- Brique 4 : endpoints d'execution (`run-tests` etudiant, `test-now` / `run-tests-all` prof,
-  hook `on_submit`, endpoint interne token-authentifie).
-- Brique 5 : UI triage — progression check par check etudiant, colonne verdict `x/5` +
-  note suggeree prof.
-- Brique 6 : tests backend (K8s mocke), reconciliation cleanup, validation securite.
+**Fait — Phase 2 / MVP-2 briques 3 a 6 (le Grader Pod et le triage)** :
+- Brique 3 : image Grader (`dockerfiles/grader/` : Dockerfile + `grader.py` http/tcp/sql/script,
+  contrat de sortie JSON entre marqueurs, stdlib only) ; service `grader_service.py` (namespace
+  grader verrouille, ServiceAccount sans token, NetworkPolicy egress restreinte labs+DNS, Job
+  isole avec limites CPU/RAM + `activeDeadlineSeconds` + `ttlSecondsAfterFinished`, watcher async
+  **pull** : cree le Job, surveille, lit le stdout du pod). Transport choisi = **pull via logs**
+  (l'API en Compose face a un cluster distant n'a pas d'adresse fiable joignable ; le callback
+  push du §18 reste cable pour plus tard).
+- Brique 4 : endpoints `POST /student/.../run-tests`, `GET /student/.../grading-runs/{id}`
+  (filtres par visibilite), `POST /.../test-now` + `GET /.../grading-runs/{id}` (prof),
+  `POST /.../run-tests-all`. Probes visibles + dernier run dans le detail etudiant ; verdict
+  dans la liste prof ; resultats detailles dans la correction.
+- Brique 5 : UI triage — panneau « Tests automatiques » cote etudiant (progression check par
+  check en direct, polling), colonne verdict `x/y` + boutons « Tester maintenant » /
+  « Relancer les tests (classe) » cote prof, resultats detailles + note suggeree pre-remplie
+  dans la correction (composant partage `GradingResults.tsx`), i18n FR/EN.
+- Brique 6 : `tests/test_grading.py` (15 tests : securite manifeste/NetworkPolicy, parsing,
+  score, visibilite, endpoints + autorisations, pipeline pull complet K8s mocke) ; reconciliation
+  des runs bloques dans `tasks/cleanup.py`.
+- Perimetre : probes *outside* http/tcp/sql + script. Les probes *inside* (file/command) sont
+  marquees `skip` par le grader (elles casseraient l'isolation) — a traiter plus tard.
 
 **Phase 3 et suivantes** : cockpit prof avance, start-lab a la demande, bouton « Je suis
-bloque », Lab Blueprints, SSO, assistant IA.
+bloque », Lab Blueprints, SSO, assistant IA. Restes MVP-2 differes : probes *inside*, mode push
+(callback token), image grader custom enseignant.
 
 ---
 

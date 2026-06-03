@@ -295,5 +295,18 @@
   "probe.result_skip": "Ignoré",
   "probe.score": "{passed}/{total} tests passés",
   "probe.test_now": "Tester maintenant",
-  "probe.test_now_hint": "Lance les tests contre votre lab de démonstration."
+  "probe.test_now_hint": "Lance les tests contre votre lab de démonstration.",
+  "probe.queued": "En file d'attente…",
+  "probe.pending": "En attente",
+  "probe.run_failed": "L'exécution des tests a échoué.",
+  "probe.no_tests_student": "Aucun test automatique pour ce devoir.",
+  "probe.lab_required": "Ouvre ton lab avant de lancer les tests.",
+  "probe.suggested_grade": "Note suggérée",
+  "probe.last_run_at": "Dernier essai",
+  "probe.run_all": "Relancer les tests (classe)",
+  "probe.run_all_pending": "Lancement…",
+  "probe.run_all_done": "{n} test(s) lancé(s)",
+  "probe.no_demo_lab": "Déployez-vous un lab de démo avant de tester.",
+  "probe.results": "Résultats des tests",
+  "probe.run_intro": "Lancez les vérifications boîte noire contre votre lab et corrigez en direct."
 }

@@ -428,6 +428,18 @@ class AssignmentSubmissionResponse(BaseModel):
     feedback: Optional[str] = None
     graded_by: Optional[int] = None
     graded_at: Optional[datetime] = None
+    # Dernier Grading Run de cet étudiant (vue prof : résultats détaillés non filtrés)
+    grading_run: Optional[GradingRunResponse] = None
+
+
+class StudentProbe(BaseModel):
+    """Probe telle qu'exposée à l'étudiant : nom + type, SANS la config/expect interne
+    (qui révélerait la réponse attendue)."""
+    id: str
+    name: str
+    kind: str
+    weight: int = 1
+    visibility: str = "student"
 
 
 class StudentAssignmentItem(BaseModel):
@@ -455,6 +467,10 @@ class StudentAssignmentDetail(StudentAssignmentItem):
     """Détail d'un devoir + la soumission de l'étudiant si elle existe."""
     deliverables: Optional[str] = None
     submission: Optional[AssignmentSubmissionResponse] = None
+    # Tests boîte noire (MVP-2)
+    grading_mode: str = "none"
+    visible_probes: List[StudentProbe] = []
+    latest_run: Optional[GradingRunResponse] = None
 
 
 class TeacherSubmissionRow(BaseModel):
@@ -469,3 +485,8 @@ class TeacherSubmissionRow(BaseModel):
     grade: Optional[str] = None
     lab_deployment_name: Optional[str] = None
     lab_status: Optional[str] = None
+    # Verdict du dernier Grading Run (colonne « 4/5 » du tableau de triage)
+    grading_status: Optional[str] = None  # queued | running | done | error
+    grading_passed: Optional[int] = None
+    grading_total: Optional[int] = None
+    score_suggestion: Optional[str] = None

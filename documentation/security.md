@@ -148,6 +148,30 @@ securityContext:
 
 ---
 
+## Isolation du Grader Pod (correction automatique)
+
+Le Job qui exécute les tests d'un devoir est **hostile par hypothèse** (il fait tourner des
+probes, voire un script fourni par l'enseignant) : il est donc fortement isolé. Le manifeste
+généré par `backend/grader_service.py` garantit :
+
+- **Aucun accès cluster** : `ServiceAccount` `grader-sa` **sans aucun RoleBinding** +
+  `automountServiceAccountToken: false`. Pas de kubeconfig monté.
+- **NetworkPolicy egress restreinte** : ingress refusé ; egress autorisé uniquement vers les
+  namespaces de labs (`namespaceSelector: managed-by=labondemand`) et le DNS du cluster
+  (port 53). Internet, l'API et l'infra sont injoignables depuis le grader.
+- **Time-box & TTL** : `activeDeadlineSeconds`, `backoffLimit: 0`, `restartPolicy: Never`,
+  `ttlSecondsAfterFinished` court (auto-suppression).
+- **Ressources plafonnées** + même durcissement conteneur que ci-dessus (non-root,
+  capabilities droppées, seccomp RuntimeDefault).
+- **Script enseignant** : exécuté **uniquement** dans ce Job isolé, jamais côté API ni dans
+  un pod privilégié ; taille bornée (`custom_script` ≤ 50 000 caractères).
+
+> L'enforcement de la NetworkPolicy dépend du CNI du cluster. Les autres garde-fous (SA sans
+> droits, pas de kubeconfig, quotas, time-box, TTL) restent actifs même sans support
+> NetworkPolicy. Détails complets : [`grader-pod.md`](grader-pod.md).
+
+---
+
 ## Nettoyage des ressources à la suppression d'utilisateur
 
 ```
@@ -209,9 +233,10 @@ Un teacher peut :
 - Créer, modifier, archiver ses propres classes (`owner_id = current_user.id`)
 - Inscrire et retirer des étudiants de ses classes
 - Créer, modifier, archiver des devoirs dans ses classes
-- Déclencher un déploiement en masse pour toute la classe (bulk-spawn)
-- Consulter toutes les soumissions de ses devoirs
-- Noter manuellement une soumission (grade + feedback)
+- Déclencher un déploiement en masse pour toute la classe (deploy-all)
+- Définir la batterie de tests d'un devoir (`GradingSpec`) et lancer les tests (`test-now`, `run-tests-all`)
+- Consulter toutes les soumissions de ses devoirs, avec les résultats de tests détaillés (non filtrés)
+- Noter manuellement une soumission (grade + feedback), en s'appuyant sur la note suggérée
 
 Un teacher **ne peut pas** :
 - Voir ou modifier les classes d'un autre teacher
@@ -222,7 +247,8 @@ Un teacher **ne peut pas** :
 Un student peut :
 - Voir uniquement les devoirs des classes où il est inscrit (`enrolled_at IS NOT NULL`, `removed_at IS NULL`)
 - Soumettre une fois par devoir (UNIQUE `assignment_id, user_id` — la soumission est mise à jour si elle existe déjà)
-- Consulter son propre résultat de correction, avec la visibilité limitée par `Probe.visibility`
+- Lancer ses propres tests en self-check (`run-tests`) si `grading_mode ≠ none`
+- Consulter son propre résultat de correction, avec la visibilité limitée par `Probe.visibility` (sondes `teacher_only` masquées)
 
 ### Visibilité des résultats de correction (GradingSpec)
 
@@ -230,11 +256,13 @@ Chaque sonde (`Probe`) dans une `GradingSpec` a un niveau de visibilité :
 
 | Visibilité | Visible par l'étudiant | Visible par l'enseignant |
 |---|---|---|
-| `student` | oui (nom, résultat, poids) | oui |
-| `summary` | résumé agrégé seulement | oui complet |
-| `teacher_only` | non | oui complet |
+| `student` | oui (nom, statut, message, sortie) | oui |
+| `summary` | pass/fail seulement (sans message ni sortie) | oui complet |
+| `teacher_only` | non (masquée) | oui complet |
 
 Cela permet de masquer les sondes de sécurité ou les critères de notation interne à l'enseignant.
+Le filtrage est appliqué côté serveur (`grader_service.filter_results_for_student`) pour toutes
+les réponses destinées à l'étudiant.
 
 ---
 

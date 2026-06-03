@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, FlaskConical, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
@@ -11,11 +11,18 @@ import {
   StatusBadge,
   showToast,
 } from "../components/ui";
-import { getDeploymentDetails, getStudentAssignment, submitAssignment } from "../lib/api";
+import { GradingResultList, RunSummary } from "../components/GradingResults";
+import {
+  getDeploymentDetails,
+  getGradingRun,
+  getStudentAssignment,
+  runTestsStudent,
+  submitAssignment,
+} from "../lib/api";
 import { fullDate } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { Markdown } from "../components/Markdown";
-import type { SubmissionLink } from "../types/api";
+import type { GradingRun, SubmissionLink } from "../types/api";
 
 interface LinkRow {
   label: string;
@@ -66,6 +73,42 @@ export default function AssignmentDetailPage() {
     onError: (e) => showToast((e as Error).message, "error"),
   });
 
+  // ── Tests boîte noire (self-check) ──────────────────────────────────────
+  const [activeRunId, setActiveRunId] = useState<number | null>(null);
+
+  // Reprendre le suivi du dernier run au chargement (ex: run encore en cours).
+  useEffect(() => {
+    const latest = detail.data?.latest_run;
+    if (latest && activeRunId === null) setActiveRunId(latest.id);
+  }, [detail.data?.latest_run, activeRunId]);
+
+  const runQuery = useQuery({
+    queryKey: ["grading-run", assignmentId, activeRunId],
+    queryFn: () => getGradingRun(assignmentId, activeRunId as number),
+    enabled: activeRunId !== null,
+    refetchInterval: (query) => {
+      const s = (query.state.data as GradingRun | undefined)?.status;
+      return s === "queued" || s === "running" ? 1500 : false;
+    },
+  });
+
+  // Rafraîchir la fiche (latest_run, statut) quand un run se termine.
+  const runStatus = runQuery.data?.status;
+  useEffect(() => {
+    if (runStatus === "done" || runStatus === "error") {
+      queryClient.invalidateQueries({ queryKey: ["my-assignments"] });
+    }
+  }, [runStatus, queryClient]);
+
+  const runTestsMut = useMutation({
+    mutationFn: () => runTestsStudent(assignmentId),
+    onSuccess: (run) => {
+      setActiveRunId(run.id);
+      queryClient.setQueryData(["grading-run", assignmentId, run.id], run);
+    },
+    onError: (e) => showToast((e as Error).message, "error"),
+  });
+
   async function openLab() {
     const item = detail.data;
     if (!item?.lab_namespace || !item?.lab_deployment_name) return;
@@ -92,6 +135,10 @@ export default function AssignmentDetailPage() {
   const item = detail.data;
   const sub = item.submission;
   const canSubmit = Boolean(text.trim()) || links.some((l) => l.url.trim());
+
+  const run = runQuery.data || item.latest_run || null;
+  const runActive = run?.status === "queued" || run?.status === "running" || runTestsMut.isPending;
+  const showTests = item.grading_mode !== "none";
 
   return (
     <>
@@ -125,6 +172,38 @@ export default function AssignmentDetailPage() {
                 <h2>{t("assignment.deliverables")}</h2>
               </div>
               <Markdown>{item.deliverables}</Markdown>
+            </section>
+          ) : null}
+
+          {/* Tests automatiques (self-check) */}
+          {showTests ? (
+            <section className="panel tests-panel">
+              <div className="section-head">
+                <h2 className="inline-flex items-center gap-2">
+                  <FlaskConical size={18} /> {t("probe.tab_title")}
+                </h2>
+                <Button
+                  variant="primary"
+                  disabled={!item.lab_ready || runActive}
+                  onClick={() => runTestsMut.mutate()}
+                >
+                  {runActive ? t("probe.running") : t("probe.run_tests")}
+                </Button>
+              </div>
+              <p className="muted text-sm">{t("probe.run_intro")}</p>
+              {!item.lab_ready ? (
+                <p className="text-sm mt-1" style={{ color: "var(--warning)" }}>
+                  {t("probe.lab_required")}
+                </p>
+              ) : null}
+              {run ? (
+                <div className="mt-3 mb-3">
+                  <RunSummary run={run} />
+                </div>
+              ) : null}
+              <div className="mt-2">
+                <GradingResultList run={run} visibleProbes={item.visible_probes} />
+              </div>
             </section>
           ) : null}
         </div>

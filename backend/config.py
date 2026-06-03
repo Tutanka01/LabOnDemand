@@ -122,6 +122,17 @@ class Settings:
         """Initialise la configuration Kubernetes"""
         config.load_kube_config()
 
+    # Grader Pod (MVP-2) — exécution isolée des tests boîte noire
+    # Image du grader (publiée sur le registre du cluster). Voir dockerfiles/grader/.
+    GRADER_IMAGE = os.getenv("GRADER_IMAGE", "labondemand/grader:latest")
+    # Namespace dédié, verrouillé, où tournent les Jobs grader éphémères.
+    GRADER_NAMESPACE = os.getenv("GRADER_NAMESPACE", "labondemand-grader")
+    # Filets de sécurité : suppression auto du Job et marge de surveillance.
+    GRADER_JOB_TTL_SECONDS = int(os.getenv("GRADER_JOB_TTL_SECONDS", "180"))
+    GRADER_POLL_INTERVAL_SECONDS = int(os.getenv("GRADER_POLL_INTERVAL_SECONDS", "3"))
+    # Marge ajoutée au timeout de la spec avant de déclarer un run en erreur.
+    GRADER_WATCH_GRACE_SECONDS = int(os.getenv("GRADER_WATCH_GRACE_SECONDS", "30"))
+
     # Namespaces par défaut
     DEFAULT_NAMESPACES = {
         "jupyter": "labondemand-jupyter",

@@ -29,7 +29,7 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 - **Ingress automatique** : sous-domaine par déploiement avec TLS optionnel (cert-manager)
 - **Système de classes** : enseignants créent des classes, inscrivent des étudiants, publient des devoirs avec déploiement en masse
 - **Devoirs et soumissions** : instructions Markdown, livrables, date limite, soumission texte + liens
-- **Correction automatique** : GradingSpec avec sondes configurables (http, tcp, sql, file, command) et correction manuelle
+- **Tests automatiques (Grader Pod)** : sondes boîte noire (http, tcp, sql, script) exécutées dans un Job Kubernetes isolé ; progression check par check côté étudiant, triage avec verdict `x/y` + note suggérée côté enseignant, correction humaine finale
 - **SSO / OIDC** : intégration avec les IdP universitaires (CAS, Keycloak, etc.)
 - **Sessions Redis** distribuées — mot de passe, réseau interne, cookie HttpOnly, SameSite, Secure
 - **Logging structuré JSON** avec rotation (`logs/app.log`, `access.log`, `audit.log`)
@@ -47,6 +47,7 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 | [security.md](documentation/security.md) | Sessions, RBAC, mots de passe, OIDC, secrets K8s |
 | [lifecycle.md](documentation/lifecycle.md) | TTL et nettoyage automatique des labs Kubernetes |
 | [assignment-lifecycle.md](documentation/assignment-lifecycle.md) | Cycle de vie des devoirs, soumissions et corrections |
+| [grader-pod.md](documentation/grader-pod.md) | Grader Pod : Job K8s isolé, modèle pull, sécurité, contrat des probes |
 | [authentication.md](documentation/authentication.md) | Auth locale et SSO détaillé |
 | [storage.md](documentation/storage.md) | Volumes persistants, PVC, StorageClass |
 | [troubleshooting.md](documentation/troubleshooting.md) | Problèmes courants et solutions |

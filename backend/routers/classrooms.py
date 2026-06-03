@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from .. import grader_service
 from ..database import get_db
 from ..deployment_service import deployment_service
 from ..models import (
@@ -32,6 +33,7 @@ from ..models import (
     Classroom,
     Deployment,
     Enrollment,
+    GradingRun,
     GradingSpec,
     Template,
     User,
@@ -48,6 +50,7 @@ from ..schemas import (
     ClassroomResponse,
     ClassroomUpdate,
     EnrollStudentsRequest,
+    GradingRunResponse,
     GradingSpecCreate,
     GradingSpecResponse,
     Probe,
@@ -625,6 +628,27 @@ def _get_assignment_or_404(cid: int, aid: int, db: Session) -> Assignment:
     return asgn
 
 
+def _resolve_assignment_lab(aid: int, user_id: int, db: Session) -> Optional[Deployment]:
+    """Lab d'un utilisateur pour un devoir, via AssignmentDeployment (source de vérité)."""
+    link = (
+        db.query(AssignmentDeployment)
+        .filter(
+            AssignmentDeployment.assignment_id == aid,
+            AssignmentDeployment.user_id == user_id,
+            AssignmentDeployment.deployment_id.isnot(None),
+        )
+        .order_by(AssignmentDeployment.created_at.desc())
+        .first()
+    )
+    if not link or link.deployment_id is None:
+        return None
+    return (
+        db.query(Deployment)
+        .filter(Deployment.id == link.deployment_id, Deployment.status.in_(["active", "paused"]))
+        .first()
+    )
+
+
 @classrooms_router.get("/{cid}/assignments/{aid}/submissions", response_model=List[TeacherSubmissionRow], dependencies=[Depends(is_teacher_or_admin)])
 def list_submissions(
     cid: int,
@@ -658,6 +682,7 @@ def list_submissions(
             if sub and sub.deployment_id
             else None
         )
+        run = grader_service.latest_run_for(aid, student.id, db)
         rows.append(
             TeacherSubmissionRow(
                 user_id=student.id,
@@ -670,6 +695,10 @@ def list_submissions(
                 grade=sub.grade if sub else None,
                 lab_deployment_name=lab.name if lab else None,
                 lab_status=lab.status if lab else None,
+                grading_status=run.status if run else None,
+                grading_passed=run.passed_checks if run else None,
+                grading_total=run.total_checks if run else None,
+                score_suggestion=run.score_suggestion if run else None,
             )
         )
     return rows
@@ -703,6 +732,7 @@ def get_submission_detail(
         except (ValueError, TypeError):
             snapshot = None
 
+    run = grader_service.latest_run_for(aid, sub.user_id, db)
     return AssignmentSubmissionResponse(
         id=sub.id,
         assignment_id=sub.assignment_id,
@@ -720,6 +750,7 @@ def get_submission_detail(
         feedback=sub.feedback,
         graded_by=sub.graded_by,
         graded_at=sub.graded_at,
+        grading_run=grader_service.run_to_response(run, for_student=False) if run else None,
     )
 
 
@@ -885,6 +916,141 @@ def upsert_grading_spec(
         created_at=spec.created_at,
         updated_at=spec.updated_at,
     )
+
+
+# ── GRADING RUNS (MVP-2) : exécution des tests côté prof ─────────────────────
+
+
+def _require_spec_with_tests(aid: int, db: Session) -> GradingSpec:
+    spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == aid).first()
+    if not spec:
+        raise HTTPException(status_code=400, detail="Aucun test n'est défini pour ce devoir")
+    has_checks = False
+    if spec.checks:
+        try:
+            has_checks = bool(json.loads(spec.checks))
+        except (ValueError, TypeError):
+            has_checks = False
+    if not has_checks and not spec.custom_script:
+        raise HTTPException(status_code=400, detail="Aucun test n'est défini pour ce devoir")
+    return spec
+
+
+@classrooms_router.post(
+    "/{cid}/assignments/{aid}/test-now",
+    response_model=GradingRunResponse,
+    dependencies=[Depends(is_teacher_or_admin)],
+)
+async def test_now(
+    cid: int,
+    aid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lance un Grading Run contre le lab de démo du prof, pour valider ses tests."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+    _require_spec_with_tests(aid, db)
+
+    lab = _resolve_assignment_lab(aid, current_user.id, db)
+    if not lab:
+        raise HTTPException(
+            status_code=400,
+            detail="Aucun lab de démo : déployez-vous un lab pour ce devoir avant de tester",
+        )
+
+    run = GradingRun(
+        assignment_id=aid,
+        user_id=current_user.id,
+        deployment_id=lab.id,
+        trigger="teacher",
+        status="queued",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    asyncio.create_task(grader_service.run_grading(run.id))
+    audit_logger.info(
+        "grading_run_started",
+        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "teacher"}},
+    )
+    return grader_service.run_to_response(run, for_student=False)
+
+
+@classrooms_router.get(
+    "/{cid}/assignments/{aid}/grading-runs/{run_id}",
+    response_model=GradingRunResponse,
+    dependencies=[Depends(is_teacher_or_admin)],
+)
+def get_grading_run_teacher(
+    cid: int,
+    aid: int,
+    run_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """État + résultats détaillés (non filtrés) d'un Grading Run, pour le prof."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+    run = (
+        db.query(GradingRun)
+        .filter(GradingRun.id == run_id, GradingRun.assignment_id == aid)
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    return grader_service.run_to_response(run, for_student=False)
+
+
+@classrooms_router.post(
+    "/{cid}/assignments/{aid}/run-tests-all",
+    dependencies=[Depends(is_teacher_or_admin)],
+)
+async def run_tests_all(
+    cid: int,
+    aid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """(Re)lance les tests sur toute la classe : un Grading Run par étudiant ayant un lab."""
+    cls = _get_classroom_or_404(cid, db)
+    _require_owner_or_admin(cls, current_user)
+    _get_assignment_or_404(cid, aid, db)
+    _require_spec_with_tests(aid, db)
+
+    enrollments = (
+        db.query(Enrollment)
+        .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
+        .all()
+    )
+    run_ids: List[int] = []
+    for enr in enrollments:
+        lab = _resolve_assignment_lab(aid, enr.user_id, db)
+        if not lab:
+            continue
+        run = GradingRun(
+            assignment_id=aid,
+            user_id=enr.user_id,
+            deployment_id=lab.id,
+            trigger="teacher",
+            status="queued",
+        )
+        db.add(run)
+        db.flush()
+        run_ids.append(run.id)
+    db.commit()
+
+    for rid in run_ids:
+        asyncio.create_task(grader_service.run_grading(rid))
+
+    audit_logger.info(
+        "grading_runs_started_bulk",
+        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids)}},
+    )
+    return {"queued": len(run_ids)}
 
 
 # ── TEACHER DASHBOARD ──────────────────────────────────────────────────────────

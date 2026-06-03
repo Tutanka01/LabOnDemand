@@ -13,6 +13,7 @@ qu'ouvrir le lab existant. Le lien devoir<->lab fait foi via ``AssignmentDeploym
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from .. import grader_service
 from ..database import get_db
 from ..models import (
     Assignment,
@@ -29,13 +31,17 @@ from ..models import (
     Classroom,
     Deployment,
     Enrollment,
+    GradingRun,
+    GradingSpec,
     User,
 )
 from ..schemas import (
     AssignmentSubmissionCreate,
     AssignmentSubmissionResponse,
+    GradingRunResponse,
     StudentAssignmentDetail,
     StudentAssignmentItem,
+    StudentProbe,
 )
 from ..security import get_current_user
 
@@ -121,6 +127,35 @@ def _submission_to_response(sub: AssignmentSubmission) -> AssignmentSubmissionRe
         graded_by=sub.graded_by,
         graded_at=sub.graded_at,
     )
+
+
+def _visible_probes(assignment_id: int, db: Session) -> List[StudentProbe]:
+    """Probes que l'étudiant peut voir (student + summary), sans config/expect interne."""
+    spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == assignment_id).first()
+    if not spec or not spec.checks:
+        return []
+    try:
+        raw = json.loads(spec.checks)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    probes: List[StudentProbe] = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        if p.get("visibility") == "teacher_only":
+            continue
+        probes.append(
+            StudentProbe(
+                id=str(p.get("id", "")),
+                name=str(p.get("name", p.get("id", "test"))),
+                kind=str(p.get("kind", "")),
+                weight=int(p.get("weight", 1) or 0),
+                visibility=str(p.get("visibility", "student")),
+            )
+        )
+    return probes
 
 
 def _now_utc() -> datetime:
@@ -229,10 +264,14 @@ def get_my_assignment(
         )
         .first()
     )
+    latest = grader_service.latest_run_for(aid, current_user.id, db)
     return StudentAssignmentDetail(
         **item.model_dump(),
         deliverables=assignment.deliverables,
         submission=_submission_to_response(sub) if sub else None,
+        grading_mode=assignment.grading_mode,
+        visible_probes=_visible_probes(aid, db),
+        latest_run=grader_service.run_to_response(latest, for_student=True) if latest else None,
     )
 
 
@@ -334,3 +373,80 @@ def submit_assignment(
         extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "attempt_no": sub.attempt_no, "is_late": is_late}},
     )
     return _submission_to_response(sub)
+
+
+# ── Tests boîte noire (MVP-2) : self-check étudiant ──────────────────────────
+
+
+def _require_spec_with_tests(aid: int, db: Session) -> GradingSpec:
+    spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == aid).first()
+    if not spec:
+        raise HTTPException(status_code=400, detail="Aucun test n'est défini pour ce devoir")
+    has_checks = False
+    if spec.checks:
+        try:
+            has_checks = bool(json.loads(spec.checks))
+        except (ValueError, TypeError):
+            has_checks = False
+    if not has_checks and not spec.custom_script:
+        raise HTTPException(status_code=400, detail="Aucun test n'est défini pour ce devoir")
+    return spec
+
+
+@student_router.post("/assignments/{aid}/run-tests", response_model=GradingRunResponse)
+async def run_tests(
+    aid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lance un Grading Run (self-check formatif) contre mon lab."""
+    assignment = _get_my_assignment_or_404(aid, current_user, db)
+    if assignment.grading_mode == "none":
+        raise HTTPException(status_code=400, detail="Les tests ne sont pas activés pour ce devoir")
+    _require_spec_with_tests(aid, db)
+
+    lab = _resolve_lab(aid, current_user.id, db)
+    if not lab:
+        raise HTTPException(status_code=400, detail="Ouvre ton lab avant de lancer les tests")
+
+    run = GradingRun(
+        assignment_id=aid,
+        user_id=current_user.id,
+        deployment_id=lab.id,
+        trigger="student_self",
+        status="queued",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    # Le watcher tourne en tâche de fond ; l'étudiant suit la progression en pollant.
+    asyncio.create_task(grader_service.run_grading(run.id))
+    audit_logger.info(
+        "grading_run_started",
+        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "student_self"}},
+    )
+    return grader_service.run_to_response(run, for_student=True)
+
+
+@student_router.get("/assignments/{aid}/grading-runs/{run_id}", response_model=GradingRunResponse)
+def get_grading_run(
+    aid: int,
+    run_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """État + résultats (filtrés par visibilité) d'un de mes Grading Runs."""
+    _get_my_assignment_or_404(aid, current_user, db)
+    run = (
+        db.query(GradingRun)
+        .filter(
+            GradingRun.id == run_id,
+            GradingRun.assignment_id == aid,
+            GradingRun.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not run:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    return grader_service.run_to_response(run, for_student=True)

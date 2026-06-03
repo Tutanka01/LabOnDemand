@@ -34,6 +34,8 @@ LAB_GRACE_PERIOD_DAYS = int(
     os.getenv("LAB_GRACE_PERIOD_DAYS", "3")
 )  # délai avant suppression après pause
 CLEANUP_INTERVAL_MINUTES = int(os.getenv("CLEANUP_INTERVAL_MINUTES", "60"))
+# Délai au-delà duquel un Grading Run encore queued/running est considéré bloqué.
+GRADING_RUN_STUCK_MINUTES = int(os.getenv("GRADING_RUN_STUCK_MINUTES", "15"))
 
 _ROLE_TTL_DAYS = {
     "student": LAB_TTL_STUDENT_DAYS,
@@ -153,6 +155,45 @@ async def _run_cleanup_cycle() -> None:
                         "extra_fields": {"deployment_id": dep.id, "error": str(exc)}
                     },
                 )
+
+        # ── 1c. Réconciliation des Grading Runs bloqués ─────────────────────
+        #    Un run resté en queued/running au-delà d'un délai max (le Job a pu
+        #    disparaître, le watcher a pu mourir avec l'API) est marqué en error,
+        #    et son Job grader éventuel est supprimé (filet en plus du TTL K8s).
+        try:
+            from ..models import GradingRun
+            from .. import grader_service
+
+            stuck_limit = now - timedelta(minutes=GRADING_RUN_STUCK_MINUTES)
+            stuck_runs = (
+                db.query(GradingRun)
+                .filter(GradingRun.status.in_(["queued", "running"]))
+                .all()
+            )
+            for run in stuck_runs:
+                started = run.started_at or run.created_at
+                if started is not None and started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                if started is None or started > stuck_limit:
+                    continue
+                run.status = "error"
+                run.error = "Run interrompu (réconciliation automatique)"
+                run.finished_at = now
+                db.commit()
+                logger.info(
+                    "grading_run_reconciled_stuck",
+                    extra={"extra_fields": {"run_id": run.id}},
+                )
+                try:
+                    grader_service._delete_job(grader_service.job_name_for_run(run.id))
+                except Exception:
+                    pass
+        except Exception as exc:
+            db.rollback()
+            logger.warning(
+                "grading_run_reconcile_failed",
+                extra={"extra_fields": {"error": str(exc)}},
+            )
 
         # ── 2. Rétro-remplissage expires_at manquant ────────────────────────
         #    Pour les enregistrements actifs sans expires_at (créés avant ce correctif),

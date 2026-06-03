@@ -691,3 +691,7 @@ export async function runTestsAll(cid: number, aid: number): Promise<{ queued: n
     method: "POST",
   });
 }
+
+export async function getGradingRunTeacher(cid: number, aid: number, runId: number): Promise<GradingRun> {
+  return apiFetch<GradingRun>(`/api/v1/classrooms/${cid}/assignments/${aid}/grading-runs/${runId}`);
+}

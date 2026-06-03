@@ -278,6 +278,7 @@ def mock_k8s():
     apps = MagicMock(name="AppsV1Api-instance")
     core = MagicMock(name="CoreV1Api-instance")
     net = MagicMock(name="NetworkingV1Api-instance")
+    batch = MagicMock(name="BatchV1Api-instance")
 
     # List operations → empty by default
     _empty = MagicMock(items=[])
@@ -314,16 +315,31 @@ def mock_k8s():
     # Pod listing
     core.list_namespaced_pod.return_value = _empty
 
+    # ── Grader Pod (MVP-2) ───────────────────────────────────────────────
+    # ServiceAccount / NetworkPolicy : 404 → ensure_grader_infra les crée.
+    core.read_namespaced_service_account.side_effect = k8s_client.exceptions.ApiException(status=404)
+    core.create_namespaced_service_account.return_value = MagicMock()
+    net.read_namespaced_network_policy.side_effect = k8s_client.exceptions.ApiException(status=404)
+    net.create_namespaced_network_policy.return_value = MagicMock()
+    net.patch_namespaced_network_policy.return_value = MagicMock()
+    # Job grader
+    batch.create_namespaced_job.return_value = MagicMock()
+    batch.delete_namespaced_job.return_value = MagicMock()
+    batch.read_namespaced_job_status.return_value = MagicMock(status=MagicMock(succeeded=1, failed=None))
+    # Logs du pod grader (vide par défaut ; surchargé par test)
+    core.read_namespaced_pod_log.return_value = ""
+
     with (
         patch("kubernetes.client.AppsV1Api", return_value=apps),
         patch("kubernetes.client.CoreV1Api", return_value=core),
         patch("kubernetes.client.NetworkingV1Api", return_value=net),
+        patch("kubernetes.client.BatchV1Api", return_value=batch),
     ):
         # Also replace on the singleton DeploymentService instance
         from backend.deployment_service import deployment_service as _ds
         _orig = (_ds.apps_v1, _ds.core_v1, _ds.networking_v1)
         _ds.apps_v1, _ds.core_v1, _ds.networking_v1 = apps, core, net
-        yield {"apps": apps, "core": core, "networking": net}
+        yield {"apps": apps, "core": core, "networking": net, "batch": batch}
         _ds.apps_v1, _ds.core_v1, _ds.networking_v1 = _orig
 
 

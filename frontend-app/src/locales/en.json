@@ -295,5 +295,18 @@
   "probe.result_skip": "Skipped",
   "probe.score": "{passed}/{total} tests passed",
   "probe.test_now": "Test now",
-  "probe.test_now_hint": "Runs tests against your demo lab."
+  "probe.test_now_hint": "Runs tests against your demo lab.",
+  "probe.queued": "Queued…",
+  "probe.pending": "Pending",
+  "probe.run_failed": "Test run failed.",
+  "probe.no_tests_student": "No automated tests for this assignment.",
+  "probe.lab_required": "Open your lab before running tests.",
+  "probe.suggested_grade": "Suggested grade",
+  "probe.last_run_at": "Last run",
+  "probe.run_all": "Re-run tests (class)",
+  "probe.run_all_pending": "Launching…",
+  "probe.run_all_done": "{n} run(s) queued",
+  "probe.no_demo_lab": "Deploy a demo lab before testing.",
+  "probe.results": "Test results",
+  "probe.run_intro": "Run the black-box checks against your lab and watch results live."
 }
