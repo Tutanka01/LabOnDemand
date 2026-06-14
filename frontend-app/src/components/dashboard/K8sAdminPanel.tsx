@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw, Server, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { deletePod, getAllK8sDeployments, getAllPods, getAllPvcs, getNamespaces, getUsageMyApps, pingK8s } from "../../lib/api";
 import { shortDate } from "../../lib/format";
-import { Button, ConfirmDialog, EmptyState, ErrorState, LoadingState, MetricCard, StatusBadge, showToast } from "../ui";
+import { Button, ConfirmDialog, EmptyState, ErrorState, MetricCard, SkeletonRows, StatusBadge, showToast } from "../ui";
 
 export function K8sAdminPanel({ admin }: { admin: boolean }) {
   const queryClient = useQueryClient();
@@ -14,13 +14,15 @@ export function K8sAdminPanel({ admin }: { admin: boolean }) {
   return (
     <section className="panel">
       <div className="section-head">
-        <h2>
+        <h2 className="!m-0">
           <button
-            className="btn ghost px-2 py-1"
+            className="btn ghost flex items-center gap-2 px-2 py-1"
             onClick={() => setOpen(!open)}
+            aria-expanded={open}
           >
             {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            Ressources Kubernetes (admin)
+            <Server size={16} className="text-[var(--primary)]" />
+            Ressources Kubernetes <span className="badge blue">admin</span>
           </button>
         </h2>
         <Button onClick={() => {
@@ -66,7 +68,7 @@ function NamespacesView() {
   return (
     <div>
       <h3>Namespaces</h3>
-      {ns.isLoading ? <LoadingState /> : null}
+      {ns.isLoading ? <SkeletonRows rows={3} cols={2} /> : null}
       {ns.error ? <ErrorState>Impossible de charger les namespaces.</ErrorState> : null}
       {ns.data?.length ? (
         <div className="table-wrap">
@@ -106,7 +108,7 @@ function PodsView() {
   return (
     <div>
       <h3>Pods</h3>
-      {pods.isLoading ? <LoadingState /> : null}
+      {pods.isLoading ? <SkeletonRows rows={4} cols={5} /> : null}
       {pods.error ? <ErrorState>Impossible de charger les pods.</ErrorState> : null}
       {pods.data?.length ? (
         <div className="table-wrap">
@@ -152,7 +154,7 @@ function RawDeploymentsView() {
   return (
     <div>
       <h3>Deployments Kubernetes bruts</h3>
-      {deployments.isLoading ? <LoadingState /> : null}
+      {deployments.isLoading ? <SkeletonRows rows={3} cols={3} /> : null}
       {deployments.error ? <ErrorState>Impossible de charger les deployments.</ErrorState> : null}
       {deployments.data?.length ? (
         <div className="table-wrap">
@@ -181,7 +183,7 @@ function UsageView() {
   return (
     <div>
       <h3>Usage de mes apps</h3>
-      {usage.isLoading ? <LoadingState /> : null}
+      {usage.isLoading ? <SkeletonRows rows={3} cols={5} /> : null}
       {usage.error ? <ErrorState>Impossible de charger l'usage.</ErrorState> : null}
       {usage.data?.length ? (
         <div className="table-wrap">
@@ -218,7 +220,7 @@ function GlobalPvcView() {
   return (
     <div>
       <h3>Tous les volumes persistants</h3>
-      {pvcs.isLoading ? <LoadingState /> : null}
+      {pvcs.isLoading ? <SkeletonRows rows={3} cols={6} /> : null}
       {pvcs.error ? <ErrorState>Impossible de charger les volumes.</ErrorState> : null}
       {pvcs.data && pvcs.data.length === 0 ? <EmptyState title="Aucun volume" /> : null}
       {pvcs.data?.length ? (

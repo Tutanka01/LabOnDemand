@@ -143,7 +143,10 @@ export default function AssignmentDetailPage() {
   return (
     <>
       <div>
-        <Link to="/" className="muted inline-flex items-center gap-1 text-sm no-underline">
+        <Link
+          to="/"
+          className="muted inline-flex items-center gap-1.5 text-sm no-underline transition-colors hover:text-[var(--text)]"
+        >
           <ArrowLeft size={15} /> {t("myassignments.back")}
         </Link>
       </div>
@@ -236,7 +239,15 @@ export default function AssignmentDetailPage() {
           <section className="panel">
             <div className="detail-meta-row">
               <span className="muted">{t("myassignments.due")}</span>
-              <span>{item.due_at ? fullDate(item.due_at) : t("myassignments.no_due")}</span>
+              <span
+                style={
+                  item.due_at && !sub && new Date(item.due_at).getTime() < Date.now()
+                    ? { color: "var(--danger)", fontWeight: 600 }
+                    : undefined
+                }
+              >
+                {item.due_at ? fullDate(item.due_at) : t("myassignments.no_due")}
+              </span>
             </div>
             <div className="detail-meta-row">
               <span className="muted">{t("submission.status")}</span>
@@ -297,7 +308,7 @@ export default function AssignmentDetailPage() {
           <label>{t("submission.links")}</label>
           <div className="flex flex-col gap-2">
             {links.map((link, idx) => (
-              <div key={idx} className="flex gap-2 items-center">
+              <div key={idx} className="submission-link-row">
                 <input
                   style={{ flex: "0 0 30%" }}
                   placeholder={t("submission.link_label")}

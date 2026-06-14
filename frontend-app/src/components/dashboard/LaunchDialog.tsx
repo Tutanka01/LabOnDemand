@@ -1,12 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Rocket, Sparkles, X } from "lucide-react";
 import { useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { createDeployment, getQuotas, getResourcePresets } from "../../lib/api";
 import { defaultRuntime } from "../../lib/format";
+import { RuntimeIcon } from "../../lib/icons";
 import type { PvcInfo, Template } from "../../types/api";
 import { Button, ErrorState, FormField, IconButton, LoadingState, ResourceMeter } from "../ui";
 
@@ -139,10 +140,20 @@ export function LaunchDialog({
     <Dialog.Root open onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel">
+        <Dialog.Content className="dialog-content panel dialog-wide">
           <div className="section-head">
             <Dialog.Title asChild>
-              <h2>Configurer {template.name}</h2>
+              <h2 className="flex min-w-0 items-center gap-2.5">
+                <span className="runtime-mark shrink-0">
+                  <RuntimeIcon type={deploymentType} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                    {deploymentType}
+                  </span>
+                  <span className="block truncate">Configurer {template.name}</span>
+                </span>
+              </h2>
             </Dialog.Title>
             <Dialog.Close asChild>
               <IconButton aria-label="Fermer">
@@ -231,8 +242,11 @@ export function LaunchDialog({
               </FormField>
             ) : null}
 
-            <div className="field full rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] p-3">
-              <strong>Résumé du lancement</strong>
+            <div className="field full rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3.5 shadow-[var(--shadow-sm)]">
+              <strong className="flex items-center gap-2">
+                <Sparkles size={15} className="text-[var(--primary)]" />
+                Résumé du lancement
+              </strong>
               <div className="lab-meta mt-2">
                 <span className="badge">Pods estimés: {projected.pods}</span>
                 <span className="badge">CPU: {cpuRequest || "-"} / {cpuLimit || "-"}</span>
@@ -258,6 +272,7 @@ export function LaunchDialog({
             <div className="actions-row field full justify-end">
               <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
               <Button variant="primary" type="submit" disabled={createMutation.isPending || quotaOverages.length > 0}>
+                <Rocket size={16} />
                 {createMutation.isPending ? "Lancement..." : "Lancer le lab"}
               </Button>
             </div>

@@ -17,13 +17,13 @@ import type { GradingRun, ProbeResult, StudentProbe } from "../types/api";
  */
 
 const STATUS_COLOR: Record<string, string> = {
-  pass: "#16a34a",
-  fail: "#dc2626",
-  error: "#dc2626",
-  skip: "#d97706",
-  running: "#2563eb",
-  queued: "#2563eb",
-  pending: "#94a3b8",
+  pass: "var(--success)",
+  fail: "var(--danger)",
+  error: "var(--danger)",
+  skip: "var(--warning)",
+  running: "var(--accent-blue)",
+  queued: "var(--accent-blue)",
+  pending: "var(--muted)",
 };
 
 type Tone = "green" | "red" | "amber" | "blue" | "default";
@@ -109,7 +109,13 @@ export function RunVerdictBadge({ run }: { run?: Pick<GradingRun, "status" | "pa
 export function RunSummary({ run }: { run?: GradingRun | null }) {
   const { t } = useI18n();
   if (!run) return null;
-  if (run.status === "queued") return <p className="muted text-sm">{t("probe.queued")}</p>;
+  if (run.status === "queued") {
+    return (
+      <p className="muted text-sm inline-flex items-center gap-2">
+        <Clock size={14} /> {t("probe.queued")}
+      </p>
+    );
+  }
   if (run.status === "running") {
     return (
       <p className="text-sm inline-flex items-center gap-2" style={{ color: STATUS_COLOR.running }}>
@@ -118,17 +124,79 @@ export function RunSummary({ run }: { run?: GradingRun | null }) {
     );
   }
   if (run.status === "error") {
-    return <p className="text-sm" style={{ color: STATUS_COLOR.error }}>{run.error || t("probe.run_failed")}</p>;
+    return (
+      <p
+        className="text-sm inline-flex items-center gap-2"
+        style={{ color: STATUS_COLOR.error }}
+      >
+        <AlertTriangle size={14} /> {run.error || t("probe.run_failed")}
+      </p>
+    );
   }
   const passed = run.passed_checks ?? 0;
   const total = run.total_checks ?? 0;
+  const pct = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const allPass = total > 0 && passed === total;
+  const barColor = allPass ? "var(--success)" : passed === 0 ? "var(--danger)" : "var(--warning)";
+
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <RunVerdictBadge run={run} />
-      <span className="text-sm">{t("probe.score", { passed, total })}</span>
+    <div
+      className="flex flex-wrap items-center gap-x-4 gap-y-2"
+      style={{
+        padding: "12px 14px",
+        borderRadius: "var(--radius)",
+        background: "var(--surface-soft)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div className="flex items-center gap-2">
+        {allPass ? (
+          <CheckCircle2 size={18} style={{ color: "var(--success)" }} />
+        ) : (
+          <XCircle size={18} style={{ color: barColor }} />
+        )}
+        <span
+          style={{
+            fontFamily: "var(--font-display)",
+            fontWeight: 700,
+            fontSize: "1.05rem",
+            color: barColor,
+          }}
+        >
+          {passed}
+          <span className="muted" style={{ fontWeight: 600 }}>
+            /{total}
+          </span>
+        </span>
+        <span className="muted text-sm">{t("probe.score", { passed, total })}</span>
+      </div>
+
+      {/* Progress track */}
+      <div
+        aria-hidden
+        style={{
+          flex: "1 1 120px",
+          minWidth: 80,
+          height: 6,
+          borderRadius: "var(--radius-full)",
+          background: "var(--surface-muted)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: "100%",
+            background: barColor,
+            borderRadius: "var(--radius-full)",
+            transition: "width 0.4s ease",
+          }}
+        />
+      </div>
+
       {run.score_suggestion ? (
-        <span className="muted text-sm">
-          {t("probe.suggested_grade")}: <strong>{run.score_suggestion}</strong>
+        <span className="muted text-sm whitespace-nowrap">
+          {t("probe.suggested_grade")}: <strong style={{ color: "var(--text)" }}>{run.score_suggestion}</strong>
         </span>
       ) : null}
     </div>
@@ -172,8 +240,13 @@ export function GradingResultList({
     <ul className="grading-checklist">
       {rows.map((row) => {
         const status = row.result?.status || (runPending ? "running" : "pending");
+        const accent = STATUS_COLOR[status] || STATUS_COLOR.pending;
         return (
-          <li key={row.id} className="grading-check">
+          <li
+            key={row.id}
+            className="grading-check"
+            style={{ borderLeft: `3px solid ${accent}` }}
+          >
             <StatusIcon status={status} />
             <div className="grading-check-body">
               <div className="grading-check-head">
@@ -184,7 +257,12 @@ export function GradingResultList({
                 <p className="grading-check-message">{row.result.message}</p>
               ) : null}
               {row.result?.output ? (
-                <pre className="grading-check-output">{row.result.output}</pre>
+                <pre
+                  className="grading-check-output"
+                  style={{ fontFamily: "var(--font-mono)" }}
+                >
+                  {row.result.output}
+                </pre>
               ) : null}
             </div>
           </li>

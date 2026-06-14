@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Download, Eye, RefreshCw } from "lucide-react";
+import { Activity, Download, Eye, Gauge, Layers, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import type { AuditLogEntry } from "../../types/api";
 import { exportAuditLogs, getAuditLogs, getAuditLogStats } from "../../lib/api";
 import { fullDate } from "../../lib/format";
-import { Button, EmptyState, ErrorState, LoadingState, MetricCard, Pagination, SearchBox, showToast } from "../ui";
+import { Button, EmptyState, ErrorState, MetricCard, Pagination, SearchBox, SkeletonRows, showToast } from "../ui";
 
 export function AuditLogViewer() {
   const [page, setPage] = useState(1);
@@ -77,35 +77,51 @@ export function AuditLogViewer() {
     <div className="grid gap-5">
       {stats.data ? (
         <section className="metric-grid">
-          <MetricCard label="Total" value={stats.data.total || 0} icon={<Eye size={18} />} />
+          <MetricCard label="Total" value={stats.data.total || 0} icon={<Eye size={18} />} hint="Événements enregistrés" />
           <MetricCard
-            label="Categories"
+            label="Catégories"
             value={Object.keys(stats.data.by_category || {}).length}
-            icon={<Eye size={18} />}
+            icon={<Layers size={18} />}
+            hint="Types distincts"
           />
           <MetricCard
             label="Niveaux"
             value={Object.keys(stats.data.by_level || {}).length}
-            icon={<Eye size={18} />}
+            icon={<Gauge size={18} />}
+            hint="Sévérités"
           />
           <MetricCard
             label="7 derniers jours"
             value={stats.data.last_7_days ? Object.values(stats.data.last_7_days).reduce((a, b) => a + b, 0) : 0}
-            icon={<Eye size={18} />}
+            icon={<Activity size={18} />}
+            hint="Activité récente"
           />
         </section>
       ) : null}
 
       {stats.data?.last_7_days ? (
         <section className="panel">
-          <div className="section-head"><h2>Activite 7 jours</h2></div>
-          <div className="grid grid-cols-7 items-end gap-2">
+          <div className="section-head">
+            <h2>Activité 7 jours</h2>
+            <span className="badge blue">{Object.values(stats.data.last_7_days).reduce((a, b) => a + b, 0)} évts</span>
+          </div>
+          <div className="grid grid-cols-7 items-end gap-2.5">
             {Object.entries(stats.data.last_7_days).map(([day, count]) => {
               const max = Math.max(...Object.values(stats.data!.last_7_days || { x: 1 }));
+              const pct = Math.max(6, (count / Math.max(max, 1)) * 100);
               return (
-                <div className="grid gap-1.5" key={day}>
-                  <div className="meter-track flex h-[72px] items-end">
-                    <div className="meter-fill" style={{ width: "100%", height: `${Math.max(6, (count / Math.max(max, 1)) * 100)}%` }} />
+                <div className="group grid gap-2 text-center" key={day} title={`${day}: ${count}`}>
+                  <span
+                    className="text-[0.78rem] font-bold leading-none text-[var(--text-soft)]"
+                    style={{ fontFamily: "var(--font-display)" }}
+                  >
+                    {count}
+                  </span>
+                  <div className="meter-track flex h-[96px] items-end rounded-[10px]">
+                    <div
+                      className="meter-fill w-full rounded-[10px] transition-[height] duration-500"
+                      style={{ height: `${pct}%` }}
+                    />
                   </div>
                   <span className="muted text-xs">{day}</span>
                 </div>
@@ -159,7 +175,7 @@ export function AuditLogViewer() {
           </Button>
         </div>
 
-        {logs.isLoading ? <LoadingState /> : null}
+        {logs.isLoading ? <SkeletonRows rows={8} cols={5} /> : null}
         {logs.error ? <ErrorState>Impossible de charger les logs.</ErrorState> : null}
 
         {(logs.data?.items || []).length ? (

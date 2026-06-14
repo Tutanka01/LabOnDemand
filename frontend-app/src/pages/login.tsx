@@ -2,6 +2,7 @@ import "../styles/main.css";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRight, FlaskConical, Lock, ShieldCheck, User } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate, Link } from "react-router-dom";
@@ -16,6 +17,12 @@ const schema = z.object({
 });
 
 type LoginForm = z.infer<typeof schema>;
+
+const stagger = (i: number) => ({
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.4, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] as const }
+});
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -71,39 +78,66 @@ export default function LoginPage() {
 
       <section className="auth-form-panel">
         <form className="card auth-card" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
-          <div>
-            <h1>{t("login.title")}</h1>
+          <motion.div {...stagger(0)} className="grid gap-1.5">
+            <h1
+              className="text-[1.7rem] font-bold leading-tight tracking-[-0.02em]"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              {t("login.title")}
+            </h1>
             <p className="sub">{t("login.info")}</p>
-          </div>
-          {mutation.error ? <ErrorState title={t("login.error")}>{mutation.error.message}</ErrorState> : null}
-          <div className="field">
+          </motion.div>
+
+          {mutation.error ? (
+            <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+              <ErrorState title={t("login.error")}>{mutation.error.message}</ErrorState>
+            </motion.div>
+          ) : null}
+
+          <motion.div {...stagger(1)} className="field">
             <label htmlFor="username">
-              <User size={16} /> {t("login.username")}
+              <span className="inline-flex items-center gap-2">
+                <User size={15} className="text-[var(--muted)]" /> {t("login.username")}
+              </span>
             </label>
-            <input id="username" autoComplete="username" {...form.register("username")} />
-          </div>
-          <div className="field">
+            <input id="username" autoComplete="username" placeholder={locale === "fr" ? "votre identifiant" : "your username"} {...form.register("username")} />
+          </motion.div>
+
+          <motion.div {...stagger(2)} className="field">
             <label htmlFor="password">
-              <Lock size={16} /> {t("login.password")}
+              <span className="inline-flex items-center gap-2">
+                <Lock size={15} className="text-[var(--muted)]" /> {t("login.password")}
+              </span>
             </label>
-            <input id="password" type="password" autoComplete="current-password" {...form.register("password")} />
-          </div>
-          <Button className="btn-login" variant="primary" type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? (locale === "fr" ? "Connexion..." : "Signing in...") : t("login.submit")}
-            <ArrowRight size={16} />
-          </Button>
-          {sso.data ? (
-            <Button type="button" onClick={() => (window.location.href = "/api/v1/auth/sso/login")}>
-              <ShieldCheck size={16} />
-              {t("login.sso_continue")}
+            <input id="password" type="password" autoComplete="current-password" placeholder="••••••••" {...form.register("password")} />
+          </motion.div>
+
+          <motion.div {...stagger(3)}>
+            <Button className="btn-login w-full justify-center" variant="primary" type="submit" disabled={mutation.isPending}>
+              {mutation.isPending ? (locale === "fr" ? "Connexion..." : "Signing in...") : t("login.submit")}
+              <ArrowRight size={16} />
             </Button>
+          </motion.div>
+
+          {sso.data ? (
+            <motion.div {...stagger(4)} className="grid gap-4">
+              <div className="flex items-center gap-3 text-[0.78rem] font-medium uppercase tracking-wide text-[var(--muted)]">
+                <span className="hairline h-px flex-1" />
+                {locale === "fr" ? "ou" : "or"}
+                <span className="hairline h-px flex-1" />
+              </div>
+              <Button className="w-full justify-center" type="button" onClick={() => (window.location.href = "/api/v1/auth/sso/login")}>
+                <ShieldCheck size={16} />
+                {t("login.sso_continue")}
+              </Button>
+            </motion.div>
           ) : (
-            <p className="muted text-center">
+            <motion.p {...stagger(4)} className="muted text-center">
               {locale === "fr" ? "Pas encore de compte ?" : "Don't have an account?"}{" "}
-              <Link className="font-bold text-[var(--primary)]" to="/register">
+              <Link className="font-bold text-[var(--primary)] hover:underline" to="/register">
                 {locale === "fr" ? "S'inscrire" : "Register"}
               </Link>
-            </p>
+            </motion.p>
           )}
         </form>
       </section>

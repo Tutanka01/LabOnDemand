@@ -8,12 +8,14 @@ import { Button, ConfirmDialog, StatusBadge } from "./ui";
 
 export function LabCard({
   deployment,
+  index = 0,
   onOpen,
   onDetails,
   onDelete,
   onLifecycle
 }: {
   deployment: Deployment;
+  index?: number;
   onOpen: (deployment: Deployment) => void;
   onDetails: (deployment: Deployment) => void;
   onDelete: (deployment: Deployment) => void;
@@ -26,15 +28,21 @@ export function LabCard({
   const ready = !paused && Boolean(deployment.ready_replicas && deployment.ready_replicas > 0);
 
   return (
-    <motion.article className="card lab-card" layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+    <motion.article
+      className="card lab-card"
+      layout
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.32, delay: Math.min(index, 8) * 0.05, ease: [0.16, 1, 0.3, 1] }}
+    >
       <div className="lab-card-head">
         <div className="lab-title">
           <span className="runtime-mark">
             <RuntimeIcon type={deployment.type || deployment.deployment_type} />
           </span>
-          <div>
+          <div className="min-w-0">
             <strong>{deployment.name}</strong>
-            <div className="muted">{deployment.namespace}</div>
+            <div className="muted code-text text-[0.78rem]">{deployment.namespace}</div>
           </div>
         </div>
         <StatusBadge state={state} />
@@ -42,11 +50,13 @@ export function LabCard({
 
       <div className="lab-meta">
         <span className="badge">{deployment.type || deployment.deployment_type || "custom"}</span>
-        <span className="badge">
-          {deployment.ready_replicas || 0}/{deployment.replicas || 1} replicas
+        <span className={`badge ${ready ? "green" : ""}`}>
+          {deployment.ready_replicas || 0}/{deployment.replicas || 1} {locale === "fr" ? "réplicas" : "replicas"}
         </span>
         <span className="badge">TTL {ttl(deployment.expires_at)}</span>
       </div>
+
+      <div className="hairline" />
 
       <div className="actions-row">
         <Button variant="primary" disabled={!ready} onClick={() => onOpen(deployment)}>

@@ -46,10 +46,10 @@ export function DeploymentDetailsDialog({
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel">
+        <Dialog.Content className="dialog-content panel dialog-wide">
           <div className="section-head">
             <Dialog.Title asChild>
-              <h2>{deployment.name}</h2>
+              <h2 className="min-w-0 truncate">{deployment.name}</h2>
             </Dialog.Title>
             <Dialog.Close asChild>
               <IconButton aria-label="Fermer">
@@ -72,17 +72,20 @@ export function DeploymentDetailsDialog({
               </div>
 
               <div className="grid-3">
-                <div className="card p-3">
-                  <span className="muted text-[0.82rem]">Image</span>
-                  <strong className="block truncate-cell">{details.data.deployment.image || deployment.image || "N/A"}</strong>
+                <div className="card grid gap-1 p-3.5">
+                  <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">Image</span>
+                  <strong className="block truncate-cell code-text text-[0.9rem]">{details.data.deployment.image || deployment.image || "N/A"}</strong>
                 </div>
-                <div className="card p-3">
-                  <span className="muted text-[0.82rem]">{locale === "fr" ? "Réplicas" : "Replicas"}</span>
-                  <strong>{details.data.deployment.available_replicas || 0} / {details.data.deployment.replicas || deployment.replicas || 1}</strong>
+                <div className="card grid gap-1 p-3.5">
+                  <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">{locale === "fr" ? "Réplicas" : "Replicas"}</span>
+                  <strong className="text-[1.5rem] leading-none tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
+                    {details.data.deployment.available_replicas || 0}
+                    <span className="text-[var(--muted)]"> / {details.data.deployment.replicas || deployment.replicas || 1}</span>
+                  </strong>
                 </div>
-                <div className="card p-3">
-                  <span className="muted text-[0.82rem]">Namespace</span>
-                  <strong className="block truncate-cell">{details.data.deployment.namespace}</strong>
+                <div className="card grid gap-1 p-3.5">
+                  <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">Namespace</span>
+                  <strong className="block truncate-cell code-text text-[0.9rem]">{details.data.deployment.namespace}</strong>
                 </div>
               </div>
 

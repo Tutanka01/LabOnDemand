@@ -84,10 +84,15 @@ export function TerminalDialog({
           className="fixed left-1/2 top-1/2 z-[52] flex h-[min(560px,calc(100vh-80px))] w-[min(960px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg bg-[#111617] shadow-[0_20px_60px_rgba(0,0,0,0.5)]"
           aria-describedby={undefined}
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-[#2f3d3b] px-3.5 py-2.5">
+          <div className="flex shrink-0 items-center justify-between border-b border-[#2f3d3b] bg-[#0e1413] px-3.5 py-2.5">
             <Dialog.Title asChild>
-              <span className="flex items-center gap-2 font-mono text-[0.85rem] text-[#9fb0ad]">
-                <TermIcon size={15} />
+              <span className="flex items-center gap-2.5 font-mono text-[0.85rem] text-[#9fb0ad]">
+                <span className="flex gap-1.5" aria-hidden="true">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f56]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#27c93f]" />
+                </span>
+                <TermIcon size={15} className="text-[var(--primary-bright)]" />
                 {namespace} / {pod}
               </span>
             </Dialog.Title>

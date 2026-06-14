@@ -1,6 +1,7 @@
 import "../styles/main.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw, X } from "lucide-react";
+import { motion } from "motion/react";
 import { useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
@@ -11,10 +12,12 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
-  LoadingState,
   MetricCard,
   ResourceMeter,
   SearchBox,
+  Skeleton,
+  SkeletonCards,
+  SkeletonRows,
   StatusBadge,
   showToast,
 } from "../components/ui";
@@ -101,6 +104,12 @@ export default function DashboardPage() {
     });
   }, [templateQuery, templates.data]);
 
+  const staggerItem = (index: number) => ({
+    initial: { opacity: 0, y: 12 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.32, delay: Math.min(index, 8) * 0.05, ease: [0.16, 1, 0.3, 1] as const },
+  });
+
   return (
     <>
       <PageHeader
@@ -126,19 +135,28 @@ export default function DashboardPage() {
       />
 
       <section className="metric-grid">
-        <MetricCard label={locale === "fr" ? "Labs actifs" : "Active labs"} value={activeLabs.length} icon={<Boxes size={18} />} />
-        <MetricCard label={locale === "fr" ? "Labs prêts" : "Ready labs"} value={readyLabs} icon={<Gauge size={18} />} />
-        <MetricCard label={locale === "fr" ? "Volumes" : "Volumes"} value={pvcItems.length} icon={<Database size={18} />} />
-        <MetricCard label={locale === "fr" ? "Labs restants" : "Remaining labs"} value={quotas.data?.remaining?.apps ?? "-"} icon={<Cpu size={18} />} />
+        {[
+          { label: locale === "fr" ? "Labs actifs" : "Active labs", value: activeLabs.length, icon: <Boxes size={18} /> },
+          { label: locale === "fr" ? "Labs prêts" : "Ready labs", value: readyLabs, icon: <Gauge size={18} /> },
+          { label: locale === "fr" ? "Volumes" : "Volumes", value: pvcItems.length, icon: <Database size={18} /> },
+          { label: locale === "fr" ? "Labs restants" : "Remaining labs", value: quotas.data?.remaining?.apps ?? "-", icon: <Cpu size={18} /> },
+        ].map((metric, index) => (
+          <motion.div key={metric.label} {...staggerItem(index)} className="grid">
+            <MetricCard label={metric.label} value={metric.value} icon={metric.icon} />
+          </motion.div>
+        ))}
       </section>
 
       <section className="grid-2">
         <div className="panel">
           <div className="section-head">
-            <h2>{locale === "fr" ? "Labs actifs" : "Active labs"}</h2>
+            <div className="flex items-center gap-2.5">
+              <h2>{locale === "fr" ? "Labs actifs" : "Active labs"}</h2>
+              {activeLabs.length ? <span className="badge blue">{activeLabs.length}</span> : null}
+            </div>
             <StatusBadge state={deployments.isFetching ? "starting" : "running"} />
           </div>
-          {deployments.isLoading ? <LoadingState /> : null}
+          {deployments.isLoading ? <SkeletonCards count={3} lines={2} /> : null}
           {deployments.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les labs." : "Unable to load labs."}</ErrorState> : null}
           {!deployments.isLoading && !deployments.error && activeLabs.length === 0 ? (
             <EmptyState title={t("dashboard.no_labs")}>
@@ -146,9 +164,10 @@ export default function DashboardPage() {
             </EmptyState>
           ) : null}
           <div className="lab-list">
-            {activeLabs.map((deployment) => (
+            {activeLabs.map((deployment, index) => (
               <LabCard
                 key={`${deployment.namespace}-${deployment.name}`}
+                index={index}
                 deployment={deployment}
                 onOpen={async (item) => {
                   try {
@@ -178,7 +197,16 @@ export default function DashboardPage() {
               <RefreshCw size={16} /> {t("overview.refresh")}
             </Button>
           </div>
-          {quotas.isLoading ? <LoadingState /> : null}
+          {quotas.isLoading ? (
+            <div className="grid gap-3.5" aria-busy="true">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="grid gap-[7px]">
+                  <Skeleton className="h-3.5 w-1/3" />
+                  <Skeleton className="h-2 w-full rounded-full" />
+                </div>
+              ))}
+            </div>
+          ) : null}
           {quotas.error ? <ErrorState>{locale === "fr" ? "Quotas indisponibles." : "Quotas unavailable."}</ErrorState> : null}
           {quotas.data ? (
             <div className="grid gap-3.5">
@@ -214,7 +242,7 @@ export default function DashboardPage() {
             onChange={(e) => setTemplateQuery(e.target.value)}
           />
         </div>
-        {templates.isLoading ? <LoadingState /> : null}
+        {templates.isLoading ? <SkeletonCards count={3} lines={2} /> : null}
         {templates.error ? <ErrorState>{locale === "fr" ? "Impossible de charger le catalogue." : "Unable to load catalog."}</ErrorState> : null}
         {!templates.isLoading && !templates.error && filteredTemplates.length === 0 ? (
           <EmptyState title={locale === "fr" ? "Aucun template" : "No templates"}>
@@ -224,9 +252,10 @@ export default function DashboardPage() {
           </EmptyState>
         ) : null}
         <div className="grid-3">
-          {filteredTemplates.map((template) => (
+          {filteredTemplates.map((template, index) => (
             <TemplateCard
               key={String(template.key || template.id || template.name)}
+              index={index}
               template={template}
               onSelect={setSelectedTemplate}
             />
@@ -241,7 +270,7 @@ export default function DashboardPage() {
             <RefreshCw size={16} /> {t("overview.refresh")}
           </Button>
         </div>
-        {pvcs.isLoading ? <LoadingState /> : null}
+        {pvcs.isLoading ? <SkeletonRows rows={4} cols={5} /> : null}
         {pvcs.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les volumes." : "Unable to load volumes."}</ErrorState> : null}
         {!pvcs.isLoading && !pvcs.error && pvcItems.length === 0 ? (
           <EmptyState title={locale === "fr" ? "Aucun volume" : "No volumes"}>

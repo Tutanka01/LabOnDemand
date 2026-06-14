@@ -15,6 +15,7 @@ import {
   PlayCircle,
   PauseCircle,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../components/AppShell";
 import {
@@ -22,10 +23,10 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
-  LoadingState,
   MetricCard,
   Pagination,
   SearchBox,
+  SkeletonRows,
   StatusBadge,
   TabContent,
   TabList,
@@ -216,9 +217,9 @@ export default function AdminPage() {
                 <option value={100}>100 / page</option>
               </select>
             </div>
-            {users.isLoading ? <LoadingState /> : null}
+            {users.isLoading ? <SkeletonRows rows={8} cols={6} /> : null}
             {users.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les utilisateurs." : "Unable to load users."}</ErrorState> : null}
-            <div className="table-wrap">
+            <div className="table-wrap" hidden={users.isLoading}>
               <table className="data-table">
                 <thead>
                   <tr>
@@ -276,9 +277,9 @@ export default function AdminPage() {
                 <Plus size={16} /> {locale === "fr" ? "Nouveau template" : "New template"}
               </Button>
             </div>
-            {templates.isLoading ? <LoadingState /> : null}
+            {templates.isLoading ? <SkeletonRows rows={6} cols={7} /> : null}
             {templates.error ? <ErrorState /> : null}
-            <div className="table-wrap">
+            <div className="table-wrap" hidden={templates.isLoading}>
               <table className="data-table">
                 <thead>
                   <tr>
@@ -338,9 +339,9 @@ export default function AdminPage() {
                 <Plus size={16} /> {locale === "fr" ? "Nouvelle config" : "New config"}
               </Button>
             </div>
-            {runtimeConfigs.isLoading ? <LoadingState /> : null}
+            {runtimeConfigs.isLoading ? <SkeletonRows rows={6} cols={7} /> : null}
             {runtimeConfigs.error ? <ErrorState /> : null}
-            <div className="table-wrap">
+            <div className="table-wrap" hidden={runtimeConfigs.isLoading}>
               <table className="data-table">
                 <thead>
                   <tr>
@@ -392,10 +393,21 @@ export default function AdminPage() {
 
         <TabContent value="labs">
           <section className="metric-grid">
-            <MetricCard label="Total" value={fleetStats.total} icon={<Boxes size={18} />} />
-            <MetricCard label={locale === "fr" ? "Actifs" : "Active"} value={fleetStats.active} icon={<Activity size={18} />} />
-            <MetricCard label={locale === "fr" ? "En pause" : "Paused"} value={fleetStats.paused} icon={<PauseCircle size={18} />} />
-            <MetricCard label={locale === "fr" ? "Expirés" : "Expired"} value={fleetStats.expired} icon={<Activity size={18} />} />
+            {[
+              { label: "Total", value: fleetStats.total, icon: <Boxes size={18} />, hint: locale === "fr" ? "Labs déployés" : "Deployed labs" },
+              { label: locale === "fr" ? "Actifs" : "Active", value: fleetStats.active, icon: <Activity size={18} />, hint: locale === "fr" ? "En cours d'exécution" : "Currently running" },
+              { label: locale === "fr" ? "En pause" : "Paused", value: fleetStats.paused, icon: <PauseCircle size={18} />, hint: locale === "fr" ? "Suspendus" : "Suspended" },
+              { label: locale === "fr" ? "Expirés" : "Expired", value: fleetStats.expired, icon: <Activity size={18} />, hint: locale === "fr" ? "À nettoyer" : "To clean up" },
+            ].map((m, i) => (
+              <motion.div
+                key={m.label}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <MetricCard label={m.label} value={m.value} icon={m.icon} hint={m.hint} />
+              </motion.div>
+            ))}
           </section>
           <section className="panel mt-4">
             <div className="section-head">
@@ -417,7 +429,7 @@ export default function AdminPage() {
                 {labTypes.map((type) => <option value={type} key={type}>{type}</option>)}
               </select>
             </div>
-            {labFleet.isLoading ? <LoadingState /> : null}
+            {labFleet.isLoading ? <SkeletonRows rows={6} cols={7} /> : null}
             {labFleet.error ? <ErrorState /> : null}
             {filteredFleet.length > 0 ? (
               <div className="table-wrap">

@@ -10,6 +10,7 @@ import {
   ErrorState,
   LoadingState,
   ModalShell,
+  SkeletonRows,
   showToast,
 } from "../components/ui";
 import { GradingResultList, RunSummary, RunVerdictBadge } from "../components/GradingResults";
@@ -121,7 +122,11 @@ export default function TeacherSubmissionsPage() {
         </section>
       ) : null}
 
-      {rows.isLoading ? <LoadingState label={t("common.loading")} /> : null}
+      {rows.isLoading ? (
+        <section className="panel">
+          <SkeletonRows rows={6} cols={6} />
+        </section>
+      ) : null}
       {rows.error ? <ErrorState>{(rows.error as Error).message}</ErrorState> : null}
       {!rows.isLoading && !rows.error && (rows.data?.length || 0) === 0 ? (
         <EmptyState title={t("correction.empty")} />
@@ -161,8 +166,16 @@ export default function TeacherSubmissionsPage() {
                       }
                     />
                   </td>
-                  <td>{row.submitted_at ? fullDate(row.submitted_at) : "—"}</td>
-                  <td>{row.grade || "—"}</td>
+                  <td className="muted">{row.submitted_at ? fullDate(row.submitted_at) : "—"}</td>
+                  <td>
+                    {row.grade ? (
+                      <span style={{ fontFamily: "var(--font-display)", fontWeight: 700 }}>
+                        {row.grade}
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td>
                     {row.submission_id ? (
                       <Button onClick={() => setOpenSid(row.submission_id!)}>{t("correction.grade")}</Button>
@@ -267,10 +280,22 @@ function CorrectionDialog({
         <div className="flex flex-col gap-4">
           {/* Rendu de l'étudiant */}
           <div>
-            <h3>{t("correction.submitted_work")}</h3>
-            {data.is_late ? <Badge tone="amber">{t("myassignments.status_late")}</Badge> : null}
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="m-0">{t("correction.submitted_work")}</h3>
+              {data.is_late ? <Badge tone="amber">{t("myassignments.status_late")}</Badge> : null}
+            </div>
             {data.text ? (
-              <p className="whitespace-pre-wrap leading-relaxed mt-2">{data.text}</p>
+              <p
+                className="whitespace-pre-wrap leading-relaxed mt-2"
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: "var(--radius)",
+                  background: "var(--surface-soft)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {data.text}
+              </p>
             ) : (
               <p className="muted mt-2">{t("correction.no_text")}</p>
             )}

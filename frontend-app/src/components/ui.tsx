@@ -5,6 +5,7 @@ import * as SelectPrimitive from "@radix-ui/react-select";
 import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Search, X } from "lucide-react";
 import {
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -164,8 +165,48 @@ export function ErrorState({ title = "Erreur", children }: { title?: string; chi
 export function LoadingState({ label = "Chargement" }: { label?: string }) {
   return (
     <div className="loading-state">
-      <Loader2 size={22} className="animate-spin" />
+      <Loader2 size={22} className="animate-spin text-[var(--primary)]" />
       <span>{label}</span>
+    </div>
+  );
+}
+
+// ─── Skeletons (shimmer) ─────────────────────────────
+
+export function Skeleton({ className = "", style }: { className?: string; style?: CSSProperties }) {
+  return <div className={cn("skeleton", className)} style={style} aria-hidden="true" />;
+}
+
+/** Grille de cartes fantômes pour les états de chargement de listes. */
+export function SkeletonCards({ count = 3, lines = 3 }: { count?: number; lines?: number }) {
+  return (
+    <div className="lab-list" aria-busy="true" aria-live="polite">
+      {Array.from({ length: count }).map((_, i) => (
+        <Card key={i} className="lab-card">
+          <div className="flex items-center justify-between gap-3">
+            <Skeleton className="h-5 w-2/5" />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </div>
+          {Array.from({ length: lines }).map((_, j) => (
+            <Skeleton key={j} className="skeleton-text" style={{ width: `${88 - j * 16}%` }} />
+          ))}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+/** Rangées fantômes pour les tableaux. */
+export function SkeletonRows({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
+  return (
+    <div className="grid gap-2.5" aria-busy="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3">
+          {Array.from({ length: cols }).map((_, j) => (
+            <Skeleton key={j} className="skeleton-text" style={{ flex: j === 0 ? 2 : 1 }} />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

@@ -2,6 +2,13 @@ export function displayName(user?: { full_name?: string | null; username?: strin
   return user?.full_name || user?.username || "Utilisateur";
 }
 
+export function initials(user?: { full_name?: string | null; username?: string | null }) {
+  const name = displayName(user).trim();
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function roleLabel(role?: string | null, locale: "fr" | "en" = "fr") {
   const labels = {
     fr: {

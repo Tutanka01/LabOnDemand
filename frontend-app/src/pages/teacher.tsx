@@ -16,6 +16,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
@@ -24,8 +25,9 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
-  LoadingState,
   ResourceMeter,
+  SkeletonCards,
+  SkeletonRows,
   StatusBadge,
   TabContent,
   TabList,
@@ -254,25 +256,33 @@ export default function TeacherPage() {
         </TabContent>
 
         <TabContent value="classrooms">
-          {classrooms.isLoading ? <LoadingState /> : null}
+          {classrooms.isLoading ? <SkeletonCards count={4} lines={2} /> : null}
           {classrooms.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les classes." : "Unable to load classes."}</ErrorState> : null}
           {!classrooms.isLoading && !classrooms.error && (classrooms.data || []).length === 0 ? (
             <EmptyState title={t("classroom.empty")}>{t("classroom.empty_hint")}</EmptyState>
           ) : null}
 
-          <section className="grid-teacher">
-            {(classrooms.data || []).map((classroom) => (
-              <ClassroomCard
-                key={classroom.id}
-                classroom={classroom}
-                onEdit={(c) => { setEditClassroom(c); setShowClassroomDialog(true); }}
-                onSelect={(id) => {
-                  setSelectedClassroomId(id);
-                  setTab("students");
-                }}
-              />
-            ))}
-          </section>
+          {!classrooms.isLoading && (classrooms.data || []).length > 0 ? (
+            <section className="grid-teacher">
+              {(classrooms.data || []).map((classroom, i) => (
+                <motion.div
+                  key={classroom.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <ClassroomCard
+                    classroom={classroom}
+                    onEdit={(c) => { setEditClassroom(c); setShowClassroomDialog(true); }}
+                    onSelect={(id) => {
+                      setSelectedClassroomId(id);
+                      setTab("students");
+                    }}
+                  />
+                </motion.div>
+              ))}
+            </section>
+          ) : null}
         </TabContent>
 
         <TabContent value="monitor">
@@ -299,28 +309,35 @@ function TeacherOverview({
   error: unknown;
 }) {
   const { locale, t } = useI18n();
-  if (isLoading) return <LoadingState />;
+  if (isLoading) return <SkeletonCards count={3} lines={2} />;
   if (error) return <ErrorState>{locale === "fr" ? "Impossible de charger la vue globale." : "Unable to load global view."}</ErrorState>;
 
   const classrooms = dashboard?.classrooms || [];
   const totalStudents = classrooms.reduce((sum, classroom) => sum + classroom.student_count, 0);
   const totalAssignments = classrooms.reduce((sum, classroom) => sum + classroom.active_assignment_count, 0);
 
+  const cards = [
+    { label: t("classroom.title"), value: dashboard?.classroom_count || 0, icon: <GraduationCap size={18} />, hint: locale === "fr" ? "Classes gérées" : "Managed classes" },
+    { label: t("students.title"), value: totalStudents, icon: <Users size={18} />, hint: locale === "fr" ? "Inscrits au total" : "Total enrolled" },
+    { label: locale === "fr" ? "Devoirs actifs" : "Active assignments", value: totalAssignments, icon: <BookOpen size={18} />, hint: locale === "fr" ? "Toutes classes" : "All classes" },
+  ];
+
   return (
     <div className="grid gap-4">
-      <section className="metric-grid">
-        <div className="card metric-card">
-          <div className="metric-top"><span>{t("classroom.title")}</span><GraduationCap size={18} /></div>
-          <strong className="metric-value">{dashboard?.classroom_count || 0}</strong>
-        </div>
-        <div className="card metric-card">
-          <div className="metric-top"><span>{t("students.title")}</span><Users size={18} /></div>
-          <strong className="metric-value">{totalStudents}</strong>
-        </div>
-        <div className="card metric-card">
-          <div className="metric-top"><span>{locale === "fr" ? "Devoirs actifs" : "Active assignments"}</span><BookOpen size={18} /></div>
-          <strong className="metric-value">{totalAssignments}</strong>
-        </div>
+      <section className="metric-grid grid-cols-3">
+        {cards.map((c, i) => (
+          <motion.div
+            key={c.label}
+            className="card metric-card"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="metric-top"><span>{c.label}</span>{c.icon}</div>
+            <strong className="metric-value">{c.value}</strong>
+            <span className="muted text-[0.8rem]">{c.hint}</span>
+          </motion.div>
+        ))}
       </section>
 
       <section className="panel">
@@ -385,10 +402,10 @@ function GlobalMonitor({ classrooms }: { classrooms: Classroom[] }) {
         <h2>{locale === "fr" ? "Monitoring multi-classes" : "Multi-class monitoring"}</h2>
         <span className="badge blue">Auto-refresh 30s</span>
       </div>
-      <section className="metric-grid mb-4">
-        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Actifs" : "Active"}</span><CheckCircle2 size={18} /></div><strong className="metric-value">{summary.active}</strong></div>
-        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "En pause" : "Paused"}</span><Archive size={18} /></div><strong className="metric-value">{summary.paused}</strong></div>
-        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Sans lab" : "Without lab"}</span><XCircle size={18} /></div><strong className="metric-value">{summary.none}</strong></div>
+      <section className="metric-grid grid-cols-3 mb-4">
+        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Actifs" : "Active"}</span><CheckCircle2 size={18} /></div><strong className="metric-value">{summary.active}</strong><span className="muted text-[0.8rem]">{locale === "fr" ? "Labs en cours" : "Running labs"}</span></div>
+        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "En pause" : "Paused"}</span><Archive size={18} /></div><strong className="metric-value">{summary.paused}</strong><span className="muted text-[0.8rem]">{locale === "fr" ? "Suspendus" : "Suspended"}</span></div>
+        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Sans lab" : "Without lab"}</span><XCircle size={18} /></div><strong className="metric-value">{summary.none}</strong><span className="muted text-[0.8rem]">{locale === "fr" ? "À déployer" : "To deploy"}</span></div>
       </section>
       <div className="actions-row mb-3">
         <select className="control" value={classroomFilter} onChange={(e) => setClassroomFilter(e.target.value)}>
@@ -402,7 +419,7 @@ function GlobalMonitor({ classrooms }: { classrooms: Classroom[] }) {
           <option value="none">{locale === "fr" ? "Sans lab" : "Without lab"}</option>
         </select>
       </div>
-      {statusQueries.some((query) => query.isLoading) ? <LoadingState /> : null}
+      {statusQueries.some((query) => query.isLoading) ? <SkeletonRows rows={5} cols={5} /> : null}
       {filtered.length ? (
         <div className="table-wrap">
           <table className="data-table">
@@ -443,7 +460,13 @@ function ClassroomStudentsView({
   onUnenroll: (userId: number) => void;
 }) {
   const { locale, t } = useI18n();
-  if (isLoading) return <LoadingState />;
+  if (isLoading) {
+    return (
+      <section className="panel">
+        <SkeletonRows rows={6} cols={4} />
+      </section>
+    );
+  }
   if (error) return <ErrorState>{locale === "fr" ? "Impossible de charger les étudiants." : "Unable to load students."}</ErrorState>;
 
   return (
@@ -513,7 +536,7 @@ function AssignmentsView({
   deployProgress: (BulkSpawnReport & { done: boolean }) | null;
 }) {
   const { locale, t } = useI18n();
-  if (isLoading) return <LoadingState />;
+  if (isLoading) return <SkeletonCards count={3} lines={2} />;
   if (error) return <ErrorState>{locale === "fr" ? "Impossible de charger les devoirs." : "Unable to load assignments."}</ErrorState>;
 
   return (
@@ -554,8 +577,15 @@ function AssignmentsView({
         <EmptyState title={t("assignment.empty")}>{locale === "fr" ? "Créez un devoir pour le distribuer aux étudiants." : "Create an assignment to distribute to students."}</EmptyState>
       ) : (
         <div className="grid gap-3">
-          {assignments.map((a) => (
-            <article className="card p-4" key={a.id}>
+          {assignments.map((a, i) => (
+            <motion.article
+              className="card card-interactive relative overflow-hidden p-4"
+              key={a.id}
+              style={{ borderLeft: "4px solid var(--primary)" }}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+            >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <strong>{a.title}</strong>
@@ -592,7 +622,7 @@ function AssignmentsView({
                   />
                 </div>
               </div>
-            </article>
+            </motion.article>
           ))}
         </div>
       )}
@@ -616,7 +646,13 @@ function LabMonitorView({
   onRefresh: () => void;
 }) {
   const { locale } = useI18n();
-  if (isLoading) return <LoadingState />;
+  if (isLoading) {
+    return (
+      <section className="panel">
+        <SkeletonRows rows={6} cols={5} />
+      </section>
+    );
+  }
   if (error) return <ErrorState>{locale === "fr" ? "Impossible de charger le monitoring." : "Unable to load monitoring."}</ErrorState>;
 
   const filters: Array<{ value: string; label: string }> = [
