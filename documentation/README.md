@@ -71,6 +71,7 @@ les guides spécialisés selon votre profil.
 | Document | Contenu |
 |----------|---------|
 | [`assignment-lifecycle.md`](assignment-lifecycle.md) | Cycle de vie devoir/soumission/correction, endpoints prof & étudiant, GradingSpec |
+| [`guide-enseignant-eleve.md`](guide-enseignant-eleve.md) | Manuel complet avec captures pour organiser un TP : classes, élèves, devoirs, labs, tests automatiques, rendus et notation |
 | [`grader-pod.md`](grader-pod.md) | Grader Pod : Job K8s isolé, modèle pull, sécurité, contrat des probes, env vars, dépannage |
 
 ### Sécurité & accès
