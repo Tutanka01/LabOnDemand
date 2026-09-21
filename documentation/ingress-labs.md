@@ -79,8 +79,8 @@ INGRESS_TLS_SECRET=
 INGRESS_DEFAULT_PATH=/
 INGRESS_PATH_TYPE=Prefix
 INGRESS_FORCE_TLS_REDIRECT=false
-INGRESS_AUTO_TYPES=custom,jupyter,vscode,wordpress,mysql,lamp
-INGRESS_EXCLUDED_TYPES=netbeans
+INGRESS_AUTO_TYPES=custom,jupyter,vscode,wordpress,mysql,lamp,netbeans
+INGRESS_EXCLUDED_TYPES=
 ```
 
 Puis recréer le conteneur API (un simple `restart` ne relit pas `env_file`) :
@@ -114,8 +114,9 @@ Le détail d'un déploiement (`GET /api/v1/k8s/deployments/.../details`) renvoie
 - Les types listés dans `INGRESS_AUTO_TYPES` sont convertis en service
   `ClusterIP` + `Ingress` : leur URL NodePort disparaît (l'Ingress devient le
   seul accès).
-- `netbeans` est exclu (`INGRESS_EXCLUDED_TYPES`) : les ports VNC/audio ne
-  passent pas par HTTP, il reste en NodePort.
+- `netbeans` (bureau distant) est couvert lui aussi : son seul accès réellement
+  fonctionnel est le **noVNC** (HTTP + WebSocket), donc parfait derrière
+  l'Ingress — voir la section dédiée ci-dessous.
 - Pour les **labs déjà déployés** avant l'activation, il n'y a pas d'Ingress :
   redéployez-les depuis l'interface, ou créez l'Ingress à la main :
 
@@ -150,6 +151,31 @@ Le détail d'un déploiement (`GET /api/v1/k8s/deployments/.../details`) renvoie
 
   Les labels `managed-by`, `app` et `user-id` sont nécessaires pour que
   l'Ingress soit listé dans l'interface.
+
+## NetBeans (bureau distant)
+
+NetBeans est servi par **noVNC** sur le port `6901` (HTTP + WebSocket) : il
+fonctionne donc derrière l'Ingress comme n'importe quel lab, y compris le
+clavier/souris qui transitent par le WebSocket (validé : page `noVNC` en 200 et
+upgrade WebSocket `101` à travers Traefik).
+
+État réel des ports déclarés pour l'image
+`tutanka01/labondemand:netbeansjava` (vérifié via `netstat` dans le pod) :
+
+| Port du service | Rôle annoncé | Écoute réelle dans le pod |
+| --- | --- | --- |
+| `6901` | noVNC (navigateur) | ✅ `python3` (websockify) |
+| `5901` | VNC classique | ❌ rien (x11vnc écoute sur `5900`) |
+| `4901` | audio | ❌ rien |
+
+Le noVNC est donc le seul accès fonctionnel, et c'est précisément celui que
+l'Ingress expose : passer le service en `ClusterIP` ne perd rien. Si un client
+VNC classique devient nécessaire, il faudra d'abord corriger le mapping
+`5901 → 5900` côté `backend/deployment_service.py`, puis passer par
+`kubectl port-forward` (les ports hauts restent filtrés pour les étudiants).
+
+Identifiants : l'UI affiche le couple `kasm_user` / `VNC_PW` du Secret du lab
+(endpoint « identifiants de connexion »).
 
 ## DNS
 
