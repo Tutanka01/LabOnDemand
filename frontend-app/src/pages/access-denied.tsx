@@ -29,7 +29,7 @@ export default function AccessDeniedPage() {
   }, [countdown, navigate]);
 
   return (
-    <main className="grid min-h-screen place-items-center p-6" style={{ background: "var(--gradient-mesh), var(--surface-muted)" }}>
+    <main className="grid min-h-screen place-items-center p-6">
       <motion.section
         {...stagger(0)}
         className="card auth-card text-center"
@@ -37,20 +37,14 @@ export default function AccessDeniedPage() {
       >
         <motion.div
           {...stagger(1)}
-          className="mx-auto grid h-16 w-16 place-items-center rounded-2xl"
-          style={{
-            background: "color-mix(in srgb, var(--danger) 14%, var(--surface))",
-            boxShadow: "inset 0 0 0 1px color-mix(in srgb, var(--danger) 30%, transparent)"
-          }}
+          className="mx-auto grid h-14 w-14 place-items-center rounded-[var(--radius)]"
+          style={{ background: "color-mix(in srgb, var(--danger) 10%, var(--surface))" }}
         >
-          <ShieldAlert size={30} className="text-[var(--danger)]" />
+          <ShieldAlert size={26} className="text-[var(--danger)]" />
         </motion.div>
 
         <motion.div {...stagger(2)} className="grid gap-2">
-          <h1
-            className="text-[1.7rem] font-bold leading-tight tracking-[-0.02em]"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
+          <h1>
             {t("error.forbidden") || (locale === "fr" ? "Accès refusé" : "Access denied")}
           </h1>
           <p className="sub mx-auto max-w-[340px]">
@@ -59,13 +53,13 @@ export default function AccessDeniedPage() {
               : "Your role does not allow you to open this page."}
           </p>
           {requiredRole ? (
-            <span className="badge amber mx-auto">
+            <span className="badge mx-auto">
               {locale === "fr" ? `Rôle requis : ${requiredRole}` : `Required role: ${requiredRole}`}
             </span>
           ) : null}
         </motion.div>
 
-        <motion.div {...stagger(3)} className="grid gap-2.5">
+        <motion.div {...stagger(3)} className="grid gap-2">
           <Button id="back-to-home" className="w-full justify-center" variant="primary" onClick={() => navigate("/")}>
             <ArrowLeft size={16} />
             {locale === "fr" ? "Retour au dashboard" : "Back to dashboard"}
@@ -76,7 +70,7 @@ export default function AccessDeniedPage() {
           </Button>
         </motion.div>
 
-        <motion.span {...stagger(4)} className="muted text-[0.82rem]">
+        <motion.span {...stagger(4)} className="muted text-xs">
           {locale === "fr" ? `Retour automatique dans ${countdown}s` : `Redirecting in ${countdown}s`}
         </motion.span>
       </motion.section>

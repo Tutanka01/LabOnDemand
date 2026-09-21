@@ -21,8 +21,8 @@ const STATUS_COLOR: Record<string, string> = {
   fail: "var(--danger)",
   error: "var(--danger)",
   skip: "var(--warning)",
-  running: "var(--accent-blue)",
-  queued: "var(--accent-blue)",
+  running: "var(--info)",
+  queued: "var(--info)",
   pending: "var(--muted)",
 };
 
@@ -145,7 +145,7 @@ export function RunSummary({ run }: { run?: GradingRun | null }) {
       style={{
         padding: "12px 14px",
         borderRadius: "var(--radius)",
-        background: "var(--surface-soft)",
+        background: "var(--surface-muted)",
         border: "1px solid var(--border)",
       }}
     >
@@ -240,12 +240,10 @@ export function GradingResultList({
     <ul className="grading-checklist">
       {rows.map((row) => {
         const status = row.result?.status || (runPending ? "running" : "pending");
-        const accent = STATUS_COLOR[status] || STATUS_COLOR.pending;
         return (
           <li
             key={row.id}
             className="grading-check"
-            style={{ borderLeft: `3px solid ${accent}` }}
           >
             <StatusIcon status={status} />
             <div className="grading-check-body">

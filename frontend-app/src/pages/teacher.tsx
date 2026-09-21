@@ -16,7 +16,6 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
@@ -264,22 +263,16 @@ export default function TeacherPage() {
 
           {!classrooms.isLoading && (classrooms.data || []).length > 0 ? (
             <section className="grid-teacher">
-              {(classrooms.data || []).map((classroom, i) => (
-                <motion.div
+              {(classrooms.data || []).map((classroom) => (
+                <ClassroomCard
                   key={classroom.id}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-                >
-                  <ClassroomCard
-                    classroom={classroom}
-                    onEdit={(c) => { setEditClassroom(c); setShowClassroomDialog(true); }}
-                    onSelect={(id) => {
-                      setSelectedClassroomId(id);
-                      setTab("students");
-                    }}
-                  />
-                </motion.div>
+                  classroom={classroom}
+                  onEdit={(c) => { setEditClassroom(c); setShowClassroomDialog(true); }}
+                  onSelect={(id) => {
+                    setSelectedClassroomId(id);
+                    setTab("students");
+                  }}
+                />
               ))}
             </section>
           ) : null}
@@ -325,18 +318,12 @@ function TeacherOverview({
   return (
     <div className="grid gap-4">
       <section className="metric-grid grid-cols-3">
-        {cards.map((c, i) => (
-          <motion.div
-            key={c.label}
-            className="card metric-card"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-          >
+        {cards.map((c) => (
+          <div key={c.label} className="card metric-card">
             <div className="metric-top"><span>{c.label}</span>{c.icon}</div>
             <strong className="metric-value">{c.value}</strong>
-            <span className="muted text-[0.8rem]">{c.hint}</span>
-          </motion.div>
+            <span className="muted text-xs">{c.hint}</span>
+          </div>
         ))}
       </section>
 
@@ -400,12 +387,12 @@ function GlobalMonitor({ classrooms }: { classrooms: Classroom[] }) {
     <section className="panel">
       <div className="section-head">
         <h2>{locale === "fr" ? "Monitoring multi-classes" : "Multi-class monitoring"}</h2>
-        <span className="badge blue">Auto-refresh 30s</span>
+        <span className="badge">Auto-refresh 30s</span>
       </div>
       <section className="metric-grid grid-cols-3 mb-4">
-        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Actifs" : "Active"}</span><CheckCircle2 size={18} /></div><strong className="metric-value">{summary.active}</strong><span className="muted text-[0.8rem]">{locale === "fr" ? "Labs en cours" : "Running labs"}</span></div>
-        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "En pause" : "Paused"}</span><Archive size={18} /></div><strong className="metric-value">{summary.paused}</strong><span className="muted text-[0.8rem]">{locale === "fr" ? "Suspendus" : "Suspended"}</span></div>
-        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Sans lab" : "Without lab"}</span><XCircle size={18} /></div><strong className="metric-value">{summary.none}</strong><span className="muted text-[0.8rem]">{locale === "fr" ? "À déployer" : "To deploy"}</span></div>
+        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Actifs" : "Active"}</span><CheckCircle2 size={18} /></div><strong className="metric-value">{summary.active}</strong><span className="muted text-xs">{locale === "fr" ? "Labs en cours" : "Running labs"}</span></div>
+        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "En pause" : "Paused"}</span><Archive size={18} /></div><strong className="metric-value">{summary.paused}</strong><span className="muted text-xs">{locale === "fr" ? "Suspendus" : "Suspended"}</span></div>
+        <div className="card metric-card"><div className="metric-top"><span>{locale === "fr" ? "Sans lab" : "Without lab"}</span><XCircle size={18} /></div><strong className="metric-value">{summary.none}</strong><span className="muted text-xs">{locale === "fr" ? "À déployer" : "To deploy"}</span></div>
       </section>
       <div className="actions-row mb-3">
         <select className="control" value={classroomFilter} onChange={(e) => setClassroomFilter(e.target.value)}>
@@ -577,14 +564,10 @@ function AssignmentsView({
         <EmptyState title={t("assignment.empty")}>{locale === "fr" ? "Créez un devoir pour le distribuer aux étudiants." : "Create an assignment to distribute to students."}</EmptyState>
       ) : (
         <div className="grid gap-3">
-          {assignments.map((a, i) => (
-            <motion.article
-              className="card card-interactive relative overflow-hidden p-4"
+          {assignments.map((a) => (
+            <article
+              className="card card-interactive p-4"
               key={a.id}
-              style={{ borderLeft: "4px solid var(--primary)" }}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.28, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -596,7 +579,7 @@ function AssignmentsView({
                     {a.due_at ? <span className="badge">{t("assignment.due")} {fullDate(a.due_at)}</span> : null}
                   </div>
                   {a.instructions ? (
-                    <p className="muted mt-2 text-[0.85rem]">
+                    <p className="muted mt-2 text-sm">
                       {a.instructions.slice(0, 200)}{a.instructions.length > 200 ? "..." : ""}
                     </p>
                   ) : null}
@@ -622,7 +605,7 @@ function AssignmentsView({
                   />
                 </div>
               </div>
-            </motion.article>
+            </article>
           ))}
         </div>
       )}

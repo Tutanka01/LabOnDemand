@@ -1,6 +1,5 @@
 import "../styles/main.css";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { Activity, Cpu, HardDrive, MemoryStick, Server } from "lucide-react";
 import { PageHeader } from "../components/AppShell";
@@ -62,7 +61,7 @@ export default function AdminStatsPage() {
                 value: (
                   <>
                     {stats.data.ready_deployments ?? "-"}
-                    <span className="muted ml-1.5 text-[0.85rem]">/ {stats.data.total_deployments ?? "-"}</span>
+                    <span className="muted ml-1.5 text-sm">/ {stats.data.total_deployments ?? "-"}</span>
                   </>
                 ),
                 icon: <Activity size={18} />,
@@ -80,15 +79,8 @@ export default function AdminStatsPage() {
                 icon: <HardDrive size={18} />,
                 hint: "Total",
               },
-            ].map((m, i) => (
-              <motion.div
-                key={m.label}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <MetricCard label={m.label} value={m.value} icon={m.icon} hint={m.hint} />
-              </motion.div>
+            ].map((m) => (
+              <MetricCard key={m.label} label={m.label} value={m.value} icon={m.icon} hint={m.hint} />
             ))}
           </section>
 
@@ -205,7 +197,7 @@ export default function AdminStatsPage() {
                 </table>
               </div>
             ) : (
-              <pre className="pre-wrap text-[0.8rem]">
+              <pre className="pre-wrap text-xs">
                 {JSON.stringify(stats.data, null, 2)}
               </pre>
             )}
@@ -230,23 +222,18 @@ function CapacityCard({
   detail: string;
 }) {
   return (
-    <div className="card relative overflow-hidden p-[18px]">
+    <div className="card metric-card">
       <div className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2 text-[0.84rem] font-medium text-[var(--muted)]">
-          <span className="text-[var(--primary)]">{icon}</span>
+        <span className="flex items-center gap-2 text-xs font-medium text-[var(--muted)]">
+          <span className="text-[var(--muted)]">{icon}</span>
           {label}
         </span>
-        <strong
-          className="text-[1.6rem] leading-none"
-          style={{ fontFamily: "var(--font-display)", letterSpacing: "-0.02em" }}
-        >
-          {percent}%
-        </strong>
+        <strong className="text-2xl">{percent}%</strong>
       </div>
       <div className="meter-track mt-3">
         <div className={`meter-fill ${tone}`} style={{ width: `${Math.min(100, percent)}%` }} />
       </div>
-      <span className="muted mt-2 block text-[0.82rem]">{detail}</span>
+      <span className="muted mt-2 block text-xs">{detail}</span>
     </div>
   );
 }

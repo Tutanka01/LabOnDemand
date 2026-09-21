@@ -1,7 +1,6 @@
 import "../styles/main.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw, X } from "lucide-react";
-import { motion } from "motion/react";
+import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
@@ -18,7 +17,6 @@ import {
   Skeleton,
   SkeletonCards,
   SkeletonRows,
-  StatusBadge,
   showToast,
 } from "../components/ui";
 import {
@@ -104,12 +102,6 @@ export default function DashboardPage() {
     });
   }, [templateQuery, templates.data]);
 
-  const staggerItem = (index: number) => ({
-    initial: { opacity: 0, y: 12 },
-    animate: { opacity: 1, y: 0 },
-    transition: { duration: 0.32, delay: Math.min(index, 8) * 0.05, ease: [0.16, 1, 0.3, 1] as const },
-  });
-
   return (
     <>
       <PageHeader
@@ -140,10 +132,8 @@ export default function DashboardPage() {
           { label: locale === "fr" ? "Labs prêts" : "Ready labs", value: readyLabs, icon: <Gauge size={18} /> },
           { label: locale === "fr" ? "Volumes" : "Volumes", value: pvcItems.length, icon: <Database size={18} /> },
           { label: locale === "fr" ? "Labs restants" : "Remaining labs", value: quotas.data?.remaining?.apps ?? "-", icon: <Cpu size={18} /> },
-        ].map((metric, index) => (
-          <motion.div key={metric.label} {...staggerItem(index)} className="grid">
-            <MetricCard label={metric.label} value={metric.value} icon={metric.icon} />
-          </motion.div>
+        ].map((metric) => (
+          <MetricCard key={metric.label} label={metric.label} value={metric.value} icon={metric.icon} />
         ))}
       </section>
 
@@ -152,9 +142,8 @@ export default function DashboardPage() {
           <div className="section-head">
             <div className="flex items-center gap-2.5">
               <h2>{locale === "fr" ? "Labs actifs" : "Active labs"}</h2>
-              {activeLabs.length ? <span className="badge blue">{activeLabs.length}</span> : null}
+              {activeLabs.length ? <span className="badge">{activeLabs.length}</span> : null}
             </div>
-            <StatusBadge state={deployments.isFetching ? "starting" : "running"} />
           </div>
           {deployments.isLoading ? <SkeletonCards count={3} lines={2} /> : null}
           {deployments.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les labs." : "Unable to load labs."}</ErrorState> : null}
@@ -200,7 +189,7 @@ export default function DashboardPage() {
           {quotas.isLoading ? (
             <div className="grid gap-3.5" aria-busy="true">
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="grid gap-[7px]">
+                <div key={i} className="grid gap-2">
                   <Skeleton className="h-3.5 w-1/3" />
                   <Skeleton className="h-2 w-full rounded-full" />
                 </div>
@@ -298,10 +287,10 @@ export default function DashboardPage() {
                   <tr key={pvc.name}>
                     <td>{pvc.name}</td>
                     <td>
-                      <span className={pvc.bound ? "badge amber" : "badge green"}>
-                        {pvc.bound 
-                          ? (locale === "fr" ? `${pvc.phase || "Bound"} - attaché` : `${pvc.phase || "Bound"} - bound`) 
-                          : (locale === "fr" ? `${pvc.phase || "Libre"} - disponible` : `${pvc.phase || "Available"} - free`)}
+                      <span className={pvc.bound ? "badge" : "badge blue"}>
+                        {pvc.bound
+                          ? (locale === "fr" ? "Attaché" : "Bound")
+                          : (locale === "fr" ? "Disponible" : "Available")}
                       </span>
                     </td>
                     <td>{pvc.storage || "N/A"}</td>
@@ -316,7 +305,15 @@ export default function DashboardPage() {
                         title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
                         description={locale === "fr" ? `Supprimer ${pvc.name} ? Les données stockées dans ce volume seront perdues.` : `Delete ${pvc.name}? Data stored in this volume will be permanently lost.`}
                         confirmLabel={t("common.delete")}
-                        trigger={<Button variant="danger">{t("common.delete")}</Button>}
+                        trigger={
+                          <Button
+                            variant="danger"
+                            title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                            aria-label={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        }
                         onConfirm={() => deletePvcMutation.mutate(pvc)}
                       />
                     </td>

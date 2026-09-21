@@ -73,19 +73,19 @@ export function DeploymentDetailsDialog({
 
               <div className="grid-3">
                 <div className="card grid gap-1 p-3.5">
-                  <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">Image</span>
-                  <strong className="block truncate-cell code-text text-[0.9rem]">{details.data.deployment.image || deployment.image || "N/A"}</strong>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Image</span>
+                  <strong className="block truncate-cell code-text text-sm">{details.data.deployment.image || deployment.image || "N/A"}</strong>
                 </div>
                 <div className="card grid gap-1 p-3.5">
-                  <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">{locale === "fr" ? "Réplicas" : "Replicas"}</span>
-                  <strong className="text-[1.5rem] leading-none tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{locale === "fr" ? "Réplicas" : "Replicas"}</span>
+                  <strong className="display-figure text-2xl leading-none">
                     {details.data.deployment.available_replicas || 0}
                     <span className="text-[var(--muted)]"> / {details.data.deployment.replicas || deployment.replicas || 1}</span>
                   </strong>
                 </div>
                 <div className="card grid gap-1 p-3.5">
-                  <span className="text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">Namespace</span>
-                  <strong className="block truncate-cell code-text text-[0.9rem]">{details.data.deployment.namespace}</strong>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Namespace</span>
+                  <strong className="block truncate-cell code-text text-sm">{details.data.deployment.namespace}</strong>
                 </div>
               </div>
 

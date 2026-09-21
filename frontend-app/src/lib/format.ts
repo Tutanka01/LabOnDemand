@@ -137,11 +137,6 @@ export function presetLabel(preset?: string | null) {
   return labels[preset || ""] || preset || "Moyen";
 }
 
-export function colorForId(id: number): string {
-  const colors = ["#0f766e", "#2463eb", "#7c3aed", "#b45309", "#be123c", "#15803d", "#1d4ed8", "#a21caf"];
-  return colors[Math.abs(id) % colors.length];
-}
-
 export function escapeHtml(str: string): string {
   const div = document.createElement("div");
   div.appendChild(document.createTextNode(str));

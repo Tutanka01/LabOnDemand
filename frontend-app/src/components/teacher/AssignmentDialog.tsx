@@ -236,7 +236,7 @@ function MarkdownField({
       ) : (
         <textarea className="md-textarea" rows={rows} placeholder={placeholder} {...register} />
       )}
-      {hint ? <span className="muted text-[0.78rem] mt-1">{hint}</span> : null}
+      {hint ? <span className="muted text-xs mt-1">{hint}</span> : null}
     </div>
   );
 }
@@ -441,7 +441,7 @@ function ProbeEditor({
   return (
     <div className="probe-editor">
       {/* Grading mode + timeout */}
-      <div className="form-grid" style={{ marginBottom: "1rem" }}>
+      <div className="form-grid mb-4">
         <div className="field">
           <label>{t("probe.grading_mode_label")}</label>
           <select value={gradingMode} onChange={(e) => onGradingModeChange(e.target.value as GradingMode)}>
@@ -581,7 +581,7 @@ function ProbeEditor({
             {/* Kind-specific config */}
             <ProbeConfigFields form={form} setForm={setForm} />
           </div>
-          <div className="actions-row justify-end" style={{ marginTop: "0.75rem" }}>
+          <div className="actions-row justify-end mt-3">
             <Button type="button" onClick={() => setFormOpen(false)}>
               {t("probe.cancel")}
             </Button>
@@ -813,7 +813,7 @@ export function AssignmentDialog({
               <TabTrigger value="tests">
                 {t("probe.tab_title")}
                 {probes.length > 0 && (
-                  <span className="badge" style={{ marginLeft: "0.35rem" }}>
+                  <span className="badge ml-1.5">
                     {probes.length}
                   </span>
                 )}
@@ -919,7 +919,7 @@ export function AssignmentDialog({
           </Tabs>
 
           {/* Footer actions */}
-          <div className="actions-row field full justify-end" style={{ marginTop: "1rem" }}>
+          <div className="actions-row field full justify-end mt-4">
             <Button type="button" onClick={() => onOpenChange(false)}>
               {t("common.cancel")}
             </Button>

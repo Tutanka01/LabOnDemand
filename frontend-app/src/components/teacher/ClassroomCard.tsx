@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Archive, BookOpen, Edit2, GraduationCap, Users } from "lucide-react";
 import type { Classroom } from "../../types/api";
 import { deleteClassroom } from "../../lib/api";
-import { colorForId, shortDate } from "../../lib/format";
+import { shortDate } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import { Button, ConfirmDialog, showToast } from "../ui";
 
@@ -17,7 +17,6 @@ export function ClassroomCard({
 }) {
   const queryClient = useQueryClient();
   const { locale } = useI18n();
-  const color = colorForId(classroom.id);
 
   const archiveMutation = useMutation({
     mutationFn: () => deleteClassroom(classroom.id),
@@ -33,8 +32,7 @@ export function ClassroomCard({
 
   return (
     <article
-      className="card card-interactive teacher-classroom-card relative overflow-hidden"
-      style={{ borderLeft: `4px solid ${color}` }}
+      className="card card-interactive teacher-classroom-card"
       onClick={() => onSelect(classroom.id)}
       role="button"
       tabIndex={0}
@@ -45,24 +43,14 @@ export function ClassroomCard({
         }
       }}
     >
-      {/* Halo tinté en arrière-plan */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full opacity-60 blur-2xl"
-        style={{ background: `${color}22` }}
-      />
-
-      <div className="teacher-cls-head relative">
+      <div className="teacher-cls-head">
         <div className="flex min-w-0 items-center gap-3">
-          <span
-            className="runtime-mark h-11 w-11 flex-none"
-            style={{ background: `${color}1f`, color, borderColor: `${color}40` }}
-          >
-            <GraduationCap size={20} />
+          <span className="runtime-mark flex-none">
+            <GraduationCap size={18} />
           </span>
           <div className="min-w-0">
-            <strong className="block truncate text-[1.02rem]">{classroom.name}</strong>
-            <div className="muted truncate text-[0.83rem]">
+            <strong className="block truncate text-base">{classroom.name}</strong>
+            <div className="muted truncate text-xs">
               {classroom.description || (locale === "fr" ? "Aucune description" : "No description")}
             </div>
           </div>
@@ -90,32 +78,28 @@ export function ClassroomCard({
         </div>
       </div>
 
-      <div className="relative mt-1 grid grid-cols-2 gap-2.5">
-        <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-[0.74rem] font-medium uppercase tracking-wide text-[var(--muted)]">
+      <div className="mt-1 grid grid-cols-2 gap-4 border-t border-[var(--border)] pt-3">
+        <div>
+          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
             <Users size={13} /> {locale === "fr" ? "Étudiants" : "Students"}
           </div>
-          <strong className="text-[1.35rem] leading-none" style={{ fontFamily: "var(--font-display)" }}>
-            {students}
-          </strong>
+          <strong className="text-xl">{students}</strong>
         </div>
-        <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface-muted)] px-3 py-2.5">
-          <div className="flex items-center gap-1.5 text-[0.74rem] font-medium uppercase tracking-wide text-[var(--muted)]">
+        <div>
+          <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
             <BookOpen size={13} /> {locale === "fr" ? "Devoirs actifs" : "Active work"}
           </div>
-          <strong className="text-[1.35rem] leading-none" style={{ fontFamily: "var(--font-display)" }}>
-            {assignments}
-          </strong>
+          <strong className="text-xl">{assignments}</strong>
         </div>
       </div>
 
-      <div className="relative mt-1 flex items-center justify-between gap-3">
-        <span className="muted text-[0.78rem]">
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <span className="muted text-xs">
           {classroom.created_at
             ? `${locale === "fr" ? "Créée" : "Created"} ${shortDate(classroom.created_at)}`
             : ""}
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[0.82rem] font-semibold text-[var(--primary)]">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--primary)]">
           <Users size={14} /> {locale === "fr" ? "Gérer" : "Manage"}
         </span>
       </div>

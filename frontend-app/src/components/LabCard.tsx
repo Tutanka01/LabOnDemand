@@ -1,5 +1,4 @@
 import { ExternalLink, Info, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
-import { motion } from "motion/react";
 import type { Deployment } from "../types/api";
 import { ttl } from "../lib/format";
 import { RuntimeIcon } from "../lib/icons";
@@ -8,7 +7,6 @@ import { Button, ConfirmDialog, StatusBadge } from "./ui";
 
 export function LabCard({
   deployment,
-  index = 0,
   onOpen,
   onDetails,
   onDelete,
@@ -28,13 +26,7 @@ export function LabCard({
   const ready = !paused && Boolean(deployment.ready_replicas && deployment.ready_replicas > 0);
 
   return (
-    <motion.article
-      className="card lab-card"
-      layout
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.32, delay: Math.min(index, 8) * 0.05, ease: [0.16, 1, 0.3, 1] }}
-    >
+    <article className="card lab-card">
       <div className="lab-card-head">
         <div className="lab-title">
           <span className="runtime-mark">
@@ -42,7 +34,7 @@ export function LabCard({
           </span>
           <div className="min-w-0">
             <strong>{deployment.name}</strong>
-            <div className="muted code-text text-[0.78rem]">{deployment.namespace}</div>
+            <div className="muted code-text">{deployment.namespace}</div>
           </div>
         </div>
         <StatusBadge state={state} />
@@ -59,16 +51,16 @@ export function LabCard({
       <div className="hairline" />
 
       <div className="actions-row">
-        <Button variant="primary" disabled={!ready} onClick={() => onOpen(deployment)}>
-          <ExternalLink size={16} />
+        <Button disabled={!ready} onClick={() => onOpen(deployment)}>
+          <ExternalLink size={15} />
           {ready ? (locale === "fr" ? "Ouvrir" : "Open") : (locale === "fr" ? "En préparation" : "Preparing")}
         </Button>
         <Button onClick={() => onDetails(deployment)}>
-          <Info size={16} />
+          <Info size={15} />
           {locale === "fr" ? "Infos" : "Info"}
         </Button>
         <Button onClick={() => onLifecycle(deployment, paused ? "resume" : "pause")}>
-          {paused ? <PlayCircle size={16} /> : <PauseCircle size={16} />}
+          {paused ? <PlayCircle size={15} /> : <PauseCircle size={15} />}
           {paused ? (locale === "fr" ? "Reprendre" : "Resume") : (locale === "fr" ? "Pause" : "Pause")}
         </Button>
         <ConfirmDialog
@@ -78,13 +70,13 @@ export function LabCard({
           confirmLabel={locale === "fr" ? "Supprimer" : "Delete"}
           trigger={
             <Button variant="danger">
-              <Trash2 size={16} />
+              <Trash2 size={15} />
               {locale === "fr" ? "Supprimer" : "Delete"}
             </Button>
           }
           onConfirm={() => onDelete(deployment)}
         />
       </div>
-    </motion.article>
+    </article>
   );
 }

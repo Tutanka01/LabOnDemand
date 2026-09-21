@@ -12,13 +12,9 @@ import {
   Sun,
   Users,
   X,
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
 } from "lucide-react";
 import { useState, useEffect, ReactNode, type FormEvent } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { motion, AnimatePresence } from "motion/react";
 import { changePassword, getCurrentUser, logout, pingK8s, updateProfile } from "../lib/api";
 import { displayName, initials, roleLabel } from "../lib/format";
 import { useI18n } from "../lib/i18n";
@@ -133,14 +129,14 @@ export function AppShellLayout({
 
   // Connection status info
   let statusText = t("header.status_ok");
-  let statusIcon = <CheckCircle2 size={14} className="text-emerald-500" />;
+  let statusColor = "var(--success)";
 
   if (!apiStatus.data) {
     statusText = t("header.status_api_down");
-    statusIcon = <XCircle size={14} className="text-rose-500" />;
+    statusColor = "var(--danger)";
   } else if (!k8sStatus.data) {
     statusText = t("header.status_k8s_down");
-    statusIcon = <AlertCircle size={14} className="text-amber-500" />;
+    statusColor = "var(--warning)";
   }
 
   const isDark = theme === "dark";
@@ -159,47 +155,18 @@ export function AppShellLayout({
             const Icon = item.icon;
             const active = location.pathname === item.to;
             return (
-              <Link className={active ? "active relative" : ""} to={item.to} key={item.to} aria-current={active ? "page" : undefined}>
-                {active && (
-                  <motion.div
-                    layoutId="sidebar-active-indicator"
-                    className="sidebar-active"
-                    transition={{ type: "spring", stiffness: 380, damping: 30 }}
-                  />
-                )}
-                <Icon size={17} />
+              <Link className={active ? "active" : ""} to={item.to} key={item.to} aria-current={active ? "page" : undefined}>
+                <Icon size={16} />
                 {t(item.labelKey)}
               </Link>
             );
           })}
         </nav>
-        <div className="sidebar-footer">
-          <div className="flex items-center gap-2">
-            <span
-              className="relative flex h-2 w-2 flex-none"
-              aria-hidden="true"
-            >
-              <span
-                className="absolute inline-flex h-full w-full rounded-full opacity-70"
-                style={{
-                  background: apiStatus.data && k8sStatus.data ? "var(--success)" : !apiStatus.data ? "var(--danger)" : "var(--warning)",
-                  animation: apiStatus.data && k8sStatus.data ? "status-ping 1.8s cubic-bezier(0,0,0.2,1) infinite" : undefined,
-                }}
-              />
-              <span
-                className="relative inline-flex h-2 w-2 rounded-full"
-                style={{ background: apiStatus.data && k8sStatus.data ? "var(--success)" : !apiStatus.data ? "var(--danger)" : "var(--warning)" }}
-              />
-            </span>
-            <strong>{statusText}</strong>
-          </div>
-          <span>{locale === "fr" ? "Plateforme de labs Kubernetes" : "Kubernetes lab platform"}</span>
-        </div>
       </aside>
 
-      <main className="main flex flex-col min-h-screen">
+      <main className="main flex min-h-screen flex-col">
         <header className="topbar">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <form className="quick-nav-form" onSubmit={handleQuickNav}>
               <SearchBox
                 placeholder={t("header.quick_nav")}
@@ -207,49 +174,52 @@ export function AppShellLayout({
                 onChange={(event) => setQuickNav(event.target.value)}
               />
             </form>
-            
-            {/* Live Connection status dot in header */}
+
             <div className="status-pill" title={statusText}>
-              {statusIcon}
+              <span
+                className="h-2 w-2 flex-none rounded-full"
+                style={{ background: statusColor }}
+                aria-hidden="true"
+              />
               <span>{statusText}</span>
             </div>
           </div>
 
           <div className="top-actions">
-            <a className="icon-btn" href={documentationHref} target="_blank" rel="noreferrer" title="Documentation">
-              <BookOpen size={17} />
+            <a className="icon-btn" href={documentationHref} target="_blank" rel="noreferrer" title="Documentation" aria-label="Documentation">
+              <BookOpen size={16} />
             </a>
             <IconButton
               title={isDark ? (locale === "fr" ? "Activer le mode clair" : "Switch to light mode") : (locale === "fr" ? "Activer le mode sombre" : "Switch to dark mode")}
+              aria-label={isDark ? (locale === "fr" ? "Activer le mode clair" : "Switch to light mode") : (locale === "fr" ? "Activer le mode sombre" : "Switch to dark mode")}
               onClick={() => setTheme(isDark ? "light" : "dark")}
             >
-              {isDark ? <Sun size={17} /> : <Moon size={17} />}
+              {isDark ? <Sun size={16} /> : <Moon size={16} />}
             </IconButton>
             <IconButton
               title={locale === "fr" ? "Switch to English" : "Passer en Français"}
+              aria-label={locale === "fr" ? "Switch to English" : "Passer en Français"}
               onClick={() => setLocale(locale === "fr" ? "en" : "fr")}
             >
-              <Globe2 size={17} />
+              <Globe2 size={16} />
             </IconButton>
             <button className="user-chip user-chip-btn" id="username-display" onClick={() => setProfileOpen(true)}>
               <span
-                className="grid h-[30px] w-[30px] flex-none place-items-center rounded-full text-[0.72rem] font-bold text-white"
-                style={{
-                  background: "var(--gradient-brand)",
-                  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.3), var(--shadow-sm)",
-                }}
+                className="grid h-7 w-7 flex-none place-items-center rounded-full text-[var(--text-xs)] font-semibold"
+                style={{ background: "var(--primary)", color: "var(--primary-text)" }}
                 aria-hidden="true"
               >
                 {initials(user)}
               </span>
-              <span className="hidden sm:flex flex-col items-start leading-tight">
-                <strong className="text-[0.84rem] text-[var(--text)]">{displayName(user)}</strong>
-                <span className="text-[0.72rem]">{roleLabel(user.role, locale)}</span>
+              <span className="hidden flex-col items-start leading-tight sm:flex">
+                <strong className="text-[var(--text-xs)] font-semibold text-[var(--text)]">{displayName(user)}</strong>
+                <span className="text-[var(--text-xs)]">{roleLabel(user.role, locale)}</span>
               </span>
             </button>
             <IconButton
               id="logout-btn"
               title={t("header.logout")}
+              aria-label={t("header.logout")}
               onClick={async () => {
                 try {
                   await logout();
@@ -259,25 +229,15 @@ export function AppShellLayout({
                 }
               }}
             >
-              <LogOut size={17} />
+              <LogOut size={16} />
             </IconButton>
           </div>
         </header>
 
-        {/* Content area with Framer Motion slide-in animations */}
         <div className="content flex-1">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="flex flex-col gap-[22px] w-full"
-            >
-              <Outlet context={user} />
-            </motion.div>
-          </AnimatePresence>
+          <div className="flex w-full flex-col gap-6">
+            <Outlet context={user} />
+          </div>
         </div>
       </main>
 
@@ -374,7 +334,7 @@ function ProfileDialog({
 
           {user.auth_provider !== "oidc" ? (
             <form
-              className="form-grid mt-[18px] border-t border-[var(--border)] pt-[18px]"
+              className="form-grid mt-4 border-t border-[var(--border)] pt-4"
               onSubmit={(e) => {
                 e.preventDefault();
                 passwordMut.mutate();
@@ -412,17 +372,5 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
       </div>
       {actions ? <div className="actions-row">{actions}</div> : null}
     </div>
-  );
-}
-
-export function PlaceholderPanel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="panel">
-      <div className="section-head">
-        <h2>{title}</h2>
-        <Boxes size={18} className="muted" />
-      </div>
-      <p className="muted">{children}</p>
-    </section>
   );
 }

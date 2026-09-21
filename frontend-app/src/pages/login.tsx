@@ -79,12 +79,7 @@ export default function LoginPage() {
       <section className="auth-form-panel">
         <form className="card auth-card" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
           <motion.div {...stagger(0)} className="grid gap-1.5">
-            <h1
-              className="text-[1.7rem] font-bold leading-tight tracking-[-0.02em]"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
-              {t("login.title")}
-            </h1>
+            <h1>{t("login.title")}</h1>
             <p className="sub">{t("login.info")}</p>
           </motion.div>
 
@@ -113,7 +108,7 @@ export default function LoginPage() {
           </motion.div>
 
           <motion.div {...stagger(3)}>
-            <Button className="btn-login w-full justify-center" variant="primary" type="submit" disabled={mutation.isPending}>
+            <Button className="w-full justify-center" variant="primary" type="submit" disabled={mutation.isPending}>
               {mutation.isPending ? (locale === "fr" ? "Connexion..." : "Signing in...") : t("login.submit")}
               <ArrowRight size={16} />
             </Button>
@@ -121,7 +116,7 @@ export default function LoginPage() {
 
           {sso.data ? (
             <motion.div {...stagger(4)} className="grid gap-4">
-              <div className="flex items-center gap-3 text-[0.78rem] font-medium uppercase tracking-wide text-[var(--muted)]">
+              <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
                 <span className="hairline h-px flex-1" />
                 {locale === "fr" ? "ou" : "or"}
                 <span className="hairline h-px flex-1" />

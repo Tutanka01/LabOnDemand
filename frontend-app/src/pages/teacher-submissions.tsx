@@ -290,7 +290,7 @@ function CorrectionDialog({
                 style={{
                   padding: "12px 14px",
                   borderRadius: "var(--radius)",
-                  background: "var(--surface-soft)",
+                  background: "var(--surface-muted)",
                   border: "1px solid var(--border)",
                 }}
               >

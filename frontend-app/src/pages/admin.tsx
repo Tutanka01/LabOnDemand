@@ -15,7 +15,6 @@ import {
   PlayCircle,
   PauseCircle,
 } from "lucide-react";
-import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../components/AppShell";
 import {
@@ -243,19 +242,39 @@ export default function AdminPage() {
                       <td>{user.full_name || user.username}</td>
                       <td>{user.email || "N/A"}</td>
                       <td><span className="badge">{authProviderLabel(user.auth_provider)}</span></td>
-                      <td><span className="badge blue">{roleLabel(user.role, locale)}</span></td>
+                      <td><span className="badge">{roleLabel(user.role, locale)}</span></td>
                       <td><StatusBadge state={user.is_active ? "active" : "inactive"} /></td>
                       <td>{shortDate(user.created_at)}</td>
                       <td>
                         <div className="actions-row gap-1">
-                          <Button onClick={() => { setEditUser(user); setShowUserDialog(true); }}><Edit2 size={14} /></Button>
-                          <Button onClick={() => setQuotaUser(user)}><Sliders size={14} /></Button>
+                          <Button
+                            onClick={() => { setEditUser(user); setShowUserDialog(true); }}
+                            title={locale === "fr" ? "Modifier l'utilisateur" : "Edit user"}
+                            aria-label={locale === "fr" ? "Modifier l'utilisateur" : "Edit user"}
+                          >
+                            <Edit2 size={14} />
+                          </Button>
+                          <Button
+                            onClick={() => setQuotaUser(user)}
+                            title={locale === "fr" ? "Quotas de l'utilisateur" : "User quotas"}
+                            aria-label={locale === "fr" ? "Quotas de l'utilisateur" : "User quotas"}
+                          >
+                            <Sliders size={14} />
+                          </Button>
                           <ConfirmDialog
                             destructive
                             title={locale === "fr" ? "Supprimer l'utilisateur" : "Delete user"}
                             description={locale === "fr" ? `Supprimer ${user.username} définitivement ?` : `Delete ${user.username} permanently?`}
                             confirmLabel={t("common.delete")}
-                            trigger={<Button variant="danger"><Trash2 size={14} /></Button>}
+                            trigger={
+                              <Button
+                                variant="danger"
+                                title={locale === "fr" ? "Supprimer l'utilisateur" : "Delete user"}
+                                aria-label={locale === "fr" ? "Supprimer l'utilisateur" : "Delete user"}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            }
                             onConfirm={() => deleteUserMut.mutate(user.id)}
                           />
                         </div>
@@ -398,15 +417,8 @@ export default function AdminPage() {
               { label: locale === "fr" ? "Actifs" : "Active", value: fleetStats.active, icon: <Activity size={18} />, hint: locale === "fr" ? "En cours d'exécution" : "Currently running" },
               { label: locale === "fr" ? "En pause" : "Paused", value: fleetStats.paused, icon: <PauseCircle size={18} />, hint: locale === "fr" ? "Suspendus" : "Suspended" },
               { label: locale === "fr" ? "Expirés" : "Expired", value: fleetStats.expired, icon: <Activity size={18} />, hint: locale === "fr" ? "À nettoyer" : "To clean up" },
-            ].map((m, i) => (
-              <motion.div
-                key={m.label}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <MetricCard label={m.label} value={m.value} icon={m.icon} hint={m.hint} />
-              </motion.div>
+            ].map((m) => (
+              <MetricCard key={m.label} label={m.label} value={m.value} icon={m.icon} hint={m.hint} />
             ))}
           </section>
           <section className="panel mt-4">

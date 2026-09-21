@@ -148,7 +148,7 @@ export function LaunchDialog({
                   <RuntimeIcon type={deploymentType} />
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-[0.72rem] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                  <span className="block text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">
                     {deploymentType}
                   </span>
                   <span className="block truncate">Configurer {template.name}</span>

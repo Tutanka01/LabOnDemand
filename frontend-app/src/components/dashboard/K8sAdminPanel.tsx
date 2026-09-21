@@ -22,7 +22,7 @@ export function K8sAdminPanel({ admin }: { admin: boolean }) {
           >
             {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
             <Server size={16} className="text-[var(--primary)]" />
-            Ressources Kubernetes <span className="badge blue">admin</span>
+            Ressources Kubernetes <span className="badge">admin</span>
           </button>
         </h2>
         <Button onClick={() => {
@@ -36,7 +36,7 @@ export function K8sAdminPanel({ admin }: { admin: boolean }) {
         </Button>
       </div>
       {open ? (
-        <div className="grid gap-[18px]">
+        <div className="grid gap-4">
           <ClusterPingView />
           <NamespacesView />
           <PodsView />

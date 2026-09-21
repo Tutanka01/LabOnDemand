@@ -86,13 +86,13 @@ export function TerminalDialog({
         >
           <div className="flex shrink-0 items-center justify-between border-b border-[#2f3d3b] bg-[#0e1413] px-3.5 py-2.5">
             <Dialog.Title asChild>
-              <span className="flex items-center gap-2.5 font-mono text-[0.85rem] text-[#9fb0ad]">
+              <span className="flex items-center gap-2.5 font-mono text-sm text-[#9fb0ad]">
                 <span className="flex gap-1.5" aria-hidden="true">
                   <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f56]" />
                   <span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
                   <span className="h-2.5 w-2.5 rounded-full bg-[#27c93f]" />
                 </span>
-                <TermIcon size={15} className="text-[var(--primary-bright)]" />
+                <TermIcon size={15} className="text-[var(--primary)]" />
                 {namespace} / {pod}
               </span>
             </Dialog.Title>

@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { BookOpen, CalendarClock, ChevronRight, FlaskConical } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "motion/react";
 import { PageHeader } from "../components/AppShell";
 import { Badge, EmptyState, ErrorState, SkeletonCards } from "../components/ui";
 import { getStudentAssignments } from "../lib/api";
@@ -36,13 +35,6 @@ function dueProximity(
   return { tone, label: locale === "fr" ? `Dans ${days} j` : `In ${days}d` };
 }
 
-function cardTone(item: StudentAssignmentItem): string {
-  if (item.submission_status === "graded") return "tone-graded";
-  if (item.submission_status === "submitted") return item.is_late ? "tone-late" : "tone-submitted";
-  if (isPastDue(item.due_at)) return "tone-overdue";
-  return "tone-todo";
-}
-
 function StatusBadge({ item }: { item: StudentAssignmentItem }) {
   const { t } = useI18n();
   if (item.submission_status === "graded") return <Badge tone="green">{t("myassignments.status_graded")}</Badge>;
@@ -56,7 +48,7 @@ function StatusBadge({ item }: { item: StudentAssignmentItem }) {
   return <Badge>{t("myassignments.status_not_started")}</Badge>;
 }
 
-function AssignmentCard({ item, index }: { item: StudentAssignmentItem; index: number }) {
+function AssignmentCard({ item }: { item: StudentAssignmentItem }) {
   const { t, locale } = useI18n();
   // Due-date urgency is only meaningful while the work is still open.
   const proximity =
@@ -69,13 +61,8 @@ function AssignmentCard({ item, index }: { item: StudentAssignmentItem; index: n
         : "var(--muted)";
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.32, delay: Math.min(index, 8) * 0.05, ease: [0.22, 1, 0.36, 1] }}
-    >
-      <Link to={`/assignments/${item.id}`} className={`assignment-card ${cardTone(item)}`}>
-        <div className="assignment-card-head">
+    <Link to={`/assignments/${item.id}`} className="assignment-card">
+      <div className="assignment-card-head">
           <div className="flex flex-col gap-1 min-w-0">
             <span className="assignment-card-title">{item.title}</span>
             {item.classroom_name ? <span className="muted text-sm">{item.classroom_name}</span> : null}
@@ -112,17 +99,16 @@ function AssignmentCard({ item, index }: { item: StudentAssignmentItem; index: n
         </div>
 
         <div className="assignment-card-footer">
-          <span className="btn primary inline-flex items-center gap-1">
+          <span className="btn">
             {item.submission_status === "graded"
               ? t("myassignments.view_feedback")
               : item.submission_status === "submitted"
                 ? t("myassignments.view")
                 : t("myassignments.open")}
-            <ChevronRight size={16} />
+            <ChevronRight size={15} />
           </span>
         </div>
       </Link>
-    </motion.div>
   );
 }
 
@@ -154,7 +140,7 @@ export default function MyAssignmentsPage() {
         <EmptyState title={t("myassignments.empty")}>{t("myassignments.empty_hint")}</EmptyState>
       ) : null}
 
-      {(["todo", "submitted", "graded"] as const).map((key, gi) =>
+      {(["todo", "submitted", "graded"] as const).map((key) =>
         groups[key].length > 0 ? (
           <section className="assignment-group" key={key}>
             <h2 className="assignment-group-title">
@@ -162,8 +148,8 @@ export default function MyAssignmentsPage() {
               <span className="count-chip">{groups[key].length}</span>
             </h2>
             <div className="assignment-grid">
-              {groups[key].map((item, i) => (
-                <AssignmentCard key={item.id} item={item} index={gi * 2 + i} />
+              {groups[key].map((item) => (
+                <AssignmentCard key={item.id} item={item} />
               ))}
             </div>
           </section>

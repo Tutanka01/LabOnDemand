@@ -9,7 +9,6 @@ import {
   type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
-  type TextareaHTMLAttributes,
   useEffect,
   useState,
 } from "react";
@@ -50,36 +49,8 @@ export function Badge({
   return <span className={cn("badge", tone !== "default" && tone, className)} {...props} />;
 }
 
-export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={className} {...props} />;
-}
-
-export function Textarea({ className = "", ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={className} {...props} />;
-}
-
 export function ActionRow({ className = "", ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("actions-row", className)} {...props} />;
-}
-
-export function PageHeader({
-  title,
-  description,
-  actions,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className="page-title">
-      <div>
-        <h1>{title}</h1>
-        {description ? <p className="sub">{description}</p> : null}
-      </div>
-      {actions ? <ActionRow>{actions}</ActionRow> : null}
-    </div>
-  );
 }
 
 export function SearchBox(props: InputHTMLAttributes<HTMLInputElement>) {
@@ -171,7 +142,7 @@ export function LoadingState({ label = "Chargement" }: { label?: string }) {
   );
 }
 
-// ─── Skeletons (shimmer) ─────────────────────────────
+// ─── Skeletons ───────────────────────────────────────
 
 export function Skeleton({ className = "", style }: { className?: string; style?: CSSProperties }) {
   return <div className={cn("skeleton", className)} style={style} aria-hidden="true" />;
@@ -244,7 +215,7 @@ export function ConfirmDialog({
             </Dialog.Close>
           </div>
           <Dialog.Description className="muted">{description}</Dialog.Description>
-          <ActionRow className="mt-[18px] justify-end">
+          <ActionRow className="mt-4 justify-end">
             <Dialog.Close asChild>
               <Button>{t("common.cancel")}</Button>
             </Dialog.Close>

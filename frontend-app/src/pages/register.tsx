@@ -46,20 +46,14 @@ export default function RegisterPage() {
         <div className="card auth-card text-center">
           <motion.div
             {...stagger(0)}
-            className="mx-auto grid h-14 w-14 place-items-center rounded-2xl text-white"
-            style={{
-              background: "var(--gradient-brand)",
-              boxShadow: "0 10px 28px -10px color-mix(in srgb, var(--primary) 75%, transparent)"
-            }}
+            className="mx-auto grid h-14 w-14 place-items-center rounded-[var(--radius)]"
+            style={{ background: "var(--primary)", color: "var(--primary-text)" }}
           >
-            <UserPlus size={26} />
+            <UserPlus size={24} />
           </motion.div>
 
           <motion.div {...stagger(1)} className="grid gap-1.5">
-            <h1
-              className="text-[1.55rem] font-bold leading-tight tracking-[-0.02em]"
-              style={{ fontFamily: "var(--font-display)" }}
-            >
+            <h1>
               {locale === "fr" ? "Inscription indisponible" : "Registration unavailable"}
             </h1>
             <p className="sub">

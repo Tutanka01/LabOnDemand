@@ -111,15 +111,12 @@ export function AuditLogViewer() {
               const pct = Math.max(6, (count / Math.max(max, 1)) * 100);
               return (
                 <div className="group grid gap-2 text-center" key={day} title={`${day}: ${count}`}>
-                  <span
-                    className="text-[0.78rem] font-bold leading-none text-[var(--text-soft)]"
-                    style={{ fontFamily: "var(--font-display)" }}
-                  >
+                  <span className="text-xs font-bold leading-none text-[var(--text-soft)]">
                     {count}
                   </span>
-                  <div className="meter-track flex h-[96px] items-end rounded-[10px]">
+                  <div className="meter-track flex h-[96px] items-end rounded-[var(--radius)]">
                     <div
-                      className="meter-fill w-full rounded-[10px] transition-[height] duration-500"
+                      className="meter-fill w-full rounded-[var(--radius)] transition-[height] duration-500"
                       style={{ height: `${pct}%` }}
                     />
                   </div>
