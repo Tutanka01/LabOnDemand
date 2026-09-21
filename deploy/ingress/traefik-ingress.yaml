@@ -1,0 +1,176 @@
+# =============================================================================
+#  LabOnDemand — Contrôleur Ingress Traefik (K3s sans ServiceLB ni MetalLB)
+# =============================================================================
+#
+#  Objectif : exposer les labs sur les ports standard 80/443 au lieu des
+#  NodePorts (30000-32767), souvent filtrés par le réseau de l'université.
+#
+#  Caractéristiques :
+#    - DaemonSet : un pod Traefik par nœud, en hostNetwork (écoute directe
+#      sur le port 80/443 de chaque nœud), donc aucune dépendance à
+#      MetalLB, ServiceLB (klipper) ou à un LoadBalancer externe.
+#    - IngressClass "traefik" : à référencer dans .env via
+#      INGRESS_CLASS_NAME=traefik
+#    - Aucun CRD, aucun webhook d'admission : uniquement des ressources
+#      Kubernetes natives.
+#
+#  Application :
+#      kubectl apply -f deploy/ingress/traefik-ingress.yaml
+#
+#  Suppression :
+#      kubectl delete -f deploy/ingress/traefik-ingress.yaml
+#
+#  Documentation complète : documentation/ingress-labs.md
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/part-of: labondemand
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  namespace: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: labondemand-traefik
+  labels:
+    app.kubernetes.io/name: traefik
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: labondemand-traefik
+  labels:
+    app.kubernetes.io/name: traefik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: labondemand-traefik
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: traefik
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: traefik
+spec:
+  controller: traefik.io/ingress-controller
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: traefik
+  namespace: traefik
+  labels:
+    app: traefik
+    app.kubernetes.io/name: traefik
+spec:
+  selector:
+    matchLabels:
+      app: traefik
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: traefik
+        app.kubernetes.io/name: traefik
+    spec:
+      serviceAccountName: traefik
+      # hostNetwork : Traefik écoute directement sur les ports 80/443 du nœud.
+      # C'est ce qui remplace ServiceLB/MetalLB (désactivés sur ce cluster K3s).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # K3s : autoriser aussi le nœud control-plane
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: traefik
+          image: traefik:v3.7.13
+          args:
+            - --global.checknewversion=false
+            - --global.sendanonymoususage=false
+            - --log.level=INFO
+            - --accesslog=true
+            - --accesslog.format=json
+            # Ports d'écoute : HTTP (80) et HTTPS (443, utilisé seulement si un
+            # secret TLS est configuré côté LabOnDemand via INGRESS_TLS_SECRET).
+            - --entrypoints.web.address=:80
+            - --entrypoints.websecure.address=:443
+            # Sonde de santé locale (127.0.0.1, non exposée sur le réseau)
+            - --entrypoints.ping.address=127.0.0.1:8082
+            - --ping.entrypoint=ping
+            # Fournisseur Ingress natif, limité à l'IngressClass "traefik"
+            - --providers.kubernetesIngress=true
+            - --providers.kubernetesIngress.ingressClass=traefik
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          # hostNetwork : la sonde doit viser explicitement la loopback du nœud
+          # (sinon le kubelet interroge l'IP du nœud, où le ping n'écoute pas).
+          livenessProbe:
+            httpGet:
+              path: /ping
+              host: 127.0.0.1
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ping
+              host: 127.0.0.1
+              port: 8082
+            initialDelaySeconds: 3
+            periodSeconds: 5

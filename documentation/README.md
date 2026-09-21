@@ -45,6 +45,8 @@ les guides spécialisés selon votre profil.
    ```
 
 > Besoin de préparer un cluster k3s + Ingress + MetalLB ? Voir `platform-setup.md`.
+> Pour exposer les labs en ports 80/443 sur un cluster k3s sans MetalLB
+> (cas du cluster de production), voir `ingress-labs.md`.
 
 ---
 
@@ -55,6 +57,7 @@ les guides spécialisés selon votre profil.
 | Document | Contenu |
 |----------|---------|
 | [`platform-setup.md`](platform-setup.md) | k3s, ingress-nginx, MetalLB, DNS, TLS |
+| [`ingress-labs.md`](ingress-labs.md) | Accès aux labs en ports 80/443 via Traefik (sans MetalLB/ServiceLB), DNS sslip.io, dépannage |
 | [`development-setup.md`](development-setup.md) | Variables d'environnement, exécution locale, migrations, logs |
 | [`troubleshooting.md`](troubleshooting.md) | Problèmes courants et solutions |
 

@@ -11,6 +11,12 @@ read_when: |
 
 Ce guide décrit la marche recommandée pour préparer un cluster k3s propre à LabOnDemand : installation du cluster, déploiement d`ingress-nginx`, option MetalLB, DNS wildcard et certificats TLS.
 
+> **Cas du cluster actuel** : il est installé avec `--disable servicelb --disable traefik`
+> et sans MetalLB, donc aucun `LoadBalancer` n'est possible. Pour exposer les labs
+> en ports 80/443 dans ce cas, utilisez le contrôleur Traefik en DaemonSet décrit
+> dans [`ingress-labs.md`](ingress-labs.md) (aucune dépendance à MetalLB/ServiceLB).
+> Le reste de ce guide reste la référence pour une installation ingress-nginx + MetalLB.
+
 ## 1. Préparer le cluster k3s
 
 1. Installer k3s **sans Traefik** (nous utilisons `ingress-nginx`).
