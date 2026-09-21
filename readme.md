@@ -33,7 +33,7 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 - **SSO / OIDC** : intégration avec les IdP universitaires (CAS, Keycloak, etc.)
 - **Sessions Redis** distribuées — mot de passe, réseau interne, cookie HttpOnly, SameSite, Secure
 - **Logging structuré JSON** avec rotation (`logs/app.log`, `access.log`, `audit.log`)
-- **Volumes persistants** : PVC automatiques avec fallback `emptyDir` si pas de StorageClass
+- **Volumes persistants** : PVC automatiques (VS Code, Jupyter, bureau VNC) avec fallback `emptyDir` si pas de StorageClass
 - **Templates dynamiques** : bibliothèque de déploiements configurable depuis l'interface admin
 - **UI bilingue** : français / anglais (i18n intégré)
 

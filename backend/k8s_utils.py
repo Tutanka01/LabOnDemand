@@ -164,6 +164,10 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
         # Baselines différentes selon le rôle (plus strict pour les étudiants)
         if role == "student":
             # Preset "standard" étudiant: 2 apps mono-pod + 1 stack WP (2 pods) + marge
+            # Stockage: couvrir 2 PVC de LAB_PVC_SIZE (VS Code, Jupyter, bureau VNC).
+            from .config import settings
+
+            storage_quota_mi = int(parse_memory_to_mi(settings.LAB_PVC_SIZE) * 2)
             rq_hard = {
                 "pods": "6",
                 "requests.cpu": "2500m",
@@ -173,9 +177,9 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
                 # Limites d'objets (quotas par rôle)
                 "count/deployments.apps": "8",
                 "count/services": "10",
-                # Persistance légère (optionnelle): 2 PVC, 2Gi de stockage
+                # Persistance légère (optionnelle): 2 PVC de LAB_PVC_SIZE
                 "count/persistentvolumeclaims": "2",
-                "requests.storage": "2Gi",
+                "requests.storage": f"{storage_quota_mi}Mi",
             }
             lr_default = {"cpu": "500m", "memory": "512Mi"}
             lr_request = {"cpu": "100m", "memory": "128Mi"}

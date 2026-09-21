@@ -72,7 +72,8 @@ exit
 
 ## 3. Intégration LabOnDemand
 
-- Lorsqu'un utilisateur crée un VS Code, Jupyter ou LAMP, le backend tente de provisionner un PVC (`managed-by=labondemand`, `user-id=<id>`). Faute de StorageClass par défaut, un `emptyDir` est utilisé.
+- Types à volume persistant : **VS Code**, **Jupyter** et le **bureau VNC (NetBeans)**. Pour le bureau, tout le home (`/home/lod-user`) est monté sur le PVC ; un conteneur d'init copie le profil par défaut de l'image au premier démarrage (config XFCE, fond d'écran, raccourcis) sans écraser les fichiers de l'élève.
+- Le backend tente de provisionner un PVC de `LAB_PVC_SIZE` (défaut `5Gi`, réglable dans `.env`) avec les labels `managed-by=labondemand`, `user-id=<id>`. Faute de StorageClass par défaut, un `emptyDir` est utilisé (pas de persistance).
 - La carte « Vos volumes persistants » (dashboard) liste les PVC labellisés. Rafraîchir la carte pour détecter les volumes existants.
 - Pour réutiliser un volume, choisir le PVC dans le formulaire de création (dropdown) ou laisser vide pour en créer un nouveau.
 - Suppression :

@@ -78,6 +78,9 @@ class Settings:
     ).lower() in ["true", "1", "yes"]
     # Préfixe des namespaces utilisateur (un namespace par utilisateur)
     USER_NAMESPACE_PREFIX = os.getenv("USER_NAMESPACE_PREFIX", "labondemand-user")
+    # Taille du volume persistant créé pour les labs qui conservent les données
+    # (VS Code, Jupyter, bureau VNC). Les PVC existants ne sont pas redimensionnés.
+    LAB_PVC_SIZE = os.getenv("LAB_PVC_SIZE", "5Gi").strip() or "5Gi"
 
     # Ingress Controller
     INGRESS_ENABLED = os.getenv("INGRESS_ENABLED", "false").lower() in [

@@ -188,6 +188,101 @@ async def test_create_netbeans_deployment_generates_vnc_secret(
     assert body["credentials"]["netbeans"]["password"] == secret_manifest["stringData"]["VNC_PW"]
 
 
+async def test_create_netbeans_deployment_persists_home_volume(
+    student_client, mock_k8s, db
+):
+    """Le bureau VNC monte son home sur un PVC et copie le profil par défaut."""
+    from backend.config import settings
+    from backend.models import RuntimeConfig
+
+    db.add(
+        RuntimeConfig(
+            key="netbeans",
+            default_image="tutanka01/labondemand:netbeansjava",
+            target_port=6901,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            active=True,
+        )
+    )
+    db.commit()
+
+    r = await student_client.post(
+        "/api/v1/k8s/deployments",
+        params={"name": "desktop", "image": "ignored", "deployment_type": "netbeans"},
+    )
+    assert r.status_code in (200, 201)
+
+    pvc_manifest = mock_k8s["core"].create_namespaced_persistent_volume_claim.call_args.args[1]
+    assert pvc_manifest["metadata"]["name"] == "desktop-pvc"
+    assert pvc_manifest["spec"]["resources"]["requests"]["storage"] == settings.LAB_PVC_SIZE
+
+    pod_spec = mock_k8s["apps"].create_namespaced_deployment.call_args.args[1][
+        "spec"
+    ]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    assert {"name": "data", "mountPath": "/home/lod-user"} in container["volumeMounts"]
+    assert pod_spec["volumes"] == [
+        {"name": "data", "persistentVolumeClaim": {"claimName": "desktop-pvc"}}
+    ]
+    assert pod_spec["securityContext"]["fsGroup"] == 1000
+
+    seed = pod_spec["initContainers"][0]
+    assert seed["name"] == "seed-home"
+    assert seed["image"] == "tutanka01/labondemand:netbeansjava"
+    assert {"name": "data", "mountPath": "/mnt/home"} in seed["volumeMounts"]
+    assert "labondemand-seeded" in seed["args"][0]
+
+
+async def test_create_netbeans_deployment_reuses_existing_pvc(
+    student_client, mock_k8s, db, student_user
+):
+    """Relancer un bureau avec un volume existant réutilise le PVC (travail conservé)."""
+    from backend.models import RuntimeConfig
+
+    db.add(
+        RuntimeConfig(
+            key="netbeans",
+            default_image="tutanka01/labondemand:netbeansjava",
+            target_port=6901,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            active=True,
+        )
+    )
+    db.commit()
+
+    pvc = MagicMock()
+    pvc.metadata.name = "mon-bureau"
+    pvc.metadata.labels = {
+        "managed-by": "labondemand",
+        "user-id": str(student_user.id),
+    }
+    mock_k8s["core"].read_namespaced_persistent_volume_claim.return_value = pvc
+
+    r = await student_client.post(
+        "/api/v1/k8s/deployments",
+        params={
+            "name": "desktop2",
+            "image": "ignored",
+            "deployment_type": "netbeans",
+            "existing_pvc_name": "mon-bureau",
+        },
+    )
+    assert r.status_code in (200, 201)
+    mock_k8s["core"].create_namespaced_persistent_volume_claim.assert_not_called()
+
+    pod_spec = mock_k8s["apps"].create_namespaced_deployment.call_args.args[1][
+        "spec"
+    ]["template"]["spec"]
+    assert pod_spec["volumes"] == [
+        {"name": "data", "persistentVolumeClaim": {"claimName": "mon-bureau"}}
+    ]
+    assert {"name": "data", "mountPath": "/home/lod-user"} in pod_spec["containers"][
+        0
+    ]["volumeMounts"]
+
+
 async def test_get_vscode_credentials_returns_code_server_password(
     student_client, mock_k8s, student_user
 ):
@@ -396,3 +491,50 @@ async def test_deployment_details_not_found(admin_client, mock_k8s):
         "/api/v1/k8s/deployments/labondemand-admin/nonexistent/details"
     )
     assert r.status_code == 404
+
+
+async def test_deployment_details_exposes_novnc_endpoint(
+    student_client, mock_k8s, student_user
+):
+    """Le port de service nommé "novnc" est exposé comme novnc_endpoint."""
+    dep = MagicMock()
+    dep.metadata.name = "desktop"
+    dep.metadata.namespace = f"labondemand-user-{student_user.id}"
+    dep.metadata.labels = {
+        "managed-by": "labondemand",
+        "user-id": str(student_user.id),
+        "user-role": "student",
+        "app-type": "netbeans",
+        "app": "desktop",
+    }
+    dep.metadata.annotations = {}
+    dep.spec.replicas = 1
+    dep_container = MagicMock()
+    dep_container.image = "tutanka01/labondemand:netbeansjava"
+    dep.spec.template.spec.containers = [dep_container]
+    dep.status.ready_replicas = 1
+    dep.status.available_replicas = 1
+    mock_k8s["apps"].read_namespaced_deployment.return_value = dep
+
+    port = MagicMock()
+    port.name = "novnc"
+    port.port = 6901
+    port.target_port = 6901
+    port.protocol = "TCP"
+    port.node_port = 31001
+    service = MagicMock()
+    service.metadata.name = "desktop-service"
+    service.metadata.labels = {"app": "desktop"}
+    service.spec.type = "NodePort"
+    service.spec.cluster_ip = "10.0.0.10"
+    service.spec.ports = [port]
+    service.spec.selector = {"app": "desktop"}
+    mock_k8s["core"].list_namespaced_service.return_value = MagicMock(items=[service])
+
+    namespace = f"labondemand-user-{student_user.id}"
+    r = await student_client.get(
+        f"/api/v1/k8s/deployments/{namespace}/desktop/details"
+    )
+
+    assert r.status_code == 200
+    assert r.json()["novnc_endpoint"].endswith(":31001")

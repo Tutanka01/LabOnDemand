@@ -2021,8 +2021,14 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 args=container_args,
             )
 
-            # Persistance best-effort pour VSCode/Jupyter
-            if deployment_type in {"vscode", "jupyter"}:
+            # Persistance best-effort du home/workspace (PVC, fallback emptyDir)
+            persistent_mount = {
+                "vscode": "/home/coder/project",
+                "jupyter": "/home/jovyan/work",
+                # Bureau VNC: tout le home de l'utilisateur (projets, config XFCE…)
+                "netbeans": "/home/lod-user",
+            }.get(deployment_type)
+            if persistent_mount:
                 pvc_name = f"{name}-pvc"
                 use_pvc = True
                 pvc_obj: Optional[client.V1PersistentVolumeClaim] = None
@@ -2041,7 +2047,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         "metadata": {"name": pvc_name, "labels": pvc_labels},
                         "spec": {
                             "accessModes": ["ReadWriteOnce"],
-                            "resources": {"requests": {"storage": "2Gi"}},
+                            "resources": {
+                                "requests": {"storage": settings.LAB_PVC_SIZE}
+                            },
                         },
                     }
                     try:
@@ -2064,6 +2072,18 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             or "forbidden" in msg
                         ):
                             use_pvc = False
+                            logger.warning(
+                                "deployment_pvc_fallback_empty_dir",
+                                extra={
+                                    "extra_fields": {
+                                        "pvc_name": pvc_name,
+                                        "namespace": effective_namespace,
+                                        "deployment": name,
+                                        "status": e.status,
+                                        "reason": getattr(e, "reason", None),
+                                    }
+                                },
+                            )
                         else:
                             raise
 
@@ -2107,12 +2127,8 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                                 },
                             )
 
-                # Monter sur chemin de travail usuel
-                mount_path = (
-                    "/home/jovyan/work"
-                    if deployment_type == "jupyter"
-                    else "/home/coder/project"
-                )
+                # Monter sur le chemin de travail usuel
+                mount_path = persistent_mount
                 pod_spec = deployment_manifest["spec"]["template"]["spec"]
                 # Pod security context pour permissions
                 pod_spec["securityContext"] = {
@@ -2131,6 +2147,26 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     if use_pvc
                     else [{"name": "data", "emptyDir": {}}]
                 )
+                # Bureau VNC : le home est monté sur le volume. Copier le profil
+                # par défaut de l'image au premier démarrage (config XFCE, fond
+                # d'écran, raccourcis) sans écraser les fichiers de l'élève.
+                if deployment_type == "netbeans":
+                    pod_spec["initContainers"] = [
+                        {
+                            "name": "seed-home",
+                            "image": config["image"],
+                            "command": ["/bin/sh", "-c"],
+                            "args": [
+                                "test -f /mnt/home/.labondemand-seeded || "
+                                "(cp -R /home/lod-user/. /mnt/home/ && "
+                                "touch /mnt/home/.labondemand-seeded) || true"
+                            ],
+                            "resources": container.get("resources", {}),
+                            "volumeMounts": [
+                                {"name": "data", "mountPath": "/mnt/home"}
+                            ],
+                        }
+                    ]
 
             self.apps_v1.create_namespaced_deployment(
                 effective_namespace, deployment_manifest

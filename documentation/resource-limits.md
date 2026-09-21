@@ -39,11 +39,11 @@ Source : `backend/k8s_utils.py` → `ensure_namespace_baseline()`
 
 ### ResourceQuota "baseline-quota"
 
-| Rôle    | Pods | CPU request | RAM request | CPU limit | RAM limit | Deployments | Services | PVC | Stockage |
-|---------|------|-------------|-------------|-----------|-----------|-------------|----------|-----|----------|
-| student | 6    | 2500m       | 6 Gi        | 5         | 8 Gi      | 8           | 10       | 2   | 2 Gi     |
-| teacher | 20   | 4000m       | 8 Gi        | 8         | 16 Gi     | 20          | 25       | —   | —        |
-| admin   | 200  | 64000m      | 128 Gi      | 128       | 256 Gi    | 200         | 200      | 100 | 2 Ti     |
+| Rôle    | Pods | CPU request | RAM request | CPU limit | RAM limit | Deployments | Services | PVC | Stockage              |
+|---------|------|-------------|-------------|-----------|-----------|-------------|----------|-----|-----------------------|
+| student | 6    | 2500m       | 6 Gi        | 5         | 8 Gi      | 8           | 10       | 2   | 2 × `LAB_PVC_SIZE`    |
+| teacher | 20   | 4000m       | 8 Gi        | 8         | 16 Gi     | 20          | 25       | —   | —                     |
+| admin   | 200  | 64000m      | 128 Gi      | 128       | 256 Gi    | 200         | 200      | 100 | 2 Ti                  |
 
 ### LimitRange "baseline-limits" (valeurs par défaut par conteneur)
 
@@ -149,7 +149,7 @@ reflèteront les valeurs de la dérogation et non celles du rôle par défaut.
 
 ## 6. Stockage et PVC
 
-- Les étudiants sont limités à **2 PVC** et **2 Gi** de stockage total (ResourceQuota)
+- Les étudiants sont limités à **2 PVC** et **2 × `LAB_PVC_SIZE`** de stockage total (ResourceQuota, soit 10 Gi par défaut avec des volumes de 5 Gi)
 - Les enseignants n'ont pas de limite de stockage dans la configuration par défaut
 - Les admins peuvent avoir jusqu'à **100 PVC** et **2 Ti**
 

@@ -591,6 +591,21 @@ async def get_deployment_details(
 
         access_urls.extend(ingress_access_entries)
 
+        # Endpoint NoVNC: URL du service qui expose un port nommé "novnc"
+        novnc_service_names = {
+            svc["name"]
+            for svc in service_data
+            if any(port.get("name") == "novnc" for port in svc.get("ports", []))
+        }
+        novnc_endpoint = next(
+            (
+                url["url"]
+                for url in access_urls
+                if url.get("service") in novnc_service_names
+            ),
+            None,
+        )
+
         return {
             "deployment": {
                 "name": deployment.metadata.name,
@@ -626,6 +641,7 @@ async def get_deployment_details(
             "services": service_data,
             "ingresses": ingress_entries,
             "access_urls": access_urls,
+            "novnc_endpoint": novnc_endpoint,
         }
 
     except HTTPException:
