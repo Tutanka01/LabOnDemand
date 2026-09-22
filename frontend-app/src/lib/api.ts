@@ -29,6 +29,9 @@ import type {
   Template,
   User,
   UserListParams,
+  VolumeFileEntry,
+  VolumeFileList,
+  VolumeTarget,
 } from "../types/api";
 
 export class ApiError extends Error {
@@ -47,7 +50,7 @@ function redirectToLoginOnUnauthorized(path: string, status: number): void {
   window.location.href = "/login";
 }
 
-export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const response = await fetch(path, {
     credentials: "include",
     ...init,
@@ -57,12 +60,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     },
   });
 
-  const contentType = response.headers.get("content-type") || "";
-  const payload = contentType.includes("application/json")
-    ? await response.json().catch(() => null)
-    : await response.text();
-
   if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json")
+      ? await response.json().catch(() => null)
+      : await response.text();
+
     redirectToLoginOnUnauthorized(path, response.status);
 
     const detail =
@@ -77,7 +80,25 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     );
   }
 
+  return response;
+}
+
+export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await request(path, init);
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json")
+    ? await response.json().catch(() => null)
+    : await response.text();
   return payload as T;
+}
+
+/** Variante texte brut (aperçus de fichiers) : renvoie aussi les en-têtes. */
+export async function apiFetchText(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ text: string; headers: Headers }> {
+  const response = await request(path, init);
+  return { text: await response.text(), headers: response.headers };
 }
 
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
@@ -301,6 +322,88 @@ export async function getAllPvcs(): Promise<PvcInfo[]> {
 
 export async function deletePvc(name: string, force = false): Promise<void> {
   await apiFetch(`/api/v1/k8s/pvcs/${encodeURIComponent(name)}${force ? "?force=true" : ""}`, { method: "DELETE" });
+}
+
+// ─── Explorateur de volumes persistants ─────────────────
+
+function volumeQuery(
+  target: VolumeTarget,
+  extra: Record<string, string | number | boolean | undefined | null> = {},
+): string {
+  return buildQuery({
+    namespace: target.namespace,
+    pod: target.pod,
+    pvc: target.pvc,
+    container: target.container,
+    ...extra,
+  });
+}
+
+export async function listVolumeFiles(
+  target: VolumeTarget,
+  path?: string,
+  includeHidden = false,
+): Promise<VolumeFileList> {
+  return apiFetch<VolumeFileList>(
+    `/api/v1/k8s/files${volumeQuery(target, { path, include_hidden: includeHidden })}`,
+  );
+}
+
+export function volumeDownloadUrl(target: VolumeTarget, path: string): string {
+  return `/api/v1/k8s/files/download${volumeQuery(target, { path })}`;
+}
+
+export function volumePreviewUrl(target: VolumeTarget, path: string): string {
+  return `/api/v1/k8s/files/preview${volumeQuery(target, { path })}`;
+}
+
+export async function fetchVolumePreviewText(
+  target: VolumeTarget,
+  path: string,
+): Promise<{ text: string; truncated: boolean }> {
+  const { text, headers } = await apiFetchText(volumePreviewUrl(target, path));
+  return { text, truncated: headers.get("X-LabOnDemand-Truncated") === "1" };
+}
+
+export async function uploadVolumeFile(
+  target: VolumeTarget,
+  path: string,
+  file: File,
+): Promise<VolumeFileEntry> {
+  const form = new FormData();
+  form.append("namespace", target.namespace);
+  if (target.pod) form.append("pod", target.pod);
+  if (target.pvc) form.append("pvc", target.pvc);
+  if (target.container) form.append("container", target.container);
+  form.append("path", path);
+  form.append("file", file);
+  return apiUpload<VolumeFileEntry>("/api/v1/k8s/files/upload", form);
+}
+
+export async function createVolumeDirectory(
+  target: VolumeTarget,
+  path: string,
+  name: string,
+): Promise<VolumeFileEntry> {
+  return apiFetch<VolumeFileEntry>("/api/v1/k8s/files/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ ...target, path, name }),
+  });
+}
+
+export async function renameVolumeEntry(
+  target: VolumeTarget,
+  path: string,
+  newName: string,
+): Promise<VolumeFileEntry> {
+  return apiFetch<VolumeFileEntry>("/api/v1/k8s/files/rename", {
+    method: "POST",
+    body: JSON.stringify({ ...target, path, new_name: newName }),
+  });
+}
+
+export async function deleteVolumeEntry(target: VolumeTarget, path: string): Promise<void> {
+  await apiFetch(`/api/v1/k8s/files${volumeQuery(target, { path })}`, { method: "DELETE" });
 }
 
 // ─── Templates ──────────────────────────────────────────

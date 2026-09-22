@@ -89,7 +89,7 @@ les guides spécialisés selon votre profil.
 | Document | Contenu |
 |----------|---------|
 | [`resource-limits.md`](resource-limits.md) | ResourceQuota K8s, limites applicatives, dérogations `UserQuotaOverride` |
-| [`storage.md`](storage.md) | PVC, StorageClass, intégration UI |
+| [`storage.md`](storage.md) | PVC, StorageClass, intégration UI, explorateur de fichiers |
 
 ### Administration
 

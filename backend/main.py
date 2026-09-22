@@ -204,6 +204,7 @@ async def bootstrap():
 from .auth_router import router as auth_router
 from .routers import (
     deployments_router,
+    files_router,
     storage_router,
     terminal_router,
     templates_router,
@@ -218,6 +219,7 @@ from .routers import (
 
 app.include_router(auth_router)
 app.include_router(deployments_router)
+app.include_router(files_router)
 app.include_router(storage_router)
 app.include_router(terminal_router)
 app.include_router(templates_router)

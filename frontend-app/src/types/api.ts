@@ -159,6 +159,30 @@ export interface PvcInfo {
   labels?: Record<string, string>;
 }
 
+export interface VolumeFileEntry {
+  name: string;
+  path: string;
+  type: "dir" | "file" | "link" | "other";
+  size?: number | null;
+  modified_at?: number | null;
+  preview?: "text" | "image" | null;
+}
+
+export interface VolumeFileList {
+  root: string;
+  path: string;
+  parent?: string | null;
+  entries: VolumeFileEntry[];
+}
+
+/** Cible d'un volume : un pod en cours, ou un PVC (le backend retrouve le pod). */
+export interface VolumeTarget {
+  namespace: string;
+  pod?: string;
+  pvc?: string;
+  container?: string;
+}
+
 export interface ResourcePreset {
   label: string;
   request: string;

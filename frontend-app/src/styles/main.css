@@ -1295,6 +1295,272 @@
     @apply mt-2 flex flex-col gap-2;
   }
 
+  /* ── Explorateur de volumes ───────────────────────────── */
+
+  .volume-browser {
+    @apply flex w-[min(1040px,calc(100vw-32px))] flex-col overflow-hidden p-0;
+    height: min(720px, calc(100vh - 32px));
+    max-height: min(720px, calc(100vh - 32px));
+  }
+
+  .vb-head {
+    @apply flex items-start justify-between gap-3 border-b px-5 py-4;
+    border-color: var(--border);
+  }
+
+  .vb-head h2 {
+    font-size: var(--text-base);
+  }
+
+  .vb-path {
+    @apply flex items-center gap-2 border-b px-5 py-2.5;
+    border-color: var(--border);
+  }
+
+  .vb-crumbs {
+    @apply flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto;
+  }
+
+  .vb-crumb {
+    @apply flex flex-none items-center gap-0.5;
+  }
+
+  .vb-crumb > span {
+    color: var(--muted);
+  }
+
+  .vb-crumb button {
+    @apply cursor-pointer rounded-[var(--radius-sm)] border-0 bg-transparent px-1.5 py-0.5 text-[var(--text-sm)] transition-colors;
+    color: var(--muted);
+    transition-duration: var(--dur-fast);
+  }
+
+  .vb-crumb button:hover:not(:disabled) {
+    background: var(--surface-muted);
+    color: var(--text);
+  }
+
+  .vb-crumb button.current {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .vb-crumb button:disabled {
+    cursor: default;
+  }
+
+  .vb-count {
+    @apply flex-none text-[var(--text-xs)];
+    color: var(--muted);
+  }
+
+  .icon-btn[aria-pressed="true"] {
+    border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+    color: var(--primary);
+  }
+
+  .vb-toolbar {
+    @apply flex items-center gap-2 border-b px-5 py-3;
+    border-color: var(--border);
+  }
+
+  .vb-notice {
+    @apply flex items-center gap-2.5 border-b px-5 py-2.5 text-[var(--text-sm)];
+    border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+    background: color-mix(in srgb, var(--warning) 7%, var(--surface));
+    color: var(--text);
+  }
+
+  .vb-notice > svg {
+    flex: none;
+    color: var(--warning);
+  }
+
+  .vb-notice > span {
+    @apply min-w-0 flex-1;
+  }
+
+  .vb-notice .meter-track {
+    @apply w-[160px] flex-none;
+  }
+
+  .vb-notice.inline {
+    @apply mx-3.5 mb-2.5 rounded-[var(--radius-sm)] border px-2.5 py-2;
+  }
+
+  .vb-body {
+    @apply grid min-h-0 flex-1;
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+
+  .vb-list-wrap {
+    @apply relative flex min-h-0 min-w-0;
+  }
+
+  .vb-list {
+    @apply min-h-0 w-full overflow-auto;
+    border-right: 1px solid var(--border);
+  }
+
+  .vb-table {
+    table-layout: fixed;
+  }
+
+  .vb-table th:first-child,
+  .vb-table td:first-child {
+    @apply pl-5;
+  }
+
+  .vb-table th:last-child,
+  .vb-table td:last-child {
+    @apply pr-5;
+  }
+
+  .vb-table th:nth-child(2),
+  .vb-table td:nth-child(2) {
+    width: 96px;
+  }
+
+  .vb-table th:nth-child(3),
+  .vb-table td:nth-child(3) {
+    width: 156px;
+  }
+
+  .vb-row {
+    @apply cursor-pointer;
+  }
+
+  .vb-row[data-selected="true"] {
+    background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+  }
+
+  .vb-name {
+    @apply flex max-w-full min-w-0 cursor-pointer items-center gap-2.5 border-0 bg-transparent p-0 text-left text-[var(--text-sm)];
+    color: var(--text-soft);
+  }
+
+  .vb-name.dir {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .vb-name > svg {
+    flex: none;
+    color: var(--muted);
+  }
+
+  .vb-name.dir > svg {
+    color: var(--text-soft);
+  }
+
+  .vb-right {
+    @apply text-right;
+  }
+
+  .vb-meta {
+    font-size: var(--text-xs);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vb-inline-input {
+    @apply flex items-center gap-2.5;
+    color: var(--text);
+  }
+
+  .vb-inline-input > svg {
+    flex: none;
+    color: var(--muted);
+  }
+
+  .vb-inline-input input {
+    @apply h-8 w-full min-w-0 rounded-[var(--radius-sm)] border px-2 text-[var(--text-sm)] outline-0;
+    border-color: var(--primary);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--ring);
+  }
+
+  .vb-drop {
+    @apply pointer-events-none absolute inset-0 z-10 grid content-center justify-items-center gap-1.5 p-6 text-center;
+    background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+    box-shadow: inset 0 0 0 1px var(--primary);
+    color: var(--text);
+  }
+
+  .vb-drop svg {
+    color: var(--primary);
+  }
+
+  .vb-drop span {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .vb-empty {
+    @apply m-4 p-6;
+  }
+
+  .vb-preview {
+    @apply flex min-h-0 min-w-0 flex-col overflow-auto;
+    background: var(--surface-muted);
+  }
+
+  .vb-preview-head {
+    @apply flex items-start justify-between gap-2 border-b px-4 py-3;
+    border-color: var(--border);
+    background: var(--surface);
+  }
+
+  .vb-preview-head strong {
+    @apply block text-[var(--text-sm)] font-semibold;
+    overflow-wrap: anywhere;
+  }
+
+  .vb-preview-head span {
+    @apply block text-[var(--text-xs)];
+    color: var(--muted);
+  }
+
+  .vb-preview-actions {
+    @apply flex flex-none gap-1;
+  }
+
+  .vb-preview-body {
+    @apply flex min-h-0 flex-1 flex-col gap-2 p-3.5;
+  }
+
+  .vb-preview-text {
+    @apply m-0 flex-1 overflow-auto rounded-[var(--radius-sm)] border p-3 text-[var(--text-xs)];
+    border-color: var(--border);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .vb-preview-image {
+    @apply max-h-full max-w-full self-start rounded-[var(--radius-sm)] border;
+    border-color: var(--border);
+    background: var(--surface);
+  }
+
+  .vb-preview-empty {
+    @apply grid flex-1 content-center justify-items-center gap-2 p-6 text-center;
+  }
+
+  .vb-preview-empty svg {
+    color: var(--border-strong);
+  }
+
+  .vb-truncated {
+    @apply rounded-[var(--radius-sm)] border px-2.5 py-1.5 text-[var(--text-xs)];
+    border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+    color: var(--warning);
+  }
+
   /* ── Divers ───────────────────────────────────────────── */
 
   .teacher-cls-head,
@@ -1319,6 +1585,23 @@
 
   .teacher-classroom-card {
     @apply grid gap-2 p-4;
+  }
+}
+
+@media (max-width: 900px) {
+  .volume-browser {
+    height: min(640px, calc(100vh - 24px));
+    max-height: min(640px, calc(100vh - 24px));
+  }
+
+  .vb-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr);
+  }
+
+  .vb-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
 }
 

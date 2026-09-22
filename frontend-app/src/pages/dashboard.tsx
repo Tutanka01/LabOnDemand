@@ -1,6 +1,6 @@
 import "../styles/main.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Boxes, Cpu, Database, FolderTree, Gauge, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
@@ -11,6 +11,7 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  IconButton,
   MetricCard,
   ResourceMeter,
   SearchBox,
@@ -30,10 +31,11 @@ import {
   setDeploymentLifecycle,
 } from "../lib/api";
 import { shortDate } from "../lib/format";
-import type { Deployment, PvcInfo, Template, User } from "../types/api";
+import type { Deployment, PvcInfo, Template, User, VolumeTarget } from "../types/api";
 import { LaunchDialog } from "../components/dashboard/LaunchDialog";
 import { DeploymentDetailsDialog } from "../components/dashboard/DeploymentDetailsDialog";
 import { K8sAdminPanel } from "../components/dashboard/K8sAdminPanel";
+import { VolumeBrowserDialog } from "../components/files/VolumeBrowserDialog";
 import { useI18n } from "../lib/i18n";
 
 export default function DashboardPage() {
@@ -45,6 +47,7 @@ export default function DashboardPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Deployment | null>(null);
   const [novncTarget, setNovncTarget] = useState<Deployment | null>(null);
+  const [browseTarget, setBrowseTarget] = useState<{ target: VolumeTarget; title: string } | null>(null);
 
   const deployments = useQuery({ queryKey: ["deployments"], queryFn: getDeployments });
   const quotas = useQuery({ queryKey: ["quotas"], queryFn: getQuotas });
@@ -300,22 +303,38 @@ export default function DashboardPage() {
                     <td>{pvc.last_bound_app || pvc.app_type || "N/A"}</td>
                     <td>{shortDate(pvc.created_at)}</td>
                     <td>
-                      <ConfirmDialog
-                        destructive
-                        title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
-                        description={locale === "fr" ? `Supprimer ${pvc.name} ? Les données stockées dans ce volume seront perdues.` : `Delete ${pvc.name}? Data stored in this volume will be permanently lost.`}
-                        confirmLabel={t("common.delete")}
-                        trigger={
-                          <Button
-                            variant="danger"
-                            title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
-                            aria-label={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                      <div className="flex justify-end gap-1">
+                        {pvc.namespace ? (
+                          <IconButton
+                            title={t("files.browse")}
+                            aria-label={t("files.browse")}
+                            onClick={() =>
+                              setBrowseTarget({
+                                target: { namespace: pvc.namespace!, pvc: pvc.name },
+                                title: pvc.name,
+                              })
+                            }
                           >
-                            <Trash2 size={14} />
-                          </Button>
-                        }
-                        onConfirm={() => deletePvcMutation.mutate(pvc)}
-                      />
+                            <FolderTree size={14} />
+                          </IconButton>
+                        ) : null}
+                        <ConfirmDialog
+                          destructive
+                          title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                          description={locale === "fr" ? `Supprimer ${pvc.name} ? Les données stockées dans ce volume seront perdues.` : `Delete ${pvc.name}? Data stored in this volume will be permanently lost.`}
+                          confirmLabel={t("common.delete")}
+                          trigger={
+                            <Button
+                              variant="danger"
+                              title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                              aria-label={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          }
+                          onConfirm={() => deletePvcMutation.mutate(pvc)}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -354,6 +373,14 @@ export default function DashboardPage() {
 
       {novncTarget ? (
         <NovncDialog deployment={novncTarget} onClose={() => setNovncTarget(null)} />
+      ) : null}
+
+      {browseTarget ? (
+        <VolumeBrowserDialog
+          target={browseTarget.target}
+          title={`${browseTarget.title} — ${t("files.title")}`}
+          onClose={() => setBrowseTarget(null)}
+        />
       ) : null}
     </>
   );

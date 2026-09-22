@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, RefreshCw, Server, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderTree, RefreshCw, Server, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { deletePod, getAllK8sDeployments, getAllPods, getAllPvcs, getNamespaces, getUsageMyApps, pingK8s } from "../../lib/api";
 import { shortDate } from "../../lib/format";
-import { Button, ConfirmDialog, EmptyState, ErrorState, MetricCard, SkeletonRows, StatusBadge, showToast } from "../ui";
+import { useI18n } from "../../lib/i18n";
+import type { VolumeTarget } from "../../types/api";
+import { VolumeBrowserDialog } from "../files/VolumeBrowserDialog";
+import { Button, ConfirmDialog, EmptyState, ErrorState, IconButton, MetricCard, SkeletonRows, StatusBadge, showToast } from "../ui";
 
 export function K8sAdminPanel({ admin }: { admin: boolean }) {
   const queryClient = useQueryClient();
@@ -211,6 +214,8 @@ function UsageView() {
 
 function GlobalPvcView() {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
+  const [browseTarget, setBrowseTarget] = useState<{ target: VolumeTarget; title: string } | null>(null);
   const pvcs = useQuery({
     queryKey: ["all-pvcs"],
     queryFn: getAllPvcs,
@@ -234,6 +239,7 @@ function GlobalPvcView() {
                 <th>Capacite</th>
                 <th>Application</th>
                 <th>Cree le</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -245,11 +251,35 @@ function GlobalPvcView() {
                   <td>{pvc.storage || "N/A"}</td>
                   <td>{pvc.last_bound_app || pvc.app_type || "N/A"}</td>
                   <td>{shortDate(pvc.created_at)}</td>
+                  <td>
+                    {pvc.namespace ? (
+                      <IconButton
+                        title={t("files.browse")}
+                        aria-label={t("files.browse")}
+                        onClick={() =>
+                          setBrowseTarget({
+                            target: { namespace: pvc.namespace!, pvc: pvc.name },
+                            title: pvc.name,
+                          })
+                        }
+                      >
+                        <FolderTree size={14} />
+                      </IconButton>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      ) : null}
+
+      {browseTarget ? (
+        <VolumeBrowserDialog
+          target={browseTarget.target}
+          title={`${browseTarget.title} — ${t("files.title")}`}
+          onClose={() => setBrowseTarget(null)}
+        />
       ) : null}
     </div>
   );

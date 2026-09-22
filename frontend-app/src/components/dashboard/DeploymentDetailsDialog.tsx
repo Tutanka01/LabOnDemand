@@ -1,13 +1,16 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Terminal, X } from "lucide-react";
+import { Copy, FolderTree, Terminal, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { getDeploymentCredentials, getDeploymentDetails } from "../../lib/api";
 import { ttl } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import type { Deployment, DeploymentCredential, DeploymentCredentialsResponse } from "../../types/api";
 import { Button, ErrorState, IconButton, LoadingState, StatusBadge, showToast } from "../ui";
+import { VolumeBrowserDialog } from "../files/VolumeBrowserDialog";
 import { TerminalDialog } from "./TerminalDialog";
+
+const BROWSABLE_TYPES = ["vscode", "jupyter", "netbeans", "eclipse"];
 
 export function DeploymentDetailsDialog({
   deployment,
@@ -18,9 +21,10 @@ export function DeploymentDetailsDialog({
   onClose: () => void;
   onNovnc?: (deployment: Deployment) => void;
 }) {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const [showCredentials, setShowCredentials] = useState(false);
   const [terminalPod, setTerminalPod] = useState<string | null>(null);
+  const [browsePod, setBrowsePod] = useState<string | null>(null);
 
   const details = useQuery({
     queryKey: ["deployment-details", deployment.namespace, deployment.name],
@@ -41,6 +45,7 @@ export function DeploymentDetailsDialog({
 
   const deploymentType = (deployment.deployment_type || deployment.type || "").toLowerCase();
   const isVncDesktop = ["netbeans", "eclipse"].some((t) => deploymentType.includes(t));
+  const canBrowseFiles = BROWSABLE_TYPES.some((type) => deploymentType.includes(type));
 
   return (
     <>
@@ -128,12 +133,23 @@ export function DeploymentDetailsDialog({
                         <td>{pod.node_name || "N/A"}</td>
                         <td>
                           {pod.status === "Running" ? (
-                            <IconButton
-                              title="Ouvrir terminal"
-                              onClick={() => setTerminalPod(pod.name)}
-                            >
-                              <Terminal size={14} />
-                            </IconButton>
+                            <div className="flex justify-end gap-1">
+                              {canBrowseFiles ? (
+                                <IconButton
+                                  title={t("files.browse")}
+                                  aria-label={t("files.browse")}
+                                  onClick={() => setBrowsePod(pod.name)}
+                                >
+                                  <FolderTree size={14} />
+                                </IconButton>
+                              ) : null}
+                              <IconButton
+                                title="Ouvrir terminal"
+                                onClick={() => setTerminalPod(pod.name)}
+                              >
+                                <Terminal size={14} />
+                              </IconButton>
+                            </div>
                           ) : null}
                         </td>
                       </tr>
@@ -196,6 +212,14 @@ export function DeploymentDetailsDialog({
         namespace={deployment.namespace}
         pod={terminalPod}
         onClose={() => setTerminalPod(null)}
+      />
+    ) : null}
+
+    {browsePod ? (
+      <VolumeBrowserDialog
+        target={{ namespace: deployment.namespace, pod: browsePod }}
+        title={`${deployment.name} — ${t("files.title")}`}
+        onClose={() => setBrowsePod(null)}
       />
     ) : null}
     </>

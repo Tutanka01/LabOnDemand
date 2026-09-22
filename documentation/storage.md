@@ -82,14 +82,25 @@ exit
     est le défaut : les PVC et Secrets sont conservés. Passez
     `delete_persistent=true` pour les supprimer explicitement.
 
-## 4. Bonnes pratiques
+## 4. Explorateur de fichiers (navigateur de volumes)
+
+Le bouton **Parcourir les fichiers** (icône dossier) ouvre un navigateur directement sur le contenu du PVC : liste, aperçu texte/image, téléversement (bouton ou glisser-déposer), création de dossier, renommage, téléchargement (fichier seul ou dossier complet en `.tar`) et suppression.
+
+- Points d'entrée : la ligne d'un pod dans le détail d'un lab (VS Code, Jupyter, NetBeans, Eclipse) et la ligne d'un volume dans « Mes volumes persistants » (ou « Tous les volumes persistants » pour un administrateur).
+- Racine navigable selon le type de lab : `/home/coder/project` (VS Code), `/home/jovyan/work` (Jupyter), `/home/lod-user` (bureaux VNC), `/var/www/html` (web LAMP). Les pods de base de données ne sont pas navigables, comme pour le terminal web.
+- Toutes les opérations passent par un `exec` dans le pod : **un lab en pause n'a pas de pod**, la navigation est donc refusée avec un message explicite tant que le lab n'est pas repris.
+- L'aperçu se limite aux fichiers texte (256 Kio maximum) et aux images ; le HTML et le SVG sont servis en texte brut, jamais exécutés dans l'origine de l'application.
+- Les dépôts sont vérifiés (taille réellement écrite) avant d'être annoncés comme réussis ; un fichier existant n'est remplacé qu'après confirmation.
+- Droits : propriétaire du lab, ou administrateur — mêmes règles que le terminal web (`documentation/terminal.md`).
+
+## 5. Bonnes pratiques
 
 1. **Nommer clairement** vos PVC (`<user>-home`, `<promo>-dataset`).
 2. **Surveiller les quotas** : voir `documentation/resource-limits.md` pour les limites `count/persistentvolumeclaims` et `requests.storage` appliquées par rôle.
 3. **Sauvegarder** : montez les volumes sur un backend fiable (NFS RAID, Ceph, rook). Le provisioner `local-path` ne protège pas contre la perte du nœud.
 4. **Nettoyer automatiquement** : utilisez les labels `managed-by=labondemand` pour vos jobs de ménage ou outils d'observabilité.
 
-## 5. Dépannage
+## 6. Dépannage
 
 | Symptôme | Piste |
 | --- | --- |
@@ -97,5 +108,6 @@ exit
 | L'UI n'affiche aucun volume | Rafraîchir la carte; vérifier que les PVC ont les labels `managed-by=labondemand`/`user-id` |
 | Données volatiles après redémarrage | Pas de StorageClass par défaut → fallback `emptyDir` |
 | Message `AlreadyExists` sur Secret ou PVC | Une ressource persistante conservée existe déjà; la réutiliser, l'effacer explicitement ou supprimer avec `delete_persistent=true` |
+| « Aucun lab en cours n'utilise ce volume » à l'ouverture du navigateur de fichiers | Le lab est en pause ou supprimé : reprendre le lab (le pod doit être `Running`) |
 
 Pour la configuration du provisioner (local-path, NFS, Longhorn, rook-ceph...) reportez-vous au guide de votre storage provider. LabOnDemand fonctionne tant que Kubernetes peut satisfaire les `PersistentVolumeClaim` standards.

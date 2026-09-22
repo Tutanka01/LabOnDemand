@@ -174,6 +174,41 @@ class PVCListResponse(BaseModel):
     items: List[PVCInfo]
 
 
+# ====== Explorateur de volumes persistants ======
+class VolumeFileEntry(BaseModel):
+    name: str
+    path: str
+    type: str  # dir | file | link | other
+    size: Optional[int] = None
+    modified_at: Optional[float] = None
+    preview: Optional[str] = None  # text | image | None
+
+
+class VolumeFileList(BaseModel):
+    root: str
+    path: str
+    parent: Optional[str] = None
+    entries: List[VolumeFileEntry] = []
+
+
+class VolumeFileCreateRequest(BaseModel):
+    namespace: str
+    path: str
+    name: str = Field(..., min_length=1, max_length=255)
+    pod: Optional[str] = None
+    pvc: Optional[str] = None
+    container: Optional[str] = None
+
+
+class VolumeFileRenameRequest(BaseModel):
+    namespace: str
+    path: str
+    new_name: str = Field(..., min_length=1, max_length=255)
+    pod: Optional[str] = None
+    pvc: Optional[str] = None
+    container: Optional[str] = None
+
+
 # ====== Change Password ======
 class ChangePasswordRequest(BaseModel):
     old_password: str

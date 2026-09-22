@@ -58,6 +58,32 @@ export function fullDate(value?: string | null) {
   return date.toLocaleString("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+export function dateTime(value?: number | null, locale: "fr" | "en" = "fr") {
+  if (!value) return "—";
+  const date = new Date(value * 1000);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(locale === "fr" ? "fr-FR" : "en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function fileSize(bytes?: number | null, locale: "fr" | "en" = "fr") {
+  if (bytes === null || bytes === undefined) return "—";
+  const units = locale === "fr" ? ["o", "Ko", "Mo", "Go", "To"] : ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  const digits = index === 0 ? 0 : value < 10 ? 1 : 0;
+  return `${value.toLocaleString(locale === "fr" ? "fr-FR" : "en-GB", { maximumFractionDigits: digits })} ${units[index]}`;
+}
+
 export function ttl(value?: string | null) {
   if (!value) return "Aucune expiration";
   const diff = new Date(value).getTime() - Date.now();
