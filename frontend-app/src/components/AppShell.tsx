@@ -301,7 +301,7 @@ function ProfileDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel">
+        <Dialog.Content className="dialog-content panel" aria-describedby={undefined}>
           <div className="section-head">
             <Dialog.Title asChild>
               <h2>{t("profileTitle") || "Mon profil"}</h2>

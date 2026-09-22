@@ -92,7 +92,7 @@ export function AddStudentDialog({ classroomId, open, onOpenChange }: AddStudent
     <Dialog.Root open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel">
+        <Dialog.Content className="dialog-content panel" aria-describedby={undefined}>
           <div className="section-head">
             <Dialog.Title asChild>
               <h2>Ajouter des étudiants</h2>

@@ -448,7 +448,10 @@ export function ModalShell({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className={cn("dialog-content panel", wide && "dialog-wide")}>
+        <Dialog.Content
+          className={cn("dialog-content panel", wide && "dialog-wide")}
+          aria-describedby={undefined}
+        >
           <div className="section-head">
             <Dialog.Title asChild>
               <h2>{title}</h2>

@@ -21,6 +21,8 @@ Usage::
 import os
 from pathlib import Path
 from typing import Dict, Set
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
 from kubernetes import client, config
 
@@ -124,6 +126,21 @@ class Settings:
     def init_kubernetes():
         """Initialise la configuration Kubernetes"""
         config.load_kube_config()
+        # urllib3 (appels REST) ignore les proxies d'environnement, mais
+        # websocket-client (exec, port-forward) les route via HTTPS_PROXY :
+        # la poignée de main websocket part alors via un proxy qui la coupe
+        # (« Connection to remote host was lost. ») alors que le REST marche.
+        # On force le chemin direct déjà utilisé par les appels REST, sauf si
+        # le kubeconfig déclare explicitement un proxy.
+        configuration = client.Configuration.get_default_copy()
+        if not (configuration.proxy or configuration.proxy_headers):
+            host = (urlparse(configuration.host or "").hostname or "").lower()
+            if host:
+                for var in ("no_proxy", "NO_PROXY"):
+                    entries = [h.strip() for h in os.getenv(var, "").split(",") if h.strip()]
+                    if host not in entries:
+                        entries.append(host)
+                    os.environ[var] = ",".join(entries)
 
     # Grader Pod (MVP-2) — exécution isolée des tests boîte noire
     # Image du grader (publiée sur le registre du cluster). Voir dockerfiles/grader/.

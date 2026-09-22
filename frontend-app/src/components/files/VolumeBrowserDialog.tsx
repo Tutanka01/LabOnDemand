@@ -255,7 +255,7 @@ export function VolumeBrowserDialog({
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel volume-browser">
+        <Dialog.Content className="dialog-content panel volume-browser" aria-describedby={undefined}>
           <div className="vb-head">
             <div className="min-w-0">
               <Dialog.Title asChild>

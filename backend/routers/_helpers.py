@@ -22,7 +22,8 @@ def raise_k8s_http(e: Exception):
                 # ApiException(status=0) : c'est un échec de transport, jamais
                 # une erreur applicative.
                 logger.warning(
-                    "k8s_transport_error",
+                    "k8s_transport_error: %s",
+                    reason,
                     extra={"extra_fields": {"reason": reason}},
                 )
                 raise HTTPException(

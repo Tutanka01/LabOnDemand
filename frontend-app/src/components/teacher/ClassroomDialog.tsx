@@ -82,7 +82,7 @@ export function ClassroomDialog({
     <Dialog.Root open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) resetAndClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel">
+        <Dialog.Content className="dialog-content panel" aria-describedby={undefined}>
           <div className="section-head">
             <Dialog.Title asChild>
               <h2>{isEdit ? "Modifier la classe" : "Nouvelle classe"}</h2>

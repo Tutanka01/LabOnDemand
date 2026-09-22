@@ -52,7 +52,7 @@ export function DeploymentDetailsDialog({
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel dialog-wide">
+        <Dialog.Content className="dialog-content panel dialog-wide" aria-describedby={undefined}>
           <div className="section-head">
             <Dialog.Title asChild>
               <h2 className="min-w-0 truncate">{deployment.name}</h2>

@@ -790,7 +790,7 @@ export function AssignmentDialog({
     >
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel dialog-wide">
+        <Dialog.Content className="dialog-content panel dialog-wide" aria-describedby={undefined}>
           <div className="section-head">
             <Dialog.Title asChild>
               <h2>{isEdit ? t("assignment.edit_title") : t("assignment.create_title")}</h2>
