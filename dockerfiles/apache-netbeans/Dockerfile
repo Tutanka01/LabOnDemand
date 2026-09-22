@@ -4,16 +4,17 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 USER root
 
-ENV HOME=/home/kasm-default-profile \
+ENV HOME=/home/lod-user \
     STARTUPDIR=/dockerstartup \
     INST_SCRIPTS=/dockerstartup/install
 
 WORKDIR $HOME
 
-# Paramètres d'installation NetBeans (le paquet inclut un JDK mais nous installerons Oracle JDK 25 séparément)
-ARG NB_VERSION=28-1
-ARG NB_DEB_URL=https://github.com/Friends-of-Apache-NetBeans/netbeans-installers/releases/download/v28-build1/apache-netbeans_28-1_amd64.deb
-ARG NB_DEB_SHA256=""
+# Paramètres d'installation NetBeans (le paquet inclut un JDK Temurin mais nous
+# installons Oracle JDK 25 séparément, comme sur l'image Eclipse)
+ARG NB_VERSION=31-1
+ARG NB_DEB_URL=https://github.com/Friends-of-Apache-NetBeans/netbeans-installers/releases/download/nb31/apache-netbeans_31-1_amd64.deb
+ARG NB_DEB_SHA256=329ba92c4aa87bcd2814a800f6cc2d29083d7b00434f1e7e42249221986e6e78
 
 # Paramètres d'installation Oracle JDK 25
 ARG ORACLE_JDK_DEB_URL=https://download.oracle.com/java/25/latest/jdk-25_linux-x64_bin.deb
@@ -47,11 +48,14 @@ RUN set -euxo pipefail; \
     if [ -n "${ORACLE_JDK_DEB_SHA256}" ]; then echo "${ORACLE_JDK_DEB_SHA256}  $tmp_jdk_deb" | sha256sum -c -; fi; \
     apt-get install -y --no-install-recommends "$tmp_jdk_deb"; \
     rm -f "$tmp_jdk_deb"; \
-    ln -s /usr/lib/jvm/jdk-25-oracle-x64 /usr/lib/jvm/jdk-25; \
+    # Lien stable: le répertoire du JDK est versionné (ex: jdk-25.0.4.1-oracle-x64)
+    real_jdk="$(ls -d /usr/lib/jvm/jdk-*-oracle-x64 | sort | tail -1)"; \
+    ln -sfn "$real_jdk" /usr/lib/jvm/oracle-jdk-25; \
+    ln -sfn /usr/lib/jvm/oracle-jdk-25 /usr/lib/jvm/jdk-25; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/jdk-25-oracle-x64
+ENV JAVA_HOME=/usr/lib/jvm/oracle-jdk-25
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Desktop integration
@@ -59,7 +63,7 @@ RUN cat >/usr/share/applications/netbeans.desktop <<'EOF'
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Apache NetBeans 27
+Name=Apache NetBeans 31
 Comment=Apache NetBeans IDE
 Exec=/usr/bin/netbeans
 Icon=/usr/share/netbeans/nb/netbeans.png
@@ -70,10 +74,8 @@ EOF
 
 # Copier le raccourci sur le Desktop du profil par défaut
 RUN mkdir -p "$HOME/Desktop" \
-    && cp /usr/share/applications/netbeans.desktop "$HOME/Desktop/Apache NetBeans.desktop"
-
-# Exemple de fichier custom
-RUN touch "$HOME/Desktop/hello.txt"
+    && cp /usr/share/applications/netbeans.desktop "$HOME/Desktop/Apache NetBeans.desktop" \
+    && chmod +x "$HOME/Desktop/Apache NetBeans.desktop"
 
 # Permissions
 #RUN chown 1000:0 $HOME && $STARTUPDIR/set_user_permission.sh $HOME
