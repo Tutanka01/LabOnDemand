@@ -111,7 +111,7 @@ export function LaunchDialog({
     });
   });
 
-  const pvcSupported = deploymentType === "vscode" || deploymentType === "jupyter" || deploymentType === "netbeans";
+  const pvcSupported = ["vscode", "jupyter", "netbeans", "eclipse"].includes(deploymentType);
   const custom = deploymentType === "custom";
   const watchedCpu = form.watch("cpu");
   const watchedRam = form.watch("ram");
@@ -239,7 +239,7 @@ export function LaunchDialog({
                     </option>
                   ))}
                 </select>
-                {deploymentType === "netbeans" ? (
+                {["netbeans", "eclipse"].includes(deploymentType) ? (
                   <span className="muted">
                     Choisissez un volume existant pour retrouver votre bureau et vos fichiers.
                   </span>

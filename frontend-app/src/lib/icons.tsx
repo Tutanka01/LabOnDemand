@@ -1,4 +1,5 @@
 import {
+  Atom,
   BarChart3,
   BookOpen,
   Boxes,
@@ -27,6 +28,7 @@ const byType: Record<string, LucideIcon> = {
   jupyter: NotebookTabs,
   vscode: Code2,
   netbeans: Monitor,
+  eclipse: Atom,
   mysql: Database,
   wordpress: Globe2,
   lamp: Server,

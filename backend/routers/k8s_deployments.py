@@ -14,6 +14,7 @@ from ..models import User, UserRole, Deployment as DeploymentModel
 from ..database import get_db
 from ..k8s_utils import validate_k8s_name
 from ..deployment_service import deployment_service
+from ..templates import VNC_DESKTOP_TYPES
 from ..config import settings
 from ._helpers import raise_k8s_http, audit_logger
 from sqlalchemy.exc import IntegrityError
@@ -799,27 +800,27 @@ async def get_deployment_credentials(
                 response["jupyter"]["url"] = jupyter_url
             return response
 
-        if app_type == "netbeans":
-            netbeans_url = None
-            if deployment_service._should_attach_ingress("netbeans"):
+        if app_type in VNC_DESKTOP_TYPES:
+            desktop_url = None
+            if deployment_service._should_attach_ingress(app_type):
                 try:
                     host = deployment_service._build_ingress_host(
                         stack_name, current_user
                     )
                     scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    netbeans_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+                    desktop_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
                 except Exception:
                     pass
             response = {
-                "type": "netbeans",
-                "netbeans": {
+                "type": app_type,
+                app_type: {
                     "username": dec("VNC_USERNAME") or "kasm_user",
                     "password": dec("VNC_PW"),
                     "view_only_password": dec("VNC_VIEW_ONLY_PW"),
                 },
             }
-            if netbeans_url:
-                response["netbeans"]["url"] = netbeans_url
+            if desktop_url:
+                response[app_type]["url"] = desktop_url
             return response
 
         if app_type == "mysql":

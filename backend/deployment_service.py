@@ -27,7 +27,7 @@ from .k8s_utils import (
     parse_memory_to_mi,
     get_role_limits,
 )
-from .templates import DeploymentConfig
+from .templates import DeploymentConfig, VNC_DESKTOP_TYPES
 
 logger = logging.getLogger("labondemand.deployment")
 audit_logger = logging.getLogger("labondemand.audit")
@@ -252,7 +252,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     "vscode",
                     "wordpress",
                     "mysql",
-                    "netbeans",
+                    *VNC_DESKTOP_TYPES,
                 }:
                     logger.warning(
                         "deployment_permission_denied_fallback",
@@ -878,7 +878,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     "ingresses",
                 )
 
-        if resolved["app_type"] in {"vscode", "jupyter", "netbeans"}:
+        if resolved["app_type"] in {"vscode", "jupyter"} | VNC_DESKTOP_TYPES:
             secrets = self.core_v1.list_namespaced_secret(
                 resolved["namespace"], label_selector=label_selector
             )
@@ -1850,7 +1850,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         if config.get("has_runtime_config") or deployment_type in {
             "vscode",
             "jupyter",
-            "netbeans",
+            *VNC_DESKTOP_TYPES,
         }:
             service_port = config["service_target_port"]
 
@@ -1918,7 +1918,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         generated_credentials: Optional[Dict[str, Dict[str, str]]] = None
         generated_secret_name: Optional[str] = None
         generated_secret_data: Optional[Dict[str, str]] = None
-        if deployment_type == "netbeans":
+        if deployment_type in VNC_DESKTOP_TYPES:
             main_port_name = "novnc"
             vnc_password = secrets.token_urlsafe(18)
             view_only_password = secrets.token_urlsafe(18)
@@ -1943,7 +1943,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 "VNC_VIEW_ONLY_PW": view_only_password,
             }
             generated_credentials = {
-                "netbeans": {
+                deployment_type: {
                     "username": "kasm_user",
                     "password": vnc_password,
                     "view_only_password": view_only_password,
@@ -2027,6 +2027,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 "jupyter": "/home/jovyan/work",
                 # Bureau VNC: tout le home de l'utilisateur (projets, config XFCE…)
                 "netbeans": "/home/lod-user",
+                "eclipse": "/home/lod-user",
             }.get(deployment_type)
             if persistent_mount:
                 pvc_name = f"{name}-pvc"
@@ -2150,7 +2151,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 # Bureau VNC : le home est monté sur le volume. Copier le profil
                 # par défaut de l'image au premier démarrage (config XFCE, fond
                 # d'écran, raccourcis) sans écraser les fichiers de l'élève.
-                if deployment_type == "netbeans":
+                if deployment_type in VNC_DESKTOP_TYPES:
                     pod_spec["initContainers"] = [
                         {
                             "name": "seed-home",
@@ -2281,7 +2282,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         f"http://<IP_DU_NOEUD>:{node_port}/"
                     )
 
-                if deployment_type == "netbeans":
+                if deployment_type in VNC_DESKTOP_TYPES:
 
                     def _find_node_port(
                         target_name: str, fallback_port: int
@@ -2304,7 +2305,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             "protocol": "http",
                             "secure": False,
                             "username": "kasm_user",
-                            "password": generated_credentials["netbeans"]["password"]
+                            "password": generated_credentials[deployment_type]["password"]
                             if generated_credentials
                             else None,
                         },
@@ -2313,7 +2314,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             "target_port": 5901,
                             "node_port": _find_node_port("vnc", 5901),
                             "username": "kasm_user",
-                            "password": generated_credentials["netbeans"]["password"]
+                            "password": generated_credentials[deployment_type]["password"]
                             if generated_credentials
                             else None,
                         },

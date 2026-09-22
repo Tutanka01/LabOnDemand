@@ -493,6 +493,7 @@ export interface DeploymentCredentialsResponse {
   vscode?: DeploymentCredential;
   jupyter?: DeploymentCredential;
   netbeans?: DeploymentCredential;
+  eclipse?: DeploymentCredential;
   database?: DeploymentCredential;
   secrets?: Record<string, string>;
   [service: string]: DeploymentCredential | Record<string, string> | string | undefined;

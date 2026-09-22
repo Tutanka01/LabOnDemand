@@ -105,7 +105,7 @@ def seed_templates(db: Session) -> None:
         return
 
     # Assurer la présence des templates essentiels
-    for key in ("wordpress", "mysql", "lamp", "netbeans"):
+    for key in ("wordpress", "mysql", "lamp", "netbeans", "eclipse"):
         _ensure_template(db, key, defaults)
 
 
@@ -157,6 +157,17 @@ _DEFAULT_RUNTIME_CONFIGS: list[dict] = [
     {
         "key": "netbeans",
         "default_image": "tutanka01/labondemand:netbeansjava",
+        "target_port": 6901,
+        "default_service_type": "NodePort",
+        "allowed_for_students": True,
+        "min_cpu_request": "500m",
+        "min_memory_request": "1Gi",
+        "min_cpu_limit": "1000m",
+        "min_memory_limit": "2Gi",
+    },
+    {
+        "key": "eclipse",
+        "default_image": "tutanka01/labondemand:eclipsejava",
         "target_port": 6901,
         "default_service_type": "NodePort",
         "allowed_for_students": True,

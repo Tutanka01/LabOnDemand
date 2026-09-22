@@ -234,6 +234,88 @@ async def test_create_netbeans_deployment_persists_home_volume(
     assert "labondemand-seeded" in seed["args"][0]
 
 
+async def test_create_eclipse_deployment_generates_vnc_secret(
+    student_client, mock_k8s, db
+):
+    """Un bureau Eclipse se comporte comme un bureau VNC (secret + identifiants)."""
+    from backend.models import RuntimeConfig
+
+    db.add(
+        RuntimeConfig(
+            key="eclipse",
+            default_image="tutanka01/labondemand:eclipsejava",
+            target_port=6901,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            active=True,
+        )
+    )
+    db.commit()
+
+    r = await student_client.post(
+        "/api/v1/k8s/deployments",
+        params={"name": "eclipsebox", "image": "ignored", "deployment_type": "eclipse"},
+    )
+
+    assert r.status_code in (200, 201)
+    secret_manifest = mock_k8s["core"].create_namespaced_secret.call_args.args[1]
+    assert secret_manifest["metadata"]["name"] == "eclipsebox-secret"
+    assert secret_manifest["stringData"]["VNC_USERNAME"] == "kasm_user"
+    assert len(secret_manifest["stringData"]["VNC_PW"]) >= 20
+    assert len(secret_manifest["stringData"]["VNC_VIEW_ONLY_PW"]) >= 20
+
+    pod_spec = mock_k8s["apps"].create_namespaced_deployment.call_args.args[1][
+        "spec"
+    ]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    assert {"secretRef": {"name": "eclipsebox-secret"}} in container["envFrom"]
+    assert {"name": "data", "mountPath": "/home/lod-user"} in container["volumeMounts"]
+    assert pod_spec["initContainers"][0]["name"] == "seed-home"
+    assert pod_spec["initContainers"][0]["image"] == "tutanka01/labondemand:eclipsejava"
+
+    body = r.json()
+    assert body["credentials"]["eclipse"]["username"] == "kasm_user"
+    assert body["credentials"]["eclipse"]["password"] == secret_manifest["stringData"]["VNC_PW"]
+
+
+async def test_get_eclipse_credentials_returns_vnc_passwords(
+    student_client, mock_k8s, student_user
+):
+    dep = MagicMock()
+    dep.metadata.name = "eclipsebox"
+    dep.metadata.labels = {
+        "managed-by": "labondemand",
+        "user-id": str(student_user.id),
+        "user-role": "student",
+        "app-type": "eclipse",
+        "app": "eclipsebox",
+    }
+    mock_k8s["apps"].read_namespaced_deployment.return_value = dep
+
+    secret = MagicMock()
+    secret.data = {
+        "VNC_USERNAME": base64.b64encode(b"kasm_user").decode("ascii"),
+        "VNC_PW": base64.b64encode(b"EclipsePass123").decode("ascii"),
+        "VNC_VIEW_ONLY_PW": base64.b64encode(b"ViewOnlyPass123").decode("ascii"),
+    }
+    mock_k8s["core"].list_namespaced_secret.return_value = MagicMock(items=[secret])
+
+    namespace = f"labondemand-user-{student_user.id}"
+    r = await student_client.get(
+        f"/api/v1/k8s/deployments/{namespace}/eclipsebox/credentials"
+    )
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "type": "eclipse",
+        "eclipse": {
+            "username": "kasm_user",
+            "password": "EclipsePass123",
+            "view_only_password": "ViewOnlyPass123",
+        },
+    }
+
+
 async def test_create_netbeans_deployment_reuses_existing_pvc(
     student_client, mock_k8s, db, student_user
 ):

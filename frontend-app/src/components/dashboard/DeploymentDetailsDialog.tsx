@@ -39,7 +39,8 @@ export function DeploymentDetailsDialog({
     enabled: showCredentials,
   });
 
-  const isNetBeans = (deployment.deployment_type || deployment.type || "").toLowerCase().includes("netbeans");
+  const deploymentType = (deployment.deployment_type || deployment.type || "").toLowerCase();
+  const isVncDesktop = ["netbeans", "eclipse"].some((t) => deploymentType.includes(t));
 
   return (
     <>
@@ -101,7 +102,7 @@ export function DeploymentDetailsDialog({
                   ) : (
                     <span className="muted">{locale === "fr" ? "Aucune URL disponible pour le moment." : "No URL available yet."}</span>
                   )}
-                  {(isNetBeans || details.data.novnc_endpoint) && onNovnc ? (
+                  {(isVncDesktop || details.data.novnc_endpoint) && onNovnc ? (
                     <Button variant="primary" onClick={() => onNovnc(deployment)}>NoVNC</Button>
                   ) : null}
                 </div>
@@ -233,6 +234,7 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
   addCredential("VS Code", credentials.vscode as DeploymentCredential);
   addCredential("Jupyter", credentials.jupyter as DeploymentCredential);
   addCredential("NetBeans", credentials.netbeans as DeploymentCredential);
+  addCredential("Eclipse", credentials.eclipse as DeploymentCredential);
   addCredential(locale === "fr" ? "Base de données" : "Database", credentials.database as DeploymentCredential);
 
   if (credentials.secrets && typeof credentials.secrets === "object") {
@@ -242,7 +244,7 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
   }
 
   Object.entries(credentials).forEach(([service, value]) => {
-    if (["type", "wordpress", "vscode", "jupyter", "netbeans", "database", "secrets"].includes(service)) return;
+    if (["type", "wordpress", "vscode", "jupyter", "netbeans", "eclipse", "database", "secrets"].includes(service)) return;
     if (isCredential(value)) addCredential(value.service || service, value);
   });
 

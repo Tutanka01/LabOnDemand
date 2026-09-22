@@ -6,6 +6,11 @@ from typing import Dict, List, Any
 from .models import UserRole
 
 VSCODE_IMAGE = "codercom/code-server:4.121.0-39"
+NETBEANS_IMAGE = "tutanka01/labondemand:netbeansjava"
+ECLIPSE_IMAGE = "tutanka01/labondemand:eclipsejava"
+
+# Types de déploiement "bureau distant" (XFCE + TigerVNC + noVNC)
+VNC_DESKTOP_TYPES = {"netbeans", "eclipse"}
 
 def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -82,11 +87,22 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
                 "name": "NetBeans Desktop (NoVNC)",
                 "description": "Environnement bureau distant avec NetBeans, accessible via le navigateur (NoVNC).",
                 "icon": "fa-solid fa-desktop",
-                "default_image": "tutanka01/labondemand:netbeansjava",
+                "default_image": NETBEANS_IMAGE,
                 "default_port": 6901,
                 "deployment_type": "netbeans",
                 "default_service_type": "NodePort",
                 "tags": ["bureau", "novnc", "ide", "java"]
+            },
+            {
+                "id": "eclipse",
+                "name": "Eclipse Desktop (NoVNC)",
+                "description": "Environnement bureau distant avec Eclipse IDE for Java (JDK 25, Maven, Gradle), accessible via le navigateur (NoVNC).",
+                "icon": "fa-solid fa-desktop",
+                "default_image": ECLIPSE_IMAGE,
+                "default_port": 6901,
+                "deployment_type": "eclipse",
+                "default_service_type": "NodePort",
+                "tags": ["bureau", "novnc", "ide", "java", "eclipse"]
             }
         ]
     }
@@ -195,7 +211,17 @@ class DeploymentConfig:
     }
     
     NETBEANS_CONFIG = {
-        "image": "tutanka01/labondemand:netbeansjava",
+        "image": NETBEANS_IMAGE,
+        "target_port": 6901,
+        "service_type": "NodePort",
+        "min_cpu_request": "500m",
+        "min_memory_request": "1Gi",
+        "min_cpu_limit": "1000m",
+        "min_memory_limit": "2Gi"
+    }
+
+    ECLIPSE_CONFIG = {
+        "image": ECLIPSE_IMAGE,
         "target_port": 6901,
         "service_type": "NodePort",
         "min_cpu_request": "500m",
@@ -212,6 +238,7 @@ class DeploymentConfig:
             "jupyter": cls.JUPYTER_CONFIG,
             "mysql": cls.MYSQL_PMA_CONFIG,
             "lamp": cls.LAMP_CONFIG,
-            "netbeans": cls.NETBEANS_CONFIG
+            "netbeans": cls.NETBEANS_CONFIG,
+            "eclipse": cls.ECLIPSE_CONFIG
         }
         return configs.get(deployment_type, {})
