@@ -2,7 +2,12 @@
 from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+from kubernetes.client.exceptions import ApiException
+
 from backend.k8s_utils import build_user_namespace
+from backend.routers._helpers import raise_k8s_http
 
 WSResponse = namedtuple("WSResponse", ["data"])
 MARKER = "\x01lod-exit\x01"
@@ -496,3 +501,58 @@ async def test_delete_missing_entry(student_client, mock_k8s, student_user):
         )
 
     assert r.status_code == 404
+
+
+# ─── Robustesse du transport exec ─────────────────────
+
+
+class _DyingStreamClient:
+    """WSClient dont le pair ferme la connexion sans frame CLOSE."""
+
+    def __init__(self, collected: str):
+        self._collected = collected
+
+    def is_open(self):
+        return True
+
+    def update(self, timeout=0):
+        raise RuntimeError("Connection to remote host was lost.")
+
+    def read_all(self):
+        return self._collected
+
+    def close(self):
+        pass
+
+
+async def test_list_files_survives_abrupt_stream_close(student_client, mock_k8s, student_user):
+    """La sortie déjà reçue survit à une coupure brutale du flux exec."""
+    namespace = build_user_namespace(student_user)
+    mock_k8s["core"].read_namespaced_pod.return_value = _make_pod(
+        "vscode-1", namespace, student_user.id
+    )
+    listing = _find_line("f", 12, 1700000000.0, "notes.md")
+    dead = _DyingStreamClient(f"{listing}\n{MARKER}0")
+
+    with patch("backend.routers.k8s_files.k8s_stream", return_value=dead):
+        r = await student_client.get(
+            "/api/v1/k8s/files", params={"namespace": namespace, "pod": "vscode-1"}
+        )
+
+    assert r.status_code == 200
+    assert [entry["name"] for entry in r.json()["entries"]] == ["notes.md"]
+
+
+def test_transport_failure_is_not_a_500():
+    """Un websocket coupé (ApiException sans status) doit donner 502, jamais 500."""
+    with pytest.raises(HTTPException) as exc:
+        raise_k8s_http(ApiException(status=0, reason="Connection to remote host was lost."))
+    assert exc.value.status_code == 502
+
+
+def test_http_exception_passes_through_untouched():
+    """Une HTTPException ne doit jamais être re-emballée en erreur opaque."""
+    with pytest.raises(HTTPException) as exc:
+        raise_k8s_http(HTTPException(status_code=404, detail="Dossier introuvable"))
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Dossier introuvable"

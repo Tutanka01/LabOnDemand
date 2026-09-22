@@ -192,6 +192,26 @@ def _resolve_target(
     return pod_obj.metadata.name, _root_for(labels)
 
 
+def _collect_output(response, timeout: int) -> str:
+    """Sortie brute d'un exec one-shot, jusqu'à la fermeture du flux.
+
+    On pilote le websocket soi-même au lieu de laisser le client Kubernetes
+    tout pré-charger : quand le pair ferme la connexion sans frame CLOSE (cas
+    courant en fin d'exec), ce dernier lève une exception et **jette la sortie
+    déjà reçue**. Ici on garde ce qui est arrivé.
+    """
+    data = getattr(response, "data", None)
+    if data is not None:  # réponse déjà entièrement pré-chargée
+        return str(data)
+    deadline = time.monotonic() + timeout
+    try:
+        while response.is_open() and time.monotonic() < deadline:
+            response.update(0.2)
+    except Exception:  # flux coupé : la sortie accumulée reste lisible
+        pass
+    return str(response.read_all())
+
+
 def _run(
     core_v1: client.CoreV1Api,
     namespace: str,
@@ -215,13 +235,13 @@ def _run(
             stdin=False,
             stdout=True,
             tty=False,
-            _preload_content=True,
+            _preload_content=False,
             _request_timeout=timeout,
         )
     except client.exceptions.ApiException as e:
         raise_k8s_http(e)
 
-    text = str(getattr(response, "data", response))
+    text = _collect_output(response, timeout)
     marker_at = text.rfind(_EXIT_MARKER)
     if marker_at == -1:
         raise HTTPException(status_code=502, detail="Réponse inattendue du pod")
@@ -275,10 +295,19 @@ def _open_stream(
 
 
 def _iter_stream(ws_client) -> Iterator[bytes]:
+    sent = False
     try:
         while True:
-            data = ws_client.read_channel(1, timeout=0.5)
+            try:
+                data = ws_client.read_channel(1, timeout=0.5)
+            except Exception:
+                # Fermeture brutale du pair : après le premier octet envoyé on
+                # s'arrête sur le transfert déjà parti, sinon l'erreur remonte.
+                if sent:
+                    break
+                raise
             if data:
+                sent = True
                 yield data
                 continue
             if not ws_client.is_open():
