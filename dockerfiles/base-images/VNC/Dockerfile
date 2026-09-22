@@ -40,6 +40,12 @@ RUN sed -i 's/\r$//' $INST_SCRIPTS/vnc/install_vnc.sh && \
     bash $INST_SCRIPTS/vnc/install_vnc.sh && \
     rm -rf $INST_SCRIPTS/vnc/
 
+# Installation des outils du bureau (Firefox, éditeur, Git, archiveurs)
+COPY src/ubuntu/install/tools/ $INST_SCRIPTS/tools/
+RUN sed -i 's/\r$//' $INST_SCRIPTS/tools/install_tools.sh && \
+    bash $INST_SCRIPTS/tools/install_tools.sh && \
+    rm -rf $INST_SCRIPTS/tools/
+
 # Configuration du bureau et des icônes
 COPY src/common/resources/config/ $HOME/.config/
 RUN chown -R lod-user:lod-user $HOME/.config
@@ -69,11 +75,18 @@ LABEL org.opencontainers.image.authors="makhal" \
 # Variables d'environnement pour l'exécution
 ENV HOME=/home/lod-user \
     VNC_PW=changeme \
+    VNC_VIEW_ONLY_PW= \
     VNC_RESOLUTION=1600x900 \
+    NOVNC_PORT=6901 \
     LANG='fr_FR.UTF-8' \
     TZ='Europe/Paris'
 
-EXPOSE 6901
+# 6901: bureau via navigateur (noVNC) - 5901: client VNC classique
+EXPOSE 6901 5901
+
+# Le bureau est sain quand le pont web noVNC répond
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD python3 -c "import os,socket; socket.create_connection(('127.0.0.1', int(os.environ.get('NOVNC_PORT','6901'))), 3)"
 
 USER lod-user
 WORKDIR $HOME
