@@ -1985,6 +1985,20 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 {"name": "vnc", "port": 5901, "targetPort": 5901, "protocol": "TCP"},
                 {"name": "audio", "port": 4901, "targetPort": 4901, "protocol": "TCP"},
             ]
+            # Eclipse Java EE : exposer Tomcat (8080) pour tester l'application
+            # web déployée depuis Eclipse (WTP) depuis n'importe quel navigateur.
+            if deployment_type == "eclipse":
+                extra_container_ports.append(
+                    {"containerPort": 8080, "name": "tomcat"}
+                )
+                additional_service_ports.append(
+                    {
+                        "name": "tomcat",
+                        "port": 8080,
+                        "targetPort": 8080,
+                        "protocol": "TCP",
+                    }
+                )
             container_env = [
                 {"name": "SECURE_CONNECTION", "value": "false"},
                 {"name": "KASM_ENABLE_SSL", "value": "false"},
@@ -2379,6 +2393,20 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                             "node_port": _find_node_port("audio", 4901),
                         },
                     }
+
+                    # Eclipse Java EE : URL publique de l'application Tomcat.
+                    if deployment_type == "eclipse":
+                        connection_hints["tomcat"] = {
+                            "description": (
+                                "Application web Java EE déployée sur Tomcat "
+                                "(doit être démarrée dans Eclipse via « Run on Server »)"
+                            ),
+                            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
+                            "target_port": 8080,
+                            "node_port": _find_node_port("tomcat", 8080),
+                            "protocol": "http",
+                            "secure": False,
+                        }
 
             result = {
                 "message": result_message,

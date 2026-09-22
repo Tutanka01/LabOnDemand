@@ -91,32 +91,7 @@ def test_seed_runtime_configs_updates_legacy_vscode_image(db):
 
 
 def test_seed_runtime_configs_raises_eclipse_memory_floor(db):
-    """Une config Eclipse héritée à 2Gi doit être relevée à 3Gi au démarrage."""
-    db.add(
-        RuntimeConfig(
-            key="eclipse",
-            default_image="tutanka01/labondemand:eclipsejava",
-            target_port=6901,
-            default_service_type="NodePort",
-            allowed_for_students=True,
-            min_cpu_request="500m",
-            min_memory_request="1Gi",
-            min_cpu_limit="1000m",
-            min_memory_limit="2Gi",
-            active=True,
-        )
-    )
-    db.commit()
-
-    seed_runtime_configs(db)
-
-    eclipse = db.query(RuntimeConfig).filter(RuntimeConfig.key == "eclipse").one()
-    assert eclipse.min_memory_limit == "3Gi"
-    assert eclipse.default_image == "tutanka01/labondemand:eclipsejava-20260922"
-
-
-def test_seed_runtime_configs_keeps_higher_admin_floor(db):
-    """Un plancher administrateur plus haut que le défaut ne doit pas être abaissé."""
+    """Une config Eclipse héritée (tag Java SE, 3Gi) doit migrer vers Java EE + 4Gi."""
     db.add(
         RuntimeConfig(
             key="eclipse",
@@ -127,7 +102,7 @@ def test_seed_runtime_configs_keeps_higher_admin_floor(db):
             min_cpu_request="500m",
             min_memory_request="1Gi",
             min_cpu_limit="1000m",
-            min_memory_limit="4Gi",
+            min_memory_limit="3Gi",
             active=True,
         )
     )
@@ -137,3 +112,28 @@ def test_seed_runtime_configs_keeps_higher_admin_floor(db):
 
     eclipse = db.query(RuntimeConfig).filter(RuntimeConfig.key == "eclipse").one()
     assert eclipse.min_memory_limit == "4Gi"
+    assert eclipse.default_image == "tutanka01/labondemand:eclipsejava-ee-20260922"
+
+
+def test_seed_runtime_configs_keeps_higher_admin_floor(db):
+    """Un plancher administrateur plus haut que le défaut ne doit pas être abaissé."""
+    db.add(
+        RuntimeConfig(
+            key="eclipse",
+            default_image="tutanka01/labondemand:eclipsejava-ee-20260922",
+            target_port=6901,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            min_cpu_request="500m",
+            min_memory_request="1Gi",
+            min_cpu_limit="1000m",
+            min_memory_limit="6Gi",
+            active=True,
+        )
+    )
+    db.commit()
+
+    seed_runtime_configs(db)
+
+    eclipse = db.query(RuntimeConfig).filter(RuntimeConfig.key == "eclipse").one()
+    assert eclipse.min_memory_limit == "6Gi"

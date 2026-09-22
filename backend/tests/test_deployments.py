@@ -270,12 +270,25 @@ async def test_create_eclipse_deployment_generates_vnc_secret(
     container = pod_spec["containers"][0]
     assert {"secretRef": {"name": "eclipsebox-secret"}} in container["envFrom"]
     assert {"name": "data", "mountPath": "/home/lod-user"} in container["volumeMounts"]
+    assert any(
+        p.get("name") == "tomcat" and p.get("containerPort") == 8080
+        for p in container["ports"]
+    )
     assert pod_spec["initContainers"][0]["name"] == "seed-home"
     assert pod_spec["initContainers"][0]["image"] == "tutanka01/labondemand:eclipsejava"
+
+    # Tomcat est exposé par le service pour tester l'application web déployée.
+    service_manifest = mock_k8s["core"].create_namespaced_service.call_args.args[1]
+    tomcat_port = next(
+        p for p in service_manifest["spec"]["ports"] if p.get("name") == "tomcat"
+    )
+    assert tomcat_port["port"] == 8080
+    assert tomcat_port["targetPort"] == 8080
 
     body = r.json()
     assert body["credentials"]["eclipse"]["username"] == "kasm_user"
     assert body["credentials"]["eclipse"]["password"] == secret_manifest["stringData"]["VNC_PW"]
+    assert body["connection_hints"]["tomcat"]["target_port"] == 8080
 
 
 async def test_eclipse_runtime_minimum_survives_role_clamp(student_client, mock_k8s, db):

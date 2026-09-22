@@ -23,7 +23,7 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 
 ## Fonctionnalités
 
-- **Déploiements en 1 clic** : VS Code, Jupyter, WordPress + MariaDB, MySQL + phpMyAdmin, LAMP, ou image Docker personnalisée
+- **Déploiements en 1 clic** : VS Code, Jupyter, WordPress + MariaDB, MySQL + phpMyAdmin, LAMP, bureaux distants NetBeans et Eclipse Java EE (Tomcat + SGBD inclus), ou image Docker personnalisée
 - **RBAC** : rôles student / teacher / admin avec quotas CPU/RAM enforced côté serveur
 - **Terminal web** intégré (Xterm.js, WebSocket) — accès shell aux pods sans SSH
 - **Ingress automatique** : sous-domaine par déploiement avec TLS optionnel (cert-manager)

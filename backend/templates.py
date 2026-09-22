@@ -9,7 +9,7 @@ VSCODE_IMAGE = "codercom/code-server:4.121.0-39"
 NETBEANS_IMAGE = "tutanka01/labondemand:netbeansjava"
 # Tag daté (immuable) : un même tag ne doit jamais changer de contenu, sinon les
 # nœuds gardent l'ancienne image en cache (imagePullPolicy IfNotPresent).
-ECLIPSE_IMAGE = "tutanka01/labondemand:eclipsejava-20260922"
+ECLIPSE_IMAGE = "tutanka01/labondemand:eclipsejava-ee-20260922"
 
 # Types de déploiement "bureau distant" (XFCE + TigerVNC + noVNC)
 VNC_DESKTOP_TYPES = {"netbeans", "eclipse"}
@@ -97,14 +97,14 @@ def get_deployment_templates() -> Dict[str, List[Dict[str, Any]]]:
             },
             {
                 "id": "eclipse",
-                "name": "Eclipse Desktop (NoVNC)",
-                "description": "Environnement bureau distant avec Eclipse IDE for Java (JDK 25, Maven, Gradle), accessible via le navigateur (NoVNC).",
+                "name": "Eclipse Java EE + Tomcat (NoVNC)",
+                "description": "Bureau distant Java EE : Eclipse IDE for Enterprise Java and Web Developers (Jakarta EE, JSP/Servlet, JPA), JDK 25, Maven, Gradle, Tomcat 10.0, MariaDB et PostgreSQL locaux, pilotes JDBC, Firefox. Accessible via le navigateur (NoVNC).",
                 "icon": "fa-solid fa-desktop",
                 "default_image": ECLIPSE_IMAGE,
                 "default_port": 6901,
                 "deployment_type": "eclipse",
                 "default_service_type": "NodePort",
-                "tags": ["bureau", "novnc", "ide", "java", "eclipse"]
+                "tags": ["bureau", "novnc", "ide", "java", "java-ee", "jakarta", "eclipse", "tomcat", "mysql", "postgresql", "web"]
             }
         ]
     }
@@ -229,9 +229,10 @@ class DeploymentConfig:
         "min_cpu_request": "500m",
         "min_memory_request": "1Gi",
         "min_cpu_limit": "1000m",
-        # 3 Gi mesurés nécessaires : Eclipse + JDT (~1,5 Gi de heap) + Xvnc/XFCE
-        # + Firefox + Maven/Gradle bornés. 2 Gi finissait en OOMKilled (137).
-        "min_memory_limit": "3Gi"
+        # 4 Gi mesurés nécessaires : Eclipse EE + WTP/JPA (~1,5-2 Gi de heap),
+        # Xvnc/XFCE, Firefox, Tomcat et les serveurs MariaDB/PostgreSQL locaux.
+        # 2 Gi finissait en OOMKilled (137), 3 Gi ne laissait aucune marge.
+        "min_memory_limit": "4Gi"
     }
 
     @classmethod

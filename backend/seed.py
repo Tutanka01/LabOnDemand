@@ -176,9 +176,10 @@ _DEFAULT_RUNTIME_CONFIGS: list[dict] = [
         "min_cpu_request": "500m",
         "min_memory_request": "1Gi",
         "min_cpu_limit": "1000m",
-        # 3 Gi mesurés nécessaires (Eclipse + Xvnc/XFCE + Firefox + Maven/Gradle) :
-        # à 2 Gi les sessions actives finissaient en OOMKilled (137).
-        "min_memory_limit": "3Gi",
+        # 4 Gi mesurés nécessaires : Eclipse EE + WTP/JPA, Xvnc/XFCE, Firefox,
+        # Tomcat et les serveurs MariaDB/PostgreSQL locaux. À 2 Gi les sessions
+        # actives finissaient en OOMKilled (137), 3 Gi ne laissait aucune marge.
+        "min_memory_limit": "4Gi",
     },
 ]
 
@@ -217,9 +218,12 @@ def _ensure_runtime_config(db: Session, cfg: dict) -> None:
 
     legacy_images = {
         "vscode": {"tutanka01/k8s:vscode", "codercom/code-server:latest"},
-        # Ancien tag mutable remplacé par un tag daté immuable (correctif mémoire
-        # Eclipse : heap piloté par la limite conteneur).
-        "eclipse": {"tutanka01/labondemand:eclipsejava"},
+        # Anciens tags remplacés par le tag daté immuable de l'image Java EE
+        # (Eclipse for Enterprise Java and Web Developers + Tomcat + SGBD).
+        "eclipse": {
+            "tutanka01/labondemand:eclipsejava",
+            "tutanka01/labondemand:eclipsejava-20260922",
+        },
     }
     if existing.default_image in legacy_images.get(key, set()):
         existing.default_image = cfg["default_image"]

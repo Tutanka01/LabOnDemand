@@ -566,6 +566,8 @@ async def get_deployment_details(
                                     label = "Web (Apache/PHP)"
                                 elif comp == "phpmyadmin":
                                     label = "phpMyAdmin"
+                            elif app_type == "eclipse" and port.name == "tomcat":
+                                label = "Application web (Tomcat)"
                         except Exception:
                             pass
                         scheme = "http"
