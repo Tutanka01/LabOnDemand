@@ -323,6 +323,13 @@ export function VolumeBrowserDialog({
                   <FolderPlus size={15} />
                   {t("files.new_folder")}
                 </Button>
+                <Button
+                  onClick={() => currentPath && triggerDownload(volumeDownloadUrl(target, currentPath))}
+                  disabled={!currentPath || Boolean(upload)}
+                >
+                  <Download size={15} />
+                  {t("files.download_folder")}
+                </Button>
                 <input
                   ref={fileInput}
                   type="file"
@@ -538,7 +545,16 @@ export function VolumeBrowserDialog({
 
                       <div className="vb-preview-body">
                         {selected.type === "dir" ? (
-                          <p className="muted">{t("files.folder_hint")}</p>
+                          <>
+                            <p className="muted">{t("files.folder_hint")}</p>
+                            <Button
+                              variant="primary"
+                              onClick={() => triggerDownload(volumeDownloadUrl(target, selected.path))}
+                            >
+                              <Download size={15} />
+                              {t("files.download_folder")}
+                            </Button>
+                          </>
                         ) : selected.preview === "image" ? (
                           <img
                             className="vb-preview-image"

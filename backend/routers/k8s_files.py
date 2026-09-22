@@ -7,9 +7,13 @@ n'est pas repris.
 """
 from __future__ import annotations
 
+import io
 import os
 import shlex
+import shutil
+import tarfile
 import time
+import zipfile
 from typing import Iterator, Optional, Tuple
 from urllib.parse import quote
 
@@ -394,6 +398,99 @@ def _iter_stream(ws_client) -> Iterator[bytes]:
             pass
 
 
+class _ChunkSink(io.RawIOBase):
+    """File-like pour `zipfile` : chaque écriture devient un chunk téléchargeable."""
+
+    def __init__(self) -> None:
+        self.pending = bytearray()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data) -> int:
+        self.pending += data
+        return len(data)
+
+
+class _ChunkReader(io.RawIOBase):
+    """File-like en lecture au-dessus de l'itérateur de chunks du flux exec."""
+
+    def __init__(self, source: Iterator[bytes]) -> None:
+        self._source = source
+        self._buffer = b""
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        while size < 0 or len(self._buffer) < size:
+            chunk = next(self._source, None)
+            if chunk is None:
+                break
+            self._buffer += chunk
+        if size < 0:
+            data, self._buffer = self._buffer, b""
+            return data
+        data, self._buffer = self._buffer[:size], self._buffer[size:]
+        return data
+
+
+def _zip_date(timestamp: float) -> Tuple[int, int, int, int, int, int]:
+    """Date de fichier zip valide (le format ne va ni avant 1980 ni après 2107)."""
+    try:
+        fields = time.localtime(timestamp)[:6]
+        if 1980 <= fields[0] <= 2107:
+            return fields
+    except (OSError, OverflowError, ValueError):
+        pass
+    return (1980, 1, 1, 0, 0, 0)
+
+
+def _tar_to_zip(source: Iterator[bytes]) -> Iterator[bytes]:
+    """Rejoue en streaming le tar du pod comme un zip complet.
+
+    Le pod n'a pas forcément `zip` (php, mysql, busybox…) : la conversion se
+    fait ici, chunk par chunk, sans tout charger en mémoire. ponytail: les
+    liens sont stockés en convention Info-ZIP (mode 0120777) — restaurés par
+    `ditto`/`unzip`, vus comme petits fichiers texte sous Windows.
+    """
+    sink = _ChunkSink()
+
+    def drain() -> Iterator[bytes]:
+        while sink.pending:
+            chunk = bytes(sink.pending[:_CHUNK_SIZE])
+            del sink.pending[:_CHUNK_SIZE]
+            yield chunk
+
+    with tarfile.open(fileobj=_ChunkReader(source), mode="r|*") as tar, \
+            zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED) as archive:
+        for member in tar:
+            name = member.name[2:] if member.name.startswith("./") else member.name
+            if not name:
+                continue
+            info = zipfile.ZipInfo(name, date_time=_zip_date(member.mtime))
+            info.external_attr = (member.mode & 0xFFFF) << 16
+            if member.isdir():
+                info.filename = name.rstrip("/") + "/"
+                info.external_attr |= 0x10
+                archive.writestr(info, b"")
+            elif member.issym() or member.islnk():
+                info.external_attr = 0o120777 << 16
+                archive.writestr(info, member.linkname)
+            elif member.isfile():
+                content = tar.extractfile(member)
+                if content is None:
+                    continue
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.file_size = member.size
+                with content, archive.open(info, "w") as out:
+                    shutil.copyfileobj(content, out, _CHUNK_SIZE)
+            else:
+                continue  # fifo, sockets, périphériques : hors périmètre d'un zip
+            yield from drain()
+    yield from drain()
+
+
 def _content_disposition(filename: str, inline: bool = False) -> str:
     ascii_name = "".join(
         char if 32 <= ord(char) < 127 and char not in '"\\' else "_" for char in filename
@@ -483,11 +580,9 @@ async def download_file(
     container: Optional[str] = None,
     current_user: User = Depends(get_current_user),
 ):
-    """Télécharger un fichier, ou un dossier entier au format tar."""
+    """Télécharger un fichier, ou un dossier entier en zip."""
     pod_name, container, root = _resolve_target(namespace, pod, pvc, container, current_user)
     target = _normalize_path(path, root)
-    if target == root:
-        raise HTTPException(status_code=400, detail="Sélectionnez un fichier ou un dossier")
     core_v1 = client.CoreV1Api()
 
     kind_code, kind = _run(
@@ -500,13 +595,17 @@ async def download_file(
         raise HTTPException(status_code=404, detail="Fichier introuvable")
 
     if kind == "dir":
-        name = f"{os.path.basename(target)}.tar"
+        name = f"{os.path.basename(target) or 'volume'}.zip"
         parent = os.path.dirname(target)
         script = f"tar -cf - -C {shlex.quote(parent)} ./{shlex.quote(os.path.basename(target))}"
         headers = _stream_headers(name)
         return StreamingResponse(
-            _iter_stream(_open_stream(core_v1, namespace, pod_name, container, root, (target,), script)),
-            media_type="application/x-tar",
+            _tar_to_zip(
+                _iter_stream(
+                    _open_stream(core_v1, namespace, pod_name, container, root, (target,), script)
+                )
+            ),
+            media_type="application/zip",
             headers=headers,
         )
 

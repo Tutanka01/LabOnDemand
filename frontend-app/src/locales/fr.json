@@ -334,6 +334,7 @@
   "files.modified": "Modifié",
   "files.drop_hint": "Déposez pour téléverser",
   "files.download": "Télécharger",
+  "files.download_folder": "Télécharger ce dossier (.zip)",
   "files.rename": "Renommer",
   "files.delete": "Supprimer",
   "files.delete_question": "Supprimer « {name} » ?",

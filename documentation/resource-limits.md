@@ -109,7 +109,7 @@ Toute valeur dépassant ces plafonds est **silencieusement réduite** avant
 la création des manifests Kubernetes.
 
 **Exception : les planchers de la RuntimeConfig priment sur ces plafonds.** Si un
-runtime déclare un minimum (ex. `min_memory_limit: 2Gi` pour Eclipse/NetBeans) et que
+runtime déclare un minimum (ex. `min_memory_limit: 3Gi` pour Eclipse) et que
 le plafond de rôle est plus bas (étudiant : 1Gi), le plancher gagne : un lab qui
 démarre en OOMKilled est pire qu'un pod au-dessus du plafond. L'écart est tracé par le
 log d'audit `resource_floor_over_role_ceiling`. La borne dure reste la ResourceQuota du
@@ -130,7 +130,7 @@ Les templates définissent des ressources **minimales** pour chaque type de lab 
 | mysql/pma | 150m            | 300m          | 128 Mi          | 256 Mi        |
 | lamp      | 250m            | 500m          | 256 Mi          | 512 Mi        |
 | netbeans  | 500m            | 1000m         | 1 Gi            | 2 Gi          |
-| eclipse   | 500m            | 1000m         | 1 Gi            | 2 Gi          |
+| eclipse   | 500m            | 1000m         | 1 Gi            | 3 Gi          |
 
 Ces minima sont appliqués même si l'utilisateur demande moins, et ils priment sur le
 plafond de rôle du §3 (voir l'exception ci-dessus).
@@ -210,3 +210,50 @@ DELETE FROM user_quota_overrides WHERE expires_at IS NOT NULL AND expires_at < N
 - [ ] Vérifier `GET /api/v1/quotas/me` pour confirmer les nouvelles bornes
 - [ ] Vérifier les erreurs `_preflight_k8s_quota` dans les logs
 - [ ] Documenter le changement dans ce fichier
+
+---
+
+## 9. Dimensionnement du cluster (mesures Eclipse)
+
+Mesures relevées sur le cluster k3s (3 × 8 vCPU / 15,6 GiB, septembre 2026) avec
+l'image `eclipsejava-20260922` et une limite de 3 Gi par session :
+
+| Composant d'une session | RAM observée |
+|-------------------------|--------------|
+| Bureau seul (XFCE + Xvnc + noVNC, IDE fermé) | ~300 Mi |
+| Eclipse ouvert (heap ≤ 1,5 Gi via `MaxRAMPercentage=50`) | 1,2 – 1,8 Gi |
+| Firefox | +0,3 – 0,5 Gi |
+| Maven / Gradle (bornés à 512 Mi, voir image Eclipse) | +0,3 – 0,5 Gi |
+| **Pic réaliste par étudiant actif** | **~2 – 2,5 Gi** |
+
+Formule de dimensionnement :
+
+```
+N ≈ (RAM totale des nœuds − ~1 Gi/nœud pour k3s/traefik − autres labs) / 2,5 Gi
+```
+
+Avec le cluster actuel : ~40 Gi utilisables ⇒ **14 à 16 sessions Eclipse actives
+confortables**, ~20 en limite (dégradation : chaque session est plafonnée à 1 CPU
+et les nœuds deviennent sensibles à l'éviction kubelet). Au-delà, ajouter des
+nœuds ou de la RAM par nœud.
+
+Le CPU n'est limitant qu'à partir de ~24 sessions (limite 1000m/session pour
+24 vCPU), mais une compilation compétitive est lente : passer `min_cpu_limit` à
+`2000m` si le cluster le permet.
+
+### Vérifications avant un TP
+
+```bash
+# Capacité et pression mémoire
+kubectl top nodes
+kubectl top pod -A | grep eclipse
+
+# Sessions tuées par la limite conteneur (137) ou évictions
+kubectl get events -A --field-selector reason=OOMKilled
+kubectl get pods -A | grep -v Running
+
+# Le heap Eclipse est bien piloté par la limite du conteneur
+kubectl exec -n labondemand-user-<id> <pod-eclipse> -- grep -E 'MaxRAM|Xmx' /opt/eclipse/eclipse.ini
+kubectl exec -n labondemand-user-<id> <pod-eclipse> -- cat /sys/fs/cgroup/memory.peak
+```
+

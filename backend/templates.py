@@ -7,7 +7,9 @@ from .models import UserRole
 
 VSCODE_IMAGE = "codercom/code-server:4.121.0-39"
 NETBEANS_IMAGE = "tutanka01/labondemand:netbeansjava"
-ECLIPSE_IMAGE = "tutanka01/labondemand:eclipsejava"
+# Tag daté (immuable) : un même tag ne doit jamais changer de contenu, sinon les
+# nœuds gardent l'ancienne image en cache (imagePullPolicy IfNotPresent).
+ECLIPSE_IMAGE = "tutanka01/labondemand:eclipsejava-20260922"
 
 # Types de déploiement "bureau distant" (XFCE + TigerVNC + noVNC)
 VNC_DESKTOP_TYPES = {"netbeans", "eclipse"}
@@ -227,7 +229,9 @@ class DeploymentConfig:
         "min_cpu_request": "500m",
         "min_memory_request": "1Gi",
         "min_cpu_limit": "1000m",
-        "min_memory_limit": "2Gi"
+        # 3 Gi mesurés nécessaires : Eclipse + JDT (~1,5 Gi de heap) + Xvnc/XFCE
+        # + Firefox + Maven/Gradle bornés. 2 Gi finissait en OOMKilled (137).
+        "min_memory_limit": "3Gi"
     }
 
     @classmethod

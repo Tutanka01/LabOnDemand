@@ -1,5 +1,8 @@
 """Tests de l'explorateur de fichiers des volumes persistants."""
+import io
 import subprocess
+import tarfile
+import zipfile
 from collections import namedtuple
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -310,10 +313,32 @@ async def test_download_file_streams_content(student_client, mock_k8s, student_u
     assert fake.closed is True
 
 
-async def test_download_directory_returns_tar(student_client, mock_k8s, student_user):
+async def test_download_directory_returns_zip(student_client, mock_k8s, student_user):
+    """Un dossier se télécharge en zip complet, converti à la volée depuis le tar du pod."""
     namespace = build_user_namespace(student_user)
     mock_k8s["core"].read_namespaced_pod.return_value = _make_pod("vscode-1", namespace, student_user.id)
-    fake = _FakeStreamClient([b"tar-bytes"])
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+        directory = tarfile.TarInfo("tp1")
+        directory.type = tarfile.DIRTYPE
+        directory.mtime = 1700000000
+        tar.addfile(directory)
+        payload = b"print(1)\n"
+        source = tarfile.TarInfo("tp1/main.py")
+        source.size = len(payload)
+        source.mtime = 1700000001
+        tar.addfile(source, io.BytesIO(payload))
+        empty = tarfile.TarInfo("tp1/vide")
+        empty.type = tarfile.DIRTYPE
+        empty.mtime = 1700000002
+        tar.addfile(empty)
+        link = tarfile.TarInfo("tp1/lien")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "main.py"
+        link.mtime = 1700000003
+        tar.addfile(link)
+    raw = tar_buffer.getvalue()
+    fake = _FakeStreamClient([raw[:128], raw[128:]])  # découpe arbitraire des chunks
 
     def handler(script, kwargs):
         if "elif [ -e" in script:
@@ -327,22 +352,40 @@ async def test_download_directory_returns_tar(student_client, mock_k8s, student_
         )
 
     assert r.status_code == 200
-    assert r.content == b"tar-bytes"
-    assert r.headers["content-type"] == "application/x-tar"
-    assert 'filename="tp1.tar"' in r.headers["content-disposition"]
+    assert r.headers["content-type"] == "application/zip"
+    assert 'filename="tp1.zip"' in r.headers["content-disposition"]
+    archive = zipfile.ZipFile(io.BytesIO(r.content))
+    assert archive.read("tp1/main.py") == b"print(1)\n"
+    assert "tp1/vide/" in archive.namelist()  # dossiers vides conservés
+    link_info = archive.getinfo("tp1/lien")
+    assert (link_info.external_attr >> 16) & 0o170000 == 0o120000  # liens conservés
+    assert fake.closed is True
 
 
-async def test_download_refuses_volume_root(student_client, mock_k8s, student_user):
+async def test_download_volume_root_returns_zip(student_client, mock_k8s, student_user):
+    """La racine du volume est téléchargeable : le volume entier en un zip."""
     namespace = build_user_namespace(student_user)
     mock_k8s["core"].read_namespaced_pod.return_value = _make_pod("vscode-1", namespace, student_user.id)
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w"):
+        pass  # volume vide
+    fake = _FakeStreamClient([tar_buffer.getvalue()])
 
-    with _install_exec(lambda script, kwargs: _exec_result("")):
+    def handler(script, kwargs):
+        if "elif [ -e" in script:
+            return _exec_result("dir")
+        return fake
+
+    with _install_exec(handler):
         r = await student_client.get(
             "/api/v1/k8s/files/download",
             params={"namespace": namespace, "pod": "vscode-1", "path": "/home/coder/project"},
         )
 
-    assert r.status_code == 400
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert 'filename="project.zip"' in r.headers["content-disposition"]
+    assert zipfile.ZipFile(io.BytesIO(r.content)).namelist() == []
 
 
 # ─── Aperçu ─────────────────────────────────────────────

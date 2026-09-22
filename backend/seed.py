@@ -4,12 +4,14 @@ Fonctions idempotentes appelées au démarrage.
 """
 import logging
 import secrets
+from typing import Optional
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .k8s_utils import parse_cpu_to_millicores, parse_memory_to_mi
 from .models import User, UserRole, Template, RuntimeConfig
 from .security import get_password_hash
-from .templates import VSCODE_IMAGE, get_deployment_templates
+from .templates import ECLIPSE_IMAGE, VSCODE_IMAGE, get_deployment_templates
 
 logger = logging.getLogger("labondemand.seed")
 
@@ -167,16 +169,36 @@ _DEFAULT_RUNTIME_CONFIGS: list[dict] = [
     },
     {
         "key": "eclipse",
-        "default_image": "tutanka01/labondemand:eclipsejava",
+        "default_image": ECLIPSE_IMAGE,
         "target_port": 6901,
         "default_service_type": "NodePort",
         "allowed_for_students": True,
         "min_cpu_request": "500m",
         "min_memory_request": "1Gi",
         "min_cpu_limit": "1000m",
-        "min_memory_limit": "2Gi",
+        # 3 Gi mesurés nécessaires (Eclipse + Xvnc/XFCE + Firefox + Maven/Gradle) :
+        # à 2 Gi les sessions actives finissaient en OOMKilled (137).
+        "min_memory_limit": "3Gi",
     },
 ]
+
+
+def _is_below_default(existing: Optional[str], default: Optional[str], is_memory: bool) -> bool:
+    """Vrai si ``existing`` est absent ou inférieur à ``default`` (jamais si supérieur).
+
+    Sert aux planchers de ressources : le défaut de plateforme ne doit jamais être
+    abaissé (un lab qui démarre en OOMKilled est pire qu'un pod au-dessus du plafond),
+    mais une valeur administrateur plus haute est conservée.
+    """
+    if not default:
+        return False
+    if not existing:
+        return True
+    try:
+        to_units = parse_memory_to_mi if is_memory else parse_cpu_to_millicores
+        return to_units(str(existing)) < to_units(str(default))
+    except (TypeError, ValueError):
+        return False
 
 
 def _ensure_runtime_config(db: Session, cfg: dict) -> None:
@@ -195,10 +217,39 @@ def _ensure_runtime_config(db: Session, cfg: dict) -> None:
 
     legacy_images = {
         "vscode": {"tutanka01/k8s:vscode", "codercom/code-server:latest"},
+        # Ancien tag mutable remplacé par un tag daté immuable (correctif mémoire
+        # Eclipse : heap piloté par la limite conteneur).
+        "eclipse": {"tutanka01/labondemand:eclipsejava"},
     }
     if existing.default_image in legacy_images.get(key, set()):
         existing.default_image = cfg["default_image"]
         changed = True
+
+    # Planchers CPU/RAM : uniquement vers le haut, pour rattraper les configs DB
+    # créées avant un relèvement du défaut de plateforme.
+    for field in (
+        "min_cpu_request",
+        "min_cpu_limit",
+        "min_memory_request",
+        "min_memory_limit",
+    ):
+        default_value = cfg.get(field)
+        if _is_below_default(
+            getattr(existing, field), default_value, field.startswith("min_memory")
+        ):
+            logger.info(
+                "runtime_config_floor_raised",
+                extra={
+                    "extra_fields": {
+                        "key": key,
+                        "field": field,
+                        "previous": getattr(existing, field),
+                        "new": default_value,
+                    }
+                },
+            )
+            setattr(existing, field, default_value)
+            changed = True
 
     if changed:
         db.commit()

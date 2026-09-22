@@ -334,6 +334,7 @@
   "files.modified": "Modified",
   "files.drop_hint": "Drop to upload",
   "files.download": "Download",
+  "files.download_folder": "Download this folder (.zip)",
   "files.rename": "Rename",
   "files.delete": "Delete",
   "files.delete_question": "Delete “{name}”?",

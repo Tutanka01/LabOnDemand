@@ -66,10 +66,12 @@ RUN set -euxo pipefail; \
     ln -sf "${ECLIPSE_HOME}/eclipse" /usr/local/bin/eclipse; \
     # Utiliser le JDK 25 (et non le JRE JustJ embarqué). Le heap n'est pas figé ici :
     # -XX:MaxRAMPercentage fait calculer -Xmx par le JVM d'après la limite mémoire du
-    # conteneur (50 % -> 1 Gi de heap sur une limite de 2 Gi, la marge restante allant
-    # à Xvnc + XFCE + Firefox). Un -Xmx en dur dépassait la limite -> OOMKilled (137).
-    # On retire aussi tout -Xm[sx] hérité de l'ini d'origine : la présence d'un -Xmx
-    # explicite ferait ignorer MaxRAMPercentage.
+    # conteneur (50 % -> 1,5 Gi de heap sur la limite de 3 Gi du RuntimeConfig, la
+    # marge restante allant à Xvnc + XFCE + Firefox). Un -Xmx en dur dépassait la
+    # limite -> OOMKilled (137). La présence d'un -Xmx explicite ferait ignorer
+    # MaxRAMPercentage, donc on retire tout -Xm[sx] hérité de l'ini d'origine.
+    # MaxMetaspaceSize borne le métaspace (plugins JDT) pour qu'il ne puisse pas
+    # ronger la marge native du conteneur.
     ini="${ECLIPSE_HOME}/eclipse.ini"; \
     awk 'BEGIN { skip=0; done=0 } \
         skip { skip=0; next } \
@@ -77,8 +79,8 @@ RUN set -euxo pipefail; \
         /^-vmargs/ && !done { print "-vm"; print "'"${JAVA_HOME}"'/bin"; done=1 } \
         { print }' "$ini" > "$ini.new"; \
     mv "$ini.new" "$ini"; \
-    sed -i -E '/^-Xm[sx]/d; /^-XX:MaxRAMPercentage/d' "$ini"; \
-    printf '%s\n' '-Xms256m' '-XX:MaxRAMPercentage=50' '-Dfile.encoding=UTF-8' >> "$ini"
+    sed -i -E '/^-Xm[sx]/d; /^-XX:MaxRAMPercentage/d; /^-XX:MaxMetaspaceSize/d' "$ini"; \
+    printf '%s\n' '-Xms256m' '-XX:MaxRAMPercentage=50' '-XX:MaxMetaspaceSize=512m' '-Dfile.encoding=UTF-8' >> "$ini"
 # --- Apache Maven ------------------------------------------------------------
 RUN set -euxo pipefail; \
     tmp_maven="/tmp/maven.tar.gz"; \
@@ -88,6 +90,10 @@ RUN set -euxo pipefail; \
     ln -s "/opt/apache-maven-${MAVEN_VERSION}" "${MAVEN_HOME}"; \
     ln -sf "${MAVEN_HOME}/bin/mvn" /usr/local/bin/mvn
 
+# Borne la JVM Maven : sans cela, un `mvn package` ajoute une JVM non plafonnée
+# à côté d'Eclipse et peut faire dépasser la limite mémoire du conteneur.
+ENV MAVEN_OPTS="-Xmx512m -XX:MaxMetaspaceSize=256m"
+
 # --- Gradle ------------------------------------------------------------------
 RUN set -euxo pipefail; \
     tmp_gradle="/tmp/gradle.zip"; \
@@ -96,6 +102,15 @@ RUN set -euxo pipefail; \
     rm -f "$tmp_gradle"; \
     ln -s "/opt/gradle-${GRADLE_VERSION}" "${GRADLE_HOME}"; \
     ln -sf "${GRADLE_HOME}/bin/gradle" /usr/local/bin/gradle
+
+# Même logique que Maven pour Gradle : borne la JVM cliente (GRADLE_OPTS) et le
+# daemon (org.gradle.jvmargs). Le daemon garde la même limite haute, il ne peut
+# donc pas manger la marge d'Eclipse + Firefox. Écrit dans le profil par défaut,
+# recopié dans le home persistant au premier démarrage (seed-home).
+ENV GRADLE_OPTS="-Xmx512m -Dorg.gradle.jvmargs=-Xmx512m"
+RUN mkdir -p "$HOME/.gradle"; \
+    printf '%s\n' 'org.gradle.jvmargs=-Xmx512m -XX:MaxMetaspaceSize=256m' > "$HOME/.gradle/gradle.properties"; \
+    chown -R 1000:0 "$HOME/.gradle"
 
 # --- Intégration bureau ------------------------------------------------------
 RUN cat > /usr/share/applications/eclipse.desktop <<EOF
