@@ -307,7 +307,10 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             config_db = None
 
         # 2) Fallback statique si pas de config DB
+        # Planchers réellement déclarés par la config (jamais la valeur demandée) :
+        # ils doivent survivre au clamp de rôle, cf. create_deployment().
         config = {}
+        floors: Dict[str, Any] = {}
         if config_db:
             config = {
                 "image": config_db.default_image,
@@ -318,8 +321,23 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 "min_cpu_limit": config_db.min_cpu_limit or cpu_limit,
                 "min_memory_limit": config_db.min_memory_limit or memory_limit,
             }
+            floors = {
+                "cpu_request": config_db.min_cpu_request,
+                "cpu_limit": config_db.min_cpu_limit,
+                "memory_request": config_db.min_memory_request,
+                "memory_limit": config_db.min_memory_limit,
+            }
         else:
             config = DeploymentConfig.get_config(deployment_type)
+            floors = {
+                res_key: config.get(f"min_{res_key}")
+                for res_key in (
+                    "cpu_request",
+                    "cpu_limit",
+                    "memory_request",
+                    "memory_limit",
+                )
+            }
 
         if config:
             # Appliquer les valeurs par défaut
@@ -350,6 +368,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "create_service": create_service,
             "service_type": service_type,
             "has_runtime_config": bool(config_db),
+            "floors": floors,
         }
 
     def _get_user_usage(self, user: User) -> Dict[str, Any]:
@@ -1864,6 +1883,42 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             config["memory_limit"],
             replicas,
         )
+
+        # Les planchers déclarés par la config (ex: Eclipse = 2Gi mini) priment sur le
+        # plafond de rôle : un lab qui démarre en OOMKilled est pire qu'un pod au-dessus
+        # du plafond. La ResourceQuota du namespace et le preflight restent les limites
+        # dures du cluster.
+        for res_key, floor in (config.get("floors") or {}).items():
+            if not floor:
+                continue
+            to_units = (
+                parse_memory_to_mi
+                if res_key.startswith("memory")
+                else parse_cpu_to_millicores
+            )
+            if to_units(clamped[res_key]) >= to_units(floor):
+                continue
+            audit_logger.warning(
+                "resource_floor_over_role_ceiling",
+                extra={
+                    "extra_fields": {
+                        "resource": res_key,
+                        "role_ceiling": clamped[res_key],
+                        "runtime_floor": floor,
+                        "deployment_type": deployment_type,
+                        "role": str(role_val),
+                    }
+                },
+            )
+            clamped[res_key] = floor
+
+        # Cohérence requête <= limite : un plancher mal réglé ne doit pas produire de
+        # manifeste refusé par l'API server.
+        for req_key, lim_key in (
+            ("cpu_request", "cpu_limit"),
+            ("memory_request", "memory_limit"),
+        ):
+            clamped[lim_key] = max_resource(clamped[lim_key], clamped[req_key])
 
         # Vérification des quotas logiques (apps, CPU requests, RAM requests, pods) avant création
         planned_cpu_m = int(

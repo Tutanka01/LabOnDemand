@@ -278,6 +278,101 @@ async def test_create_eclipse_deployment_generates_vnc_secret(
     assert body["credentials"]["eclipse"]["password"] == secret_manifest["stringData"]["VNC_PW"]
 
 
+async def test_eclipse_runtime_minimum_survives_role_clamp(student_client, mock_k8s, db):
+    """Le plancher de la RuntimeConfig (2Gi mini) doit primer sur le plafond de rôle.
+
+    Régression OOMKilled (exit 137) : le plafond étudiant (1Gi) re-plafonnait le
+    minimum Eclipse après application, ce qui lançait le bureau avec 1Gi -> le JVM
+    et Firefox se faisaient tuer par le noyau.
+    """
+    from backend.models import RuntimeConfig
+
+    db.add(
+        RuntimeConfig(
+            key="eclipse",
+            default_image="tutanka01/labondemand:eclipsejava",
+            target_port=6901,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            min_cpu_request="500m",
+            min_memory_request="1Gi",
+            min_cpu_limit="1000m",
+            min_memory_limit="2Gi",
+            active=True,
+        )
+    )
+    db.commit()
+
+    # Preset "Faible" : très en dessous des planchers du runtime Eclipse.
+    r = await student_client.post(
+        "/api/v1/k8s/deployments",
+        params={
+            "name": "eclipsebox",
+            "image": "ignored",
+            "deployment_type": "eclipse",
+            "cpu_request": "100m",
+            "cpu_limit": "200m",
+            "memory_request": "256Mi",
+            "memory_limit": "512Mi",
+        },
+    )
+
+    assert r.status_code in (200, 201)
+    container = mock_k8s["apps"].create_namespaced_deployment.call_args.args[1][
+        "spec"
+    ]["template"]["spec"]["containers"][0]
+    resources = container["resources"]
+    # La limite mémoire réellement envoyée au cluster est bien celle du runtime (2Gi),
+    # et non le plafond étudiant (1Gi).
+    assert resources["limits"]["memory"] == "2Gi"
+    assert resources["requests"]["memory"] == "1Gi"
+    assert resources["limits"]["cpu"] == "1000m"
+    assert resources["requests"]["cpu"] == "500m"
+
+
+async def test_eclipse_clamp_still_applies_without_runtime_minimum(
+    student_client, mock_k8s, db
+):
+    """Sans plancher déclaré, le plafond de rôle reste la seule borne (pas de contournement)."""
+    from backend.models import RuntimeConfig
+
+    db.add(
+        RuntimeConfig(
+            key="eclipse",
+            default_image="tutanka01/labondemand:eclipsejava",
+            target_port=6901,
+            default_service_type="NodePort",
+            allowed_for_students=True,
+            active=True,
+        )
+    )
+    db.commit()
+
+    r = await student_client.post(
+        "/api/v1/k8s/deployments",
+        params={
+            "name": "eclipsebox",
+            "image": "ignored",
+            "deployment_type": "eclipse",
+            "cpu_request": "2000m",
+            "cpu_limit": "4000m",
+            "memory_request": "4Gi",
+            "memory_limit": "8Gi",
+        },
+    )
+
+    assert r.status_code in (200, 201)
+    container = mock_k8s["apps"].create_namespaced_deployment.call_args.args[1][
+        "spec"
+    ]["template"]["spec"]["containers"][0]
+    resources = container["resources"]
+    # Plafonds étudiant : 500m / 1000m / 512Mi / 1Gi
+    assert resources["requests"]["cpu"] == "500m"
+    assert resources["limits"]["cpu"] == "1000m"
+    assert resources["requests"]["memory"] == "512Mi"
+    assert resources["limits"]["memory"] == "1Gi"
+
+
 async def test_get_eclipse_credentials_returns_vnc_passwords(
     student_client, mock_k8s, student_user
 ):

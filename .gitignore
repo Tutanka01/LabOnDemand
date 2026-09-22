@@ -79,3 +79,6 @@ frontend-app/node_modules/
 frontend-app/dist/
 *.tsbuildinfo
 CLAUDE.md
+
+.opencode/
+.better-web-ui.md

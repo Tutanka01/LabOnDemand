@@ -108,6 +108,15 @@ Source : `backend/k8s_utils.py` → `clamp_resources_for_role()`
 Toute valeur dépassant ces plafonds est **silencieusement réduite** avant
 la création des manifests Kubernetes.
 
+**Exception : les planchers de la RuntimeConfig priment sur ces plafonds.** Si un
+runtime déclare un minimum (ex. `min_memory_limit: 2Gi` pour Eclipse/NetBeans) et que
+le plafond de rôle est plus bas (étudiant : 1Gi), le plancher gagne : un lab qui
+démarre en OOMKilled est pire qu'un pod au-dessus du plafond. L'écart est tracé par le
+log d'audit `resource_floor_over_role_ceiling`. La borne dure reste la ResourceQuota du
+namespace, vérifiée après le clamp par `_assert_user_quota()` et `_preflight_k8s_quota()`.
+Une requête mémoire ou CPU est toujours ramenée sous sa limite correspondante pour ne
+pas produire de manifeste refusé par l'API server.
+
 ---
 
 ## 4. Templates et RuntimeConfig
@@ -121,8 +130,10 @@ Les templates définissent des ressources **minimales** pour chaque type de lab 
 | mysql/pma | 150m            | 300m          | 128 Mi          | 256 Mi        |
 | lamp      | 250m            | 500m          | 256 Mi          | 512 Mi        |
 | netbeans  | 500m            | 1000m         | 1 Gi            | 2 Gi          |
+| eclipse   | 500m            | 1000m         | 1 Gi            | 2 Gi          |
 
-Ces minima sont appliqués même si l'utilisateur demande moins.
+Ces minima sont appliqués même si l'utilisateur demande moins, et ils priment sur le
+plafond de rôle du §3 (voir l'exception ci-dessus).
 
 ---
 

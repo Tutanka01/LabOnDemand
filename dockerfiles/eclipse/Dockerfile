@@ -64,7 +64,12 @@ RUN set -euxo pipefail; \
     tar -xzf "$eclipse_archive" -C /opt; \
     rm -f "$eclipse_archive"; \
     ln -sf "${ECLIPSE_HOME}/eclipse" /usr/local/bin/eclipse; \
-    # Utiliser le JDK 25 (et non le JRE JustJ embarqué) avec un heap raisonnable
+    # Utiliser le JDK 25 (et non le JRE JustJ embarqué). Le heap n'est pas figé ici :
+    # -XX:MaxRAMPercentage fait calculer -Xmx par le JVM d'après la limite mémoire du
+    # conteneur (50 % -> 1 Gi de heap sur une limite de 2 Gi, la marge restante allant
+    # à Xvnc + XFCE + Firefox). Un -Xmx en dur dépassait la limite -> OOMKilled (137).
+    # On retire aussi tout -Xm[sx] hérité de l'ini d'origine : la présence d'un -Xmx
+    # explicite ferait ignorer MaxRAMPercentage.
     ini="${ECLIPSE_HOME}/eclipse.ini"; \
     awk 'BEGIN { skip=0; done=0 } \
         skip { skip=0; next } \
@@ -72,7 +77,8 @@ RUN set -euxo pipefail; \
         /^-vmargs/ && !done { print "-vm"; print "'"${JAVA_HOME}"'/bin"; done=1 } \
         { print }' "$ini" > "$ini.new"; \
     mv "$ini.new" "$ini"; \
-    printf '%s\n' '-Xms256m' '-Xmx2048m' '-Dfile.encoding=UTF-8' >> "$ini"
+    sed -i -E '/^-Xm[sx]/d; /^-XX:MaxRAMPercentage/d' "$ini"; \
+    printf '%s\n' '-Xms256m' '-XX:MaxRAMPercentage=50' '-Dfile.encoding=UTF-8' >> "$ini"
 # --- Apache Maven ------------------------------------------------------------
 RUN set -euxo pipefail; \
     tmp_maven="/tmp/maven.tar.gz"; \
