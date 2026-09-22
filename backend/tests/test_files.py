@@ -1,5 +1,7 @@
 """Tests de l'explorateur de fichiers des volumes persistants."""
+import subprocess
 from collections import namedtuple
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,6 +10,7 @@ from kubernetes.client.exceptions import ApiException
 
 from backend.k8s_utils import build_user_namespace
 from backend.routers._helpers import raise_k8s_http
+from backend.routers.k8s_files import _GUARD_EXIT_CODE, _guarded
 
 WSResponse = namedtuple("WSResponse", ["data"])
 MARKER = "\x01lod-exit\x01"
@@ -18,7 +21,17 @@ def _exec_result(stdout: str = "", code: int = 0) -> WSResponse:
     return WSResponse(f"{stdout}\n{MARKER}{code}")
 
 
-def _make_pod(name, namespace, user_id, app_type="vscode", phase="Running", component=None, pvcs=()):
+def _make_pod(
+    name,
+    namespace,
+    user_id,
+    app_type="vscode",
+    phase="Running",
+    component=None,
+    pvcs=(),
+    mount="/home/coder/project",
+    container="main",
+):
     pod = MagicMock()
     pod.metadata.name = name
     pod.metadata.namespace = namespace
@@ -30,8 +43,22 @@ def _make_pod(name, namespace, user_id, app_type="vscode", phase="Running", comp
     if component:
         pod.metadata.labels["component"] = component
     pod.status.phase = phase
+    claims = list(pvcs) or [f"{name}-pvc"]
     pod.spec.volumes = [
-        MagicMock(persistent_volume_claim=MagicMock(claim_name=claim)) for claim in pvcs
+        SimpleNamespace(
+            name=f"data-{index}",
+            persistent_volume_claim=SimpleNamespace(claim_name=claim),
+        )
+        for index, claim in enumerate(claims)
+    ]
+    pod.spec.containers = [
+        SimpleNamespace(
+            name=container,
+            volume_mounts=[
+                SimpleNamespace(name=f"data-{index}", mount_path=mount)
+                for index in range(len(claims))
+            ],
+        )
     ]
     return pod
 
@@ -556,3 +583,110 @@ def test_http_exception_passes_through_untouched():
         raise_k8s_http(HTTPException(status_code=404, detail="Dossier introuvable"))
     assert exc.value.status_code == 404
     assert exc.value.detail == "Dossier introuvable"
+
+
+# ─── Résolution du volume et garde-fou anti-échappement ─
+
+
+async def test_list_files_derives_root_from_pod_mount(student_client, mock_k8s, student_user):
+    """La racine vient du mountPath réel du pod, plus d'une table par type de lab."""
+    namespace = build_user_namespace(student_user)
+    mock_k8s["core"].read_namespaced_pod.return_value = _make_pod(
+        "vscode-1", namespace, student_user.id, mount="/srv/data", container="work"
+    )
+    seen = {}
+
+    def handler(script, kwargs):
+        seen["container"] = kwargs.get("container")
+        return _exec_result("")
+
+    with _install_exec(handler):
+        r = await student_client.get(
+            "/api/v1/k8s/files", params={"namespace": namespace, "pod": "vscode-1"}
+        )
+
+    assert r.status_code == 200
+    assert r.json()["root"] == "/srv/data"
+    assert seen["container"] == "work"  # exécuté dans le conteneur qui monte le volume
+
+
+async def test_list_files_refuses_pod_without_mounted_volume(student_client, mock_k8s, student_user):
+    """Un pod sans PVC (ex. phpMyAdmin) ne doit pas laisser parcourir son filesystem."""
+    namespace = build_user_namespace(student_user)
+    pod = _make_pod("pma-1", namespace, student_user.id, app_type="lamp")
+    pod.spec.containers = [SimpleNamespace(name="pma", volume_mounts=[])]
+    mock_k8s["core"].read_namespaced_pod.return_value = pod
+
+    with _install_exec(lambda script, kwargs: _exec_result("")):
+        r = await student_client.get(
+            "/api/v1/k8s/files", params={"namespace": namespace, "pod": "pma-1"}
+        )
+
+    assert r.status_code == 400
+
+
+async def test_list_files_by_pvc_prefers_navigable_pod(student_client, mock_k8s, student_user):
+    """Un pod base de données (trié avant) ne masque pas le pod web du même volume."""
+    namespace = build_user_namespace(student_user)
+    mock_k8s["core"].read_namespaced_persistent_volume_claim.return_value = _make_pvc(
+        "shared-pvc", namespace, student_user.id
+    )
+    db_pod = _make_pod(
+        "aaa-mysql-1", namespace, student_user.id,
+        app_type="lamp", component="database", pvcs=["shared-pvc"], mount="/var/lib/mysql",
+    )
+    web_pod = _make_pod(
+        "bbb-web-1", namespace, student_user.id,
+        app_type="lamp", component="web", pvcs=["shared-pvc"], mount="/var/www/html",
+    )
+    mock_k8s["core"].list_namespaced_pod.return_value = MagicMock(items=[web_pod, db_pod])
+
+    with _install_exec(lambda script, kwargs: _exec_result("")):
+        r = await student_client.get(
+            "/api/v1/k8s/files", params={"namespace": namespace, "pvc": "shared-pvc"}
+        )
+
+    assert r.status_code == 200
+    assert r.json()["root"] == "/var/www/html"
+
+
+async def test_list_files_symlink_escape_maps_to_400(student_client, mock_k8s, student_user):
+    """Le refus du garde-fou dans le pod remonte en 400, pas en erreur opaque."""
+    namespace = build_user_namespace(student_user)
+    mock_k8s["core"].read_namespaced_pod.return_value = _make_pod("vscode-1", namespace, student_user.id)
+
+    with _install_exec(lambda script, kwargs: _exec_result("", code=_GUARD_EXIT_CODE)):
+        r = await student_client.get(
+            "/api/v1/k8s/files",
+            params={"namespace": namespace, "pod": "vscode-1", "path": "/home/coder/project/lien"},
+        )
+
+    assert r.status_code == 400
+
+
+def test_guard_blocks_symlink_escape(tmp_path):
+    """Un symlink planté dans le volume ne permet pas d'en sortir (vrai shell)."""
+    if subprocess.run(["realpath", "-m", "/"], capture_output=True).returncode != 0:
+        pytest.skip("realpath GNU (coreutils) requis")
+
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("token")
+    (root / "lien").symlink_to(outside)  # lien final hors volume
+    (root / "fuite").symlink_to(tmp_path)  # composant intermédiaire hors volume
+
+    def run(target):
+        return subprocess.run(
+            ["/bin/sh", "-c", _guarded(str(root), (str(target),), "echo CONTENU")],
+            capture_output=True,
+            text=True,
+        )
+
+    for escape in (root / "lien", root / "fuite" / "secret.txt"):
+        result = run(escape)
+        assert result.returncode == _GUARD_EXIT_CODE
+        assert "CONTENU" not in result.stdout
+
+    assert run(root).returncode == 0
+    assert run(root / "absent.txt").returncode == 0  # création dans le volume

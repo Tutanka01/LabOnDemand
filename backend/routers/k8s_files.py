@@ -29,15 +29,6 @@ from .k8s_storage import _ensure_pvc_access
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
-# Racine navigable par type de lab — doit rester alignée sur le
-# `persistent_mount` de DeploymentService.create_deployment.
-_BROWSE_ROOTS: dict[str, str] = {
-    "vscode": "/home/coder/project",
-    "jupyter": "/home/jovyan/work",
-    "netbeans": "/home/lod-user",
-    "eclipse": "/home/lod-user",
-    "lamp": "/var/www/html",
-}
 # Pods de base de données : même refus que le terminal web.
 _DB_COMPONENT_TYPES = {"mysql", "wordpress", "lamp"}
 
@@ -48,6 +39,8 @@ _CHUNK_SIZE = 65_536
 # Marqueur de fin (avec un octet de contrôle pour ne jamais collisionner avec
 # un nom de fichier réellement présent dans le volume).
 _EXIT_MARKER = "\x01lod-exit\x01"
+# Code de sortie du garde-fou anti-échappement (voir _guarded).
+_GUARD_EXIT_CODE = 63
 
 _TEXT_EXTENSIONS = {
     "txt", "md", "markdown", "rst", "log", "csv", "tsv", "json", "jsonl", "xml",
@@ -110,16 +103,11 @@ def _validate_entry_name(name: str) -> str:
     return candidate
 
 
-def _root_for(labels: dict) -> str:
+def _assert_navigable(labels: dict) -> None:
+    """Les volumes de base de données restent inaccessibles, comme le terminal."""
     app_type = (labels.get("app-type") or "").lower()
     if labels.get("component") == "database" and app_type in _DB_COMPONENT_TYPES:
         raise HTTPException(status_code=403, detail="Ce volume n'est pas navigable")
-    root = _BROWSE_ROOTS.get(app_type)
-    if not root:
-        raise HTTPException(
-            status_code=400, detail="Ce lab n'expose pas de volume persistant navigable"
-        )
-    return root
 
 
 def _pod_mounts_pvc(pod: client.V1Pod, pvc_name: str) -> bool:
@@ -130,13 +118,51 @@ def _pod_mounts_pvc(pod: client.V1Pod, pvc_name: str) -> bool:
     return False
 
 
+def _claim_mounts(pod: client.V1Pod) -> Iterator[Tuple[str, str, str]]:
+    """``(conteneur, claim, mountPath)`` des volumes persistants du pod.
+
+    Seuls les conteneurs principaux sont pris en compte : un init container
+    terminé n'est pas exécutable.
+    """
+    claims = {
+        volume.name: volume.persistent_volume_claim.claim_name
+        for volume in getattr(pod.spec, "volumes", None) or []
+        if getattr(volume, "persistent_volume_claim", None)
+        and getattr(volume.persistent_volume_claim, "claim_name", None)
+    }
+    for container in getattr(pod.spec, "containers", None) or []:
+        for mount in getattr(container, "volume_mounts", None) or []:
+            if mount.name in claims:
+                yield container.name, claims[mount.name], mount.mount_path
+
+
+def _browse_mount(pod: client.V1Pod, claim: Optional[str], container_hint: Optional[str]) -> Tuple[str, str]:
+    """Retourne ``(conteneur, racine)`` : le ``mountPath`` réel du volume.
+
+    Dérivé du spec du pod au lieu d'une table par type de lab (source de
+    vérité unique, pas de dérive possible). ponytail: si un même claim est
+    monté plusieurs fois, le premier montage du spec gagne ; le paramètre
+    ``pvc`` permet de choisir le volume quand le pod en expose plusieurs.
+    """
+    mounts = [item for item in _claim_mounts(pod) if not claim or item[1] == claim]
+    if container_hint:
+        mounts = [item for item in mounts if item[0] == container_hint]
+    if not mounts:
+        raise HTTPException(
+            status_code=400, detail="Ce lab n'expose pas de volume persistant navigable"
+        )
+    container, _, mount_path = mounts[0]
+    return container, mount_path
+
+
 def _resolve_target(
     namespace: str,
     pod: Optional[str],
     pvc: Optional[str],
+    container: Optional[str],
     current_user: User,
-) -> Tuple[str, str]:
-    """Retourne ``(nom_du_pod, racine_navigable)`` après contrôle d'accès."""
+) -> Tuple[str, str, str]:
+    """Retourne ``(nom_du_pod, conteneur, racine_navigable)`` après contrôle d'accès."""
     namespace = validate_k8s_name(namespace)
     deployment_service._assert_namespace_allowed(namespace, current_user)
     core_v1 = client.CoreV1Api()
@@ -151,7 +177,8 @@ def _resolve_target(
         deployment_service._assert_deployment_access(labels, current_user, namespace, pod)
         if (pod_obj.status.phase or "") != "Running":
             raise HTTPException(status_code=409, detail="Le lab n'est pas démarré")
-        return pod, _root_for(labels)
+        _assert_navigable(labels)
+        return pod, *_browse_mount(pod_obj, pvc, container)
 
     if not pvc:
         raise HTTPException(status_code=400, detail="Paramètre pod ou pvc requis")
@@ -171,25 +198,42 @@ def _resolve_target(
     except Exception as e:
         raise_k8s_http(e)
 
-    candidates = [p for p in pods if _pod_mounts_pvc(p, pvc)]
+    candidates = sorted(
+        (p for p in pods if _pod_mounts_pvc(p, pvc)),
+        key=lambda p: p.metadata.name,
+    )
     running = [p for p in candidates if (p.status.phase or "") == "Running"]
     if not running:
-        if candidates:
-            raise HTTPException(
-                status_code=409,
-                detail="Le lab qui utilise ce volume est en pause. Reprenez-le pour parcourir ses fichiers.",
-            )
         raise HTTPException(
             status_code=409,
-            detail="Aucun lab en cours n'utilise ce volume. Démarrez un lab pour parcourir ses fichiers.",
+            detail=(
+                "Le lab qui utilise ce volume est en pause. Reprenez-le pour parcourir ses fichiers."
+                if candidates
+                else "Aucun lab en cours n'utilise ce volume. Démarrez un lab pour parcourir ses fichiers."
+            ),
         )
 
-    pod_obj = running[0]
-    labels = pod_obj.metadata.labels or {}
-    deployment_service._assert_deployment_access(
-        labels, current_user, namespace, pod_obj.metadata.name
+    # Un claim peut être monté par plusieurs pods (RWX, composants) : le
+    # premier pod *utilisable* dans l'ordre des noms gagne, sans quoi un pod
+    # non navigable masquerait un pod valide. Le premier refus est conservé
+    # pour rester explicite quand aucun candidat ne convient.
+    denied: Optional[HTTPException] = None
+    for pod_obj in running:
+        labels = pod_obj.metadata.labels or {}
+        try:
+            _assert_navigable(labels)
+            resolved = _browse_mount(pod_obj, pvc, container)
+            deployment_service._assert_deployment_access(
+                labels, current_user, namespace, pod_obj.metadata.name
+            )
+        except HTTPException as e:
+            denied = denied or e
+            continue
+        return pod_obj.metadata.name, *resolved
+    raise denied or HTTPException(
+        status_code=409,
+        detail="Aucun lab en cours n'utilise ce volume. Démarrez un lab pour parcourir ses fichiers.",
     )
-    return pod_obj.metadata.name, _root_for(labels)
 
 
 def _collect_output(response, timeout: int) -> str:
@@ -212,15 +256,39 @@ def _collect_output(response, timeout: int) -> str:
     return str(response.read_all())
 
 
+def _guarded(root: str, paths: Tuple[str, ...], script: str) -> str:
+    """Restreint un script aux chemins sous `root`, liens symboliques compris.
+
+    `_normalize_path` ne valide que la forme lexicale : un symlink planté dans
+    le volume (l'élève a un shell dans son lab) pointe ailleurs, et `cat`, `>`
+    ou un composant intermédiaire de chemin le suivent. `realpath -m` résout
+    chaque composante — lien final, intermédiaire ou cassé — avant l'opération.
+    ponytail: suppose GNU coreutils, comme `find -printf` plus bas ; une image
+    sans `realpath -m` renvoie 400 au lieu de parcourir.
+    """
+    prologue = [
+        f"_lod_root=$(realpath -m -- {shlex.quote(root)}) || exit {_GUARD_EXIT_CODE}"
+    ]
+    prologue += [
+        f"_lod_p=$(realpath -m -- {shlex.quote(path)}) || exit {_GUARD_EXIT_CODE}; "
+        f'case "$_lod_p" in "$_lod_root"|"$_lod_root"/*) ;; *) exit {_GUARD_EXIT_CODE} ;; esac'
+        for path in paths
+    ]
+    return "; ".join(prologue) + "; " + script
+
+
 def _run(
     core_v1: client.CoreV1Api,
     namespace: str,
     pod: str,
     container: Optional[str],
+    root: str,
+    paths: Tuple[str, ...],
     script: str,
     timeout: int = _EXEC_TIMEOUT,
 ) -> Tuple[int, str]:
     """Exécute un script shell one-shot et renvoie ``(code_de_sortie, sortie)``."""
+    script = _guarded(root, paths, script)
     # Le script tourne dans un sous-shell : un `exit` interne ne court-circuite
     # pas l'écho du code de sortie.
     wrapped = f"( {script} )\nprintf '\\n{_EXIT_MARKER}%s' \"$?\""
@@ -248,9 +316,12 @@ def _run(
     output = text[:marker_at].strip("\n")
     code = text[marker_at + len(_EXIT_MARKER):].strip()
     try:
-        return int(code), output
+        parsed = int(code)
     except ValueError:
         raise HTTPException(status_code=502, detail="Réponse inattendue du pod")
+    if parsed == _GUARD_EXIT_CODE:
+        raise HTTPException(status_code=400, detail="Chemin hors du volume persistant")
+    return parsed, output
 
 
 def _run_ok(
@@ -258,10 +329,12 @@ def _run_ok(
     namespace: str,
     pod: str,
     container: Optional[str],
+    root: str,
+    paths: Tuple[str, ...],
     script: str,
     timeout: int = _EXEC_TIMEOUT,
 ) -> str:
-    code, output = _run(core_v1, namespace, pod, container, script, timeout)
+    code, output = _run(core_v1, namespace, pod, container, root, paths, script, timeout)
     if code != 0:
         raise HTTPException(status_code=422, detail=output or f"Commande refusée (code {code})")
     return output
@@ -272,6 +345,8 @@ def _open_stream(
     namespace: str,
     pod: str,
     container: Optional[str],
+    root: str,
+    paths: Tuple[str, ...],
     script: str,
 ):
     """Ouvre un exec en streaming binaire (stdout non bufferisé)."""
@@ -281,7 +356,7 @@ def _open_stream(
             pod,
             namespace,
             container=container,
-            command=["/bin/sh", "-c", script],
+            command=["/bin/sh", "-c", _guarded(root, paths, script)],
             stderr=True,
             stdin=False,
             stdout=True,
@@ -346,7 +421,7 @@ async def list_files(
     current_user: User = Depends(get_current_user),
 ):
     """Lister le contenu d'un dossier du volume persistant."""
-    pod_name, root = _resolve_target(namespace, pod, pvc, current_user)
+    pod_name, container, root = _resolve_target(namespace, pod, pvc, container, current_user)
     target = _normalize_path(path, root)
     core_v1 = client.CoreV1Api()
 
@@ -354,10 +429,10 @@ async def list_files(
     # toutes les images du catalogue). Une image exotique renverra 422, ce qui
     # est visible et diagnosticable ; on ajoutera un fallback si ça arrive.
     script = f"find {shlex.quote(target)} -mindepth 1 -maxdepth 1 -printf '%y\\0%s\\0%T@\\0%f\\0'"
-    code, output = _run(core_v1, namespace, pod_name, container, script)
+    code, output = _run(core_v1, namespace, pod_name, container, root, (target,), script)
     if code != 0:
         exists_code, exists = _run(
-            core_v1, namespace, pod_name, container,
+            core_v1, namespace, pod_name, container, root, (target,),
             f"if [ -d {shlex.quote(target)} ]; then echo yes; else echo no; fi",
         )
         if exists.strip() != "yes":
@@ -409,14 +484,14 @@ async def download_file(
     current_user: User = Depends(get_current_user),
 ):
     """Télécharger un fichier, ou un dossier entier au format tar."""
-    pod_name, root = _resolve_target(namespace, pod, pvc, current_user)
+    pod_name, container, root = _resolve_target(namespace, pod, pvc, container, current_user)
     target = _normalize_path(path, root)
     if target == root:
         raise HTTPException(status_code=400, detail="Sélectionnez un fichier ou un dossier")
     core_v1 = client.CoreV1Api()
 
     kind_code, kind = _run(
-        core_v1, namespace, pod_name, container,
+        core_v1, namespace, pod_name, container, root, (target,),
         f"if [ -d {shlex.quote(target)} ]; then echo dir; elif [ -e {shlex.quote(target)} ]; then echo file; else echo missing; fi",
     )
     if kind_code != 0:
@@ -430,13 +505,13 @@ async def download_file(
         script = f"tar -cf - -C {shlex.quote(parent)} ./{shlex.quote(os.path.basename(target))}"
         headers = _stream_headers(name)
         return StreamingResponse(
-            _iter_stream(_open_stream(core_v1, namespace, pod_name, container, script)),
+            _iter_stream(_open_stream(core_v1, namespace, pod_name, container, root, (target,), script)),
             media_type="application/x-tar",
             headers=headers,
         )
 
     size_code, size_output = _run(
-        core_v1, namespace, pod_name, container, f"stat -c %s {shlex.quote(target)}",
+        core_v1, namespace, pod_name, container, root, (target,), f"stat -c %s {shlex.quote(target)}",
     )
     try:
         size = int(size_output)
@@ -458,7 +533,7 @@ async def download_file(
         headers["Content-Length"] = str(size)
     script = f"cat -- {shlex.quote(target)}"
     return StreamingResponse(
-        _iter_stream(_open_stream(core_v1, namespace, pod_name, container, script)),
+        _iter_stream(_open_stream(core_v1, namespace, pod_name, container, root, (target,), script)),
         media_type="application/octet-stream",
         headers=headers,
     )
@@ -474,7 +549,7 @@ async def preview_file(
     current_user: User = Depends(get_current_user),
 ):
     """Aperçu en ligne d'un fichier texte ou image (texte tronqué à 256 Kio)."""
-    pod_name, root = _resolve_target(namespace, pod, pvc, current_user)
+    pod_name, container, root = _resolve_target(namespace, pod, pvc, container, current_user)
     target = _normalize_path(path, root)
     name = os.path.basename(target)
     kind = _preview_kind(name)
@@ -483,7 +558,7 @@ async def preview_file(
 
     core_v1 = client.CoreV1Api()
     code, output = _run(
-        core_v1, namespace, pod_name, container,
+        core_v1, namespace, pod_name, container, root, (target,),
         f"if [ -f {shlex.quote(target)} ]; then stat -c %s {shlex.quote(target)}; else echo missing; fi",
     )
     if output == "missing":
@@ -499,7 +574,7 @@ async def preview_file(
         headers["Content-Length"] = str(size)
         script = f"cat -- {shlex.quote(target)}"
         return StreamingResponse(
-            _iter_stream(_open_stream(core_v1, namespace, pod_name, container, script)),
+            _iter_stream(_open_stream(core_v1, namespace, pod_name, container, root, (target,), script)),
             headers=headers,
         )
 
@@ -510,7 +585,7 @@ async def preview_file(
     # l'origine de l'application.
     script = f"head -c {_PREVIEW_MAX_BYTES} -- {shlex.quote(target)}"
     return StreamingResponse(
-        _iter_stream(_open_stream(core_v1, namespace, pod_name, container, script)),
+        _iter_stream(_open_stream(core_v1, namespace, pod_name, container, root, (target,), script)),
         media_type="text/plain; charset=utf-8",
         headers=headers,
     )
@@ -527,7 +602,7 @@ async def upload_file(
     current_user: User = Depends(get_current_user),
 ):
     """Déposer un fichier dans un dossier du volume persistant."""
-    pod_name, root = _resolve_target(namespace, pod, pvc, current_user)
+    pod_name, container, root = _resolve_target(namespace, pod, pvc, container, current_user)
     directory = _normalize_path(path, root)
     filename = _validate_entry_name(os.path.basename(file.filename or ""))
     destination = f"{directory.rstrip('/')}/{filename}"
@@ -549,7 +624,10 @@ async def upload_file(
             container=container,
             # `head -c N` termine tout seul une fois N octets reçus : pas besoin
             # de signaler la fin de stdin (non supporté par le client Python).
-            command=["/bin/sh", "-c", f"head -c {total} > {shlex.quote(destination)}"],
+            command=[
+                "/bin/sh", "-c",
+                _guarded(root, (destination,), f"head -c {total} > {shlex.quote(destination)}"),
+            ],
             stderr=True,
             stdin=True,
             stdout=True,
@@ -560,8 +638,6 @@ async def upload_file(
         )
     except client.exceptions.ApiException as e:
         raise_k8s_http(e)
-
-    from starlette.concurrency import run_in_threadpool
 
     errors: bytes | str = b""
     code = 0
@@ -600,7 +676,7 @@ async def upload_file(
 
     # Vérification d'intégrité : un dépôt tronqué ne doit jamais passer pour un succès.
     written = _run_ok(
-        core_v1, namespace, pod_name, container, f"stat -c %s {shlex.quote(destination)}",
+        core_v1, namespace, pod_name, container, root, (destination,), f"stat -c %s {shlex.quote(destination)}",
     )
     try:
         written_size = int(written)
@@ -640,14 +716,16 @@ async def create_directory(
     current_user: User = Depends(get_current_user),
 ):
     """Créer un dossier dans le volume persistant."""
-    pod_name, root = _resolve_target(payload.namespace, payload.pod, payload.pvc, current_user)
+    pod_name, container, root = _resolve_target(
+        payload.namespace, payload.pod, payload.pvc, payload.container, current_user
+    )
     directory = _normalize_path(payload.path, root)
     name = _validate_entry_name(payload.name)
     destination = f"{directory.rstrip('/')}/{name}"
     core_v1 = client.CoreV1Api()
 
     code, output = _run(
-        core_v1, payload.namespace, pod_name, payload.container,
+        core_v1, payload.namespace, pod_name, container, root, (destination,),
         f"if [ -e {shlex.quote(destination)} ]; then echo exists; exit 3; fi; mkdir -- {shlex.quote(destination)}",
     )
     if code == 3:
@@ -677,7 +755,9 @@ async def rename_entry(
     current_user: User = Depends(get_current_user),
 ):
     """Renommer un fichier ou un dossier du volume persistant."""
-    pod_name, root = _resolve_target(payload.namespace, payload.pod, payload.pvc, current_user)
+    pod_name, container, root = _resolve_target(
+        payload.namespace, payload.pod, payload.pvc, payload.container, current_user
+    )
     source = _normalize_path(payload.path, root)
     if source == root:
         raise HTTPException(status_code=400, detail="La racine du volume ne peut pas être renommée")
@@ -686,7 +766,7 @@ async def rename_entry(
     core_v1 = client.CoreV1Api()
 
     code, output = _run(
-        core_v1, payload.namespace, pod_name, payload.container,
+        core_v1, payload.namespace, pod_name, container, root, (source, destination),
         f"if [ ! -e {shlex.quote(source)} ]; then echo missing; exit 4; fi; "
         f"if [ -e {shlex.quote(destination)} ]; then echo exists; exit 3; fi; "
         f"mv -- {shlex.quote(source)} {shlex.quote(destination)}",
@@ -725,14 +805,14 @@ async def delete_entry(
     current_user: User = Depends(get_current_user),
 ):
     """Supprimer un fichier ou un dossier du volume persistant."""
-    pod_name, root = _resolve_target(namespace, pod, pvc, current_user)
+    pod_name, container, root = _resolve_target(namespace, pod, pvc, container, current_user)
     target = _normalize_path(path, root)
     if target == root:
         raise HTTPException(status_code=400, detail="La racine du volume ne peut pas être supprimée")
     core_v1 = client.CoreV1Api()
 
     code, output = _run(
-        core_v1, namespace, pod_name, container,
+        core_v1, namespace, pod_name, container, root, (target,),
         f"if [ ! -e {shlex.quote(target)} ]; then echo missing; exit 4; fi; rm -rf -- {shlex.quote(target)}",
     )
     if code == 4:
