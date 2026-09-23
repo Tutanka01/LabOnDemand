@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from backend import csrf
 from backend.config import settings
@@ -355,3 +357,76 @@ def test_normalize_origin(value, strict, expected):
 def test_no_machine_to_machine_exemptions():
     """Toute exemption doit être délibérée et documentée dans csrf.py."""
     assert csrf.CSRF_EXEMPT_PATHS == frozenset()
+
+
+# ============================================================
+# Terminal WebSocket : Origin obligatoire et de confiance (4403)
+# ============================================================
+
+WS_PATH = "/api/v1/k8s/terminal/labondemand-user-1/mypod"
+
+
+def _ws_close_code(headers: dict | None = None, cookies: dict | None = None) -> int:
+    """Ouvre le WebSocket terminal et retourne le code de fermeture reçu.
+
+    ``TestClient`` hors bloc ``with`` : pas de lifespan (bootstrap, tâches
+    de fond) ; seul le handler WebSocket est exercé.
+    """
+    ws_client = TestClient(app, cookies=cookies or {})
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with ws_client.websocket_connect(WS_PATH, headers=headers or {}) as ws:
+            ws.receive_text()
+    return exc.value.code
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Origin": "https://evil.example"},
+        {"Origin": "null"},
+        {"Origin": "https://vscode-1-u2.labs.example.org"},
+        {"Origin": "http://testserver:8080"},
+        # Le Referer ne remplace jamais Origin pour un WebSocket.
+        {"Referer": "http://localhost/"},
+    ],
+)
+def test_terminal_websocket_rejects_missing_or_untrusted_origin(headers, admin_token):
+    from backend.routers import k8s_terminal
+
+    with patch.object(k8s_terminal.session_store, "get") as session_get:
+        code = _ws_close_code(headers=headers, cookies={"session_id": admin_token})
+    assert code == csrf.WS_POLICY_VIOLATION_CODE == 4403
+    # Refus avant toute authentification : la session n'est même pas lue.
+    session_get.assert_not_called()
+
+
+@pytest.mark.parametrize("origin", ["http://localhost", "http://testserver"])
+def test_terminal_websocket_trusted_origin_reaches_authentication(origin):
+    # Origine de confiance (CORS_ORIGINS ou same-origin via Host) : la
+    # poignée de main passe le contrôle et échoue ensuite à l'authentification.
+    assert _ws_close_code(headers={"Origin": origin}) == 4401
+
+
+def test_terminal_websocket_rejection_is_logged():
+    with patch.object(csrf, "audit_logger") as audit:
+        assert _ws_close_code(headers={"Origin": "https://evil.example"}) == 4403
+    audit.warning.assert_called_once()
+    assert audit.warning.call_args.args == ("websocket_origin_rejected",)
+    fields = audit.warning.call_args.kwargs["extra"]["extra_fields"]
+    assert fields["reason"] == "untrusted_origin"
+    assert fields["path"] == WS_PATH
+
+
+def test_websocket_origin_check_maps_ws_schemes():
+    def scope(scheme: str, origin: str) -> dict:
+        return {
+            "type": "websocket",
+            "scheme": scheme,
+            "path": WS_PATH,
+            "headers": [(b"host", b"lab.example.org"), (b"origin", origin.encode())],
+        }
+
+    assert csrf.websocket_origin_rejection_reason(scope("wss", "https://lab.example.org")) is None
+    assert csrf.websocket_origin_rejection_reason(scope("ws", "http://lab.example.org")) is None
+    assert csrf.websocket_origin_rejection_reason(scope("wss", "http://lab.example.org")) == "untrusted_origin"

@@ -8,6 +8,7 @@ from kubernetes import client
 from kubernetes.stream import stream as k8s_stream
 
 from ..security import get_current_user
+from ..csrf import reject_untrusted_websocket_origin
 from ..session_store import session_store
 from ..models import User, UserRole
 from ..k8s_utils import validate_k8s_name
@@ -67,6 +68,10 @@ async def _ws_authenticate_and_authorize_terminal(websocket: WebSocket, namespac
 @router.websocket("/terminal/{namespace}/{pod}")
 async def ws_pod_terminal(websocket: WebSocket, namespace: str, pod: str):
     """Terminal web: ouvre un exec /bin/sh dans le pod ciblé via WebSocket."""
+    # Anti Cross-Site WebSocket Hijacking : Origin de confiance exigé (4403)
+    # avant accept() et avant toute authentification.
+    if await reject_untrusted_websocket_origin(websocket):
+        return
     namespace = validate_k8s_name(namespace)
     pod = validate_k8s_name(pod)
 
