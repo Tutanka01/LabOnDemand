@@ -28,6 +28,13 @@ Le terminal intégré de LabOnDemand permet d’ouvrir une session shell interac
 - Keepalive: messages périodiques pour maintenir la session active
 - Resize: l’UI envoie les dimensions pour adapter le TTY du côté du pod
 
+## Prérequis côté serveur
+
+- L'API doit être servie par `uvicorn[standard]` (voir `requirements.txt`) : sans
+  bibliothèque WebSocket (`websockets` ou `wsproto`), uvicorn refuse la poignée de
+  main (« Unsupported upgrade request ») et le terminal ne s'ouvre jamais.
+  `backend/tests/test_runtime_dependencies.py` vérifie ce point dans l'image.
+
 ## Sécurité et restrictions
 
 - Authentification de la session requise
