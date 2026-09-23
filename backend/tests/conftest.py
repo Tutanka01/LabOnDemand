@@ -212,6 +212,12 @@ def student_token(student_user) -> str:
 
 # ---------- HTTP client helpers ----------
 
+# En-tête anti-CSRF envoyé par le frontend sur chaque requête (voir
+# backend/csrf.py). Les clients de test l'envoient par défaut ; les tests
+# CSRF le retirent explicitement pour vérifier le refus.
+CSRF_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
 def _db_override(session):
     """Return a FastAPI dependency override that yields the given session."""
     def _override() -> Generator:
@@ -224,7 +230,7 @@ async def client(db) -> AsyncClient:
     """Unauthenticated HTTP client backed by the test DB."""
     app.dependency_overrides[get_db] = _db_override(db)
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://test", headers=CSRF_HEADERS
     ) as c:
         yield c
     app.dependency_overrides.clear()
@@ -237,6 +243,7 @@ async def admin_client(db, admin_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": admin_token},
     ) as c:
         yield c
@@ -250,6 +257,7 @@ async def teacher_client(db, teacher_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": teacher_token},
     ) as c:
         yield c
@@ -263,6 +271,7 @@ async def student_client(db, student_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": student_token},
     ) as c:
         yield c

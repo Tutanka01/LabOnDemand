@@ -19,6 +19,7 @@
   "error.csv_format": "Le fichier doit être au format CSV (.csv)",
   "error.csv_encoding": "Encodage du fichier invalide (UTF-8 attendu)",
   "error.csv_headers": "En-têtes CSV invalides. Requis : username",
+  "error.csrf_failed": "Requête refusée (protection CSRF) : origine non autorisée ou en-tête X-Requested-With manquant. Rechargez la page et réessayez.",
   "classroom.created": "Classe \"{name}\" créée avec succès",
   "classroom.updated": "Classe mise à jour",
   "classroom.archived": "Classe archivée",

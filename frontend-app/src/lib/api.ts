@@ -50,6 +50,13 @@ function redirectToLoginOnUnauthorized(path: string, status: number): void {
   window.location.href = "/login";
 }
 
+/**
+ * Anti-CSRF header required by the API on every state-changing request
+ * (see backend/csrf.py). Cross-origin pages cannot set it without a CORS
+ * preflight, which the API refuses for untrusted origins.
+ */
+export const CSRF_HEADERS = { "X-Requested-With": "XMLHttpRequest" } as const;
+
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const response = await fetch(path, {
     credentials: "include",
@@ -57,6 +64,8 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     headers: {
       ...(init.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
       ...init.headers,
+      // Always last so a caller cannot drop it by accident.
+      ...CSRF_HEADERS,
     },
   });
 

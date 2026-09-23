@@ -19,6 +19,7 @@
   "error.csv_format": "File must be in CSV format (.csv)",
   "error.csv_encoding": "Invalid file encoding (UTF-8 expected)",
   "error.csv_headers": "Invalid CSV headers. Required: username",
+  "error.csrf_failed": "Request rejected (CSRF protection): untrusted origin or missing X-Requested-With header. Reload the page and try again.",
   "classroom.created": "Classroom \"{name}\" created successfully",
   "classroom.updated": "Classroom updated",
   "classroom.archived": "Classroom archived",
