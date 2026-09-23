@@ -1,0 +1,25 @@
+# Suite de tests backend, isolée de la stack applicative.
+#
+#   docker compose -f compose.test.yaml run --rm --build tests
+#   docker compose -f compose.test.yaml run --rm tests python -m pytest backend/tests/test_auth.py -q
+#
+# Volontairement indépendant de compose.yaml : aucun .env, aucun kubeconfig,
+# aucune base MariaDB ni Redis réels. La suite tourne en mémoire (SQLite,
+# faux Redis, client Kubernetes mocké — voir backend/tests/conftest.py) et ne
+# peut donc ni toucher le cluster ni les données locales.
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # Code monté pour itérer sans reconstruire ; reconstruire (--build)
+      # après toute modification de requirements*.txt ou du Dockerfile.
+      - ./backend:/app/backend
+    command: ["python", "-m", "pytest", "backend/tests", "-q"]

@@ -17,7 +17,7 @@ Several environment facts are stable and documented; re-discovering them is wast
 - Do not rebuild or re-push a lab image unless its Dockerfile (or a `--build-arg` input) changed. amd64 builds run
   under emulation on Apple Silicon and take 10–20 minutes; BuildKit reuses cached layers after an interrupt.
 - Do not run node image prune/pre-pull unless the task explicitly asks for it (it is slow and re-downloads images).
-- The pre-existing test failures listed in `Testing Guidelines` are known; do not debug them again.
+- The backend suite is expected to be fully green (`docker compose -f compose.test.yaml run --rm tests`); treat any failure as a regression.
 - Docker Hub credentials for `tutanka01` are already in the local credential store; no `docker login` is needed.
 
 ## Lab Kubernetes Cluster
@@ -85,7 +85,7 @@ Use these examples:
 - `docker compose down`: stop local containers while preserving named volumes.
 - `docker compose logs -f api`: follow backend logs.
 - `docker compose logs -f frontend`: follow frontend/Nginx logs.
-- `docker compose exec -T api python -m pytest backend/tests -q --ignore=backend/tests/test_ui.py`: run the backend test suite inside the API container.
+- `docker compose -f compose.test.yaml run --rm --build tests`: run the backend test suite in an isolated container (no `.env`, kubeconfig, MariaDB or Redis).
 - `docker compose build frontend`: validate the production frontend build through the Dockerfile.
 - `docker compose build api`: rebuild the backend image after dependency or Dockerfile changes.
 
@@ -109,17 +109,14 @@ Keep UI code typed and component-focused. Use descriptive filenames and colocate
 
 Place backend tests in `backend/tests/` using `test_*.py` filenames and descriptive test function names such as `test_teacher_quota_is_enforced`. Prefer focused unit tests for authorization, session handling, template validation, Kubernetes object generation, and API regressions.
 
-Run tests through Docker Compose, for example:
+Run tests through Docker Compose with the dedicated, isolated test file:
 
 ```bash
-docker compose exec -T api python -m pytest backend/tests -q --ignore=backend/tests/test_ui.py
+docker compose -f compose.test.yaml run --rm --build tests
+docker compose -f compose.test.yaml run --rm tests python -m pytest backend/tests/test_auth.py -q
 ```
 
-Known pre-existing failures on a clean checkout (do not debug them again):
-
-- `backend/tests/test_ui.py` cannot be collected: `selenium` is not installed in the API image (integration-level).
-- `test_deployments.py::test_list_deployments_with_items` and `test_health.py::test_health_connected` fail for
-  reasons unrelated to most changes.
+`compose.test.yaml` builds the `test` target of the `Dockerfile` (runtime image plus `backend/requirements-test.txt`) and mounts only `./backend`: it never reads `.env` or `kubeconfig.yaml`, so tests cannot reach the real cluster or database. Rebuild (`--build`) after changing `requirements*.txt` or the `Dockerfile`. `backend/tests/test_ui.py` (Selenium, live server) is excluded through `collect_ignore` in `conftest.py`.
 
 If a test dependency is genuinely needed, install or bake it into the container workflow rather than relying on a host virtualenv.
 

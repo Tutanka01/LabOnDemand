@@ -17,6 +17,10 @@ Import order matters:
 import os
 from typing import Dict, Generator, Optional
 
+# test_ui.py pilote un vrai navigateur (Selenium) contre un serveur démarré :
+# hors suite automatisée. `collect_ignore` n'est reconnu que dans conftest.py.
+collect_ignore = ["test_ui.py"]
+
 # ============================================================
 # 1. Environment variables — read by config.py at import time
 # ============================================================
