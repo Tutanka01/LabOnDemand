@@ -109,7 +109,7 @@ LabOnDemand/
 └── compose.yaml                    # Docker Compose (dev/local)
 ```
 
-> `*` = endpoint rate-limité (10 créations / 5 min par IP)
+> `*` = endpoint rate-limité (`RATE_LIMIT_DEPLOY`, 10 créations / 5 min par utilisateur)
 
 ---
 
@@ -120,8 +120,10 @@ LabOnDemand/
                   body: { name, deployment_type, image, cpu_request, … }
 
 2. FastAPI middleware
+                  • CORS, puis CSRF (X-Requested-With + Origin, backend/csrf.py)
                   • Logging structuré + request_id
-                  • Rate limiting (slowapi) ← @limiter.limit("10/5minute")
+                  • Rate limiting (slowapi, compteurs Redis) ← RATE_LIMIT_DEPLOY,
+                    clé = utilisateur authentifié (backend/rate_limit.py)
 
 3. k8s_deployments.create_deployment()
                   • get_current_user() → session Redis → User ORM
