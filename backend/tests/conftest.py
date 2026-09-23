@@ -15,7 +15,7 @@ Import order matters:
   6. pytest fixtures defined
 """
 import os
-from typing import Dict, Generator, Optional
+from typing import Generator
 
 # test_ui.py pilote un vrai navigateur (Selenium) contre un serveur démarré :
 # hors suite automatisée. `collect_ignore` n'est reconnu que dans conftest.py.
@@ -33,30 +33,31 @@ os.environ.setdefault("SSO_ENABLED", "false")
 
 # ============================================================
 # 2. Mock Redis — session_store.py calls redis.from_url() at module level
+#    fakeredis implémente toute la sémantique Redis (TTL, SET NX/PX, INCR,
+#    scripts Lua…) : les verrous, compteurs et limiteurs se testent pour de vrai.
+#    Un seul FakeServer partagé : tous les clients voient les mêmes données.
 # ============================================================
-_test_sessions: Dict[str, str] = {}
-
-
-class _FakeRedis:
-    """In-memory Redis substitute — same interface as redis.Redis."""
-
-    def ping(self) -> bool:
-        return True
-
-    def setex(self, key: str, ttl: int, value: str) -> None:
-        _test_sessions[key] = value
-
-    def get(self, key: str) -> Optional[str]:
-        return _test_sessions.get(key)
-
-    def delete(self, key: str) -> int:
-        existed = key in _test_sessions
-        _test_sessions.pop(key, None)
-        return 1 if existed else 0
-
-
+import fakeredis  # noqa: E402
 import redis as _redis_mod  # noqa: E402 (must come after os.environ setup)
-_redis_mod.from_url = lambda url, **kw: _FakeRedis()
+
+_fake_redis_server = fakeredis.FakeServer()
+
+
+def _fake_redis_from_url(url, **kw):
+    return fakeredis.FakeRedis(
+        server=_fake_redis_server,
+        decode_responses=kw.get("decode_responses", False),
+    )
+
+
+_redis_mod.from_url = _fake_redis_from_url
+_redis_mod.Redis.from_url = staticmethod(_fake_redis_from_url)
+
+
+def flush_fake_redis() -> None:
+    """Vide le Redis de test (sessions, verrous, compteurs de rate limiting)."""
+    fakeredis.FakeRedis(server=_fake_redis_server).flushall()
+
 
 # ============================================================
 # 3. Mock Kubernetes config — main.py calls settings.init_kubernetes()
@@ -120,7 +121,7 @@ def _isolate():
     with _test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
-    _test_sessions.clear()
+    flush_fake_redis()
 
 
 # ---------- Database session ----------
