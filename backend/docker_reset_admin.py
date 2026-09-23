@@ -6,6 +6,7 @@ Ce script crée ou met à jour l'utilisateur admin avec des identifiants connus
 import os
 import sys
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
 
 # Configuration de la base de données
@@ -15,8 +16,16 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME", "labondemand")
 
-# Construction de l'URL de connexion
-SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Construction de l'URL de connexion (URL.create échappe les caractères
+# spéciaux du mot de passe : @, /, :, #…)
+SQLALCHEMY_DATABASE_URL = URL.create(
+    drivername="mysql+pymysql",
+    username=DB_USER,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=int(DB_PORT),
+    database=DB_NAME,
+)
 
 # Création du moteur de base de données et de la session
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
