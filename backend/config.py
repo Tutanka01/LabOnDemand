@@ -126,6 +126,13 @@ class Settings:
     @staticmethod
     def init_kubernetes():
         """Initialise la configuration Kubernetes"""
+        # Délais REST par défaut (voir backend/k8s_timeouts.py), installés
+        # avant tout appel au cluster.
+        from .k8s_timeouts import install_default_request_timeout
+
+        install_default_request_timeout(
+            Settings.K8S_REQUEST_TIMEOUT_CONNECT, Settings.K8S_REQUEST_TIMEOUT_READ
+        )
         config.load_kube_config()
         # urllib3 (appels REST) ignore les proxies d'environnement, mais
         # websocket-client (exec, port-forward) les route via HTTPS_PROXY :
@@ -142,6 +149,51 @@ class Settings:
                     if host not in entries:
                         entries.append(host)
                     os.environ[var] = ",".join(entries)
+
+    # ===================== Concurrence & client Kubernetes =====================
+    # Délais par défaut (secondes) des appels REST Kubernetes : connexion puis
+    # lecture. Un _request_timeout explicite reste prioritaire ; 0 désactive.
+    # Les flux (watch, logs suivis) ne reçoivent jamais de délai de lecture.
+    K8S_REQUEST_TIMEOUT_CONNECT = float(os.getenv("K8S_REQUEST_TIMEOUT_CONNECT", "5"))
+    K8S_REQUEST_TIMEOUT_READ = float(os.getenv("K8S_REQUEST_TIMEOUT_READ", "30"))
+    # Taille du pool de threads AnyIO qui exécute les endpoints `def`, les
+    # dépendances synchrones et les appels déportés (run_in_threadpool).
+    # À garder <= pool_size + max_overflow du moteur SQLAlchemy : chaque thread
+    # peut tenir une connexion, au-delà les requêtes attendent le pool DB.
+    API_THREADPOOL_SIZE = max(1, int(os.getenv("API_THREADPOOL_SIZE", "40")))
+    # Déploiements simultanés (threads dédiés) lors d'un déploiement en masse
+    # d'un devoir sur une classe, par requête.
+    BULK_SPAWN_CONCURRENCY = max(1, int(os.getenv("BULK_SPAWN_CONCURRENCY", "5")))
+    # Grading Runs simultanés lors d'un « lancer les tests sur toute la classe »
+    # (par lot ; les runs suivants attendent leur tour en arrière-plan).
+    BULK_GRADING_CONCURRENCY = max(1, int(os.getenv("BULK_GRADING_CONCURRENCY", "5")))
+    # TTL (s) du verrou Redis de leader de la tâche de nettoyage. Doit dépasser
+    # une itération (intervalle + durée d'un cycle). 0 = auto : 2 x intervalle
+    # (CLEANUP_INTERVAL_MINUTES), minimum 120 s.
+    CLEANUP_LOCK_TTL_SECONDS = max(0, int(os.getenv("CLEANUP_LOCK_TTL_SECONDS", "0")))
+    # Fermeture (code 4408) d'un terminal WebSocket sans aucun échange, dans un
+    # sens ou dans l'autre, pendant ce délai (s). 0 = jamais.
+    TERMINAL_IDLE_TIMEOUT_SECONDS = max(
+        0, int(os.getenv("TERMINAL_IDLE_TIMEOUT_SECONDS", "1800"))
+    )
+    # Délai (s, entier) de chaque sonde de GET /api/v1/health (DB, Redis, K8s).
+    HEALTH_CHECK_TIMEOUT_SECONDS = max(
+        1, int(os.getenv("HEALTH_CHECK_TIMEOUT_SECONDS", "3"))
+    )
+
+    @staticmethod
+    def configure_threadpool() -> int:
+        """Applique API_THREADPOOL_SIZE au limiteur de threads AnyIO par défaut.
+
+        Le limiteur est propre à la boucle d'événements : appeler depuis un
+        événement de démarrage de l'application. Retourne la taille appliquée.
+        """
+        import anyio.to_thread
+
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        limiter.total_tokens = Settings.API_THREADPOOL_SIZE
+        return int(limiter.total_tokens)
+    # ===================== Fin concurrence & client Kubernetes =====================
 
     # Grader Pod (MVP-2) — exécution isolée des tests boîte noire
     # Image du grader (publiée sur le registre du cluster). Voir dockerfiles/grader/.

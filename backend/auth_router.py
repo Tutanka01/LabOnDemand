@@ -837,7 +837,7 @@ from fastapi import UploadFile, File
 
 
 @router.post("/users/import", dependencies=[Depends(is_admin)], status_code=status.HTTP_200_OK)
-async def import_users_csv(
+def import_users_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -855,7 +855,7 @@ async def import_users_csv(
             detail="Le fichier doit être au format CSV (.csv)",
         )
 
-    content = await file.read()
+    content = file.file.read()
     try:
         text_content = content.decode("utf-8-sig")  # gère le BOM UTF-8
     except UnicodeDecodeError:

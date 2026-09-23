@@ -10,21 +10,24 @@ Endpoints :
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+import anyio
+import anyio.to_thread
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .. import grader_service
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..deployment_service import deployment_service
 from ..models import (
     Assignment,
@@ -356,7 +359,7 @@ def create_and_enroll_student(
 
 
 @classrooms_router.post("/{cid}/students/import", status_code=200, dependencies=[Depends(is_teacher_or_admin)])
-async def import_students_csv(
+def import_students_csv(
     cid: int,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -368,7 +371,7 @@ async def import_students_csv(
     if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Le fichier doit être au format CSV (.csv)")
 
-    content = await file.read()
+    content = file.file.read()
     try:
         text_content = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -510,13 +513,26 @@ def archive_assignment(
     db.commit()
 
 
-@classrooms_router.post("/{cid}/assignments/{aid}/deploy-all", response_model=BulkSpawnReport, dependencies=[Depends(is_teacher_or_admin)])
-async def deploy_assignment_to_class(
-    cid: int,
-    aid: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+@dataclass(frozen=True)
+class _BulkSpawnSpec:
+    """Paramètres d'un déploiement en masse, en valeurs simples (partageables entre threads)."""
+
+    assignment_id: int
+    slug: str
+    image: str
+    port: int
+    service_type: str
+    deployment_type: str
+    cpu_request: str
+    cpu_limit: str
+    memory_request: str
+    memory_limit: str
+
+
+def _prepare_bulk_spawn(
+    cid: int, aid: int, current_user: User, db: Session
+) -> Tuple[_BulkSpawnSpec, List[Tuple[int, str]]]:
+    """Contrôles d'accès et lecture du devoir (thread du pool, session de la requête)."""
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
 
@@ -536,59 +552,151 @@ async def deploy_assignment_to_class(
         .all()
     )
     students = [db.query(User).filter(User.id == e.user_id, User.is_active == True).first() for e in enrollments]  # noqa: E712
-    students = [s for s in students if s]
+    student_refs = [(s.id, s.username) for s in students if s]
 
-    sem = asyncio.Semaphore(5)
-    slug = _slugify(asgn.title)
+    spec = _BulkSpawnSpec(
+        assignment_id=aid,
+        slug=_slugify(asgn.title),
+        image=template.default_image if template else "nginx:latest",
+        port=template.default_port if template else 80,
+        service_type=template.default_service_type if template else "NodePort",
+        deployment_type=template.deployment_type if template else "custom",
+        cpu_request=_preset_cpu(asgn.cpu_preset, "request"),
+        cpu_limit=_preset_cpu(asgn.cpu_preset, "limit"),
+        memory_request=_preset_ram(asgn.ram_preset, "request"),
+        memory_limit=_preset_ram(asgn.ram_preset, "limit"),
+    )
+    # Lecture terminée : on rend la connexion au pool pendant les déploiements
+    # (qui peuvent durer plusieurs minutes).
+    db.rollback()
+    return spec, student_refs
 
-    async def spawn_one(student: User) -> BulkSpawnResult:
-        async with sem:
-            dep_name = f"{slug}-u{student.id}"
+
+def _record_spawn(aid: int, student_id: int, deployment_id: Optional[int], error: Optional[str]) -> None:
+    """Trace le résultat d'un déploiement étudiant (session dédiée, sans lever)."""
+    try:
+        with SessionLocal() as db:
+            db.add(
+                AssignmentDeployment(
+                    assignment_id=aid,
+                    user_id=student_id,
+                    deployment_id=deployment_id,
+                    spawn_status="error" if error is not None else "ok",
+                    spawn_error=error[:500] if error is not None else None,
+                )
+            )
+            db.commit()
+    except Exception as exc:
+        audit_logger.exception(
+            "assignment_spawn_record_failed",
+            extra={
+                "extra_fields": {
+                    "assignment_id": aid,
+                    "user_id": student_id,
+                    "error": str(exc),
+                }
+            },
+        )
+
+
+def _spawn_student_lab(spec: _BulkSpawnSpec, student_id: int, username: str) -> BulkSpawnResult:
+    """Déploie le lab d'un étudiant. Exécuté dans un thread de travail.
+
+    Ne reçoit que des valeurs simples et ouvre ses propres sessions DB : aucun
+    objet Session/ORM n'est partagé entre threads. Aucune session n'est tenue
+    pendant les appels Kubernetes (longs), pour ne pas épuiser le pool DB.
+    Ne lève jamais : un échec reste local à l'étudiant concerné.
+    """
+    dep_name = f"{spec.slug}-u{student_id}"
+    try:
+        with SessionLocal() as db:
             existing = db.query(Deployment).filter(
-                Deployment.user_id == student.id,
+                Deployment.user_id == student_id,
                 Deployment.name == dep_name,
                 Deployment.status.in_(["active", "paused"]),
             ).first()
-            if existing:
-                return BulkSpawnResult(user_id=student.id, username=student.username, status="skipped", deployment_name=dep_name)
-            try:
-                image = template.default_image if template else "nginx:latest"
-                port = template.default_port if template else 80
-                svc_type = template.default_service_type if template else "NodePort"
-                dep_type = template.deployment_type if template else "custom"
+            # Chargé puis détaché à la fermeture : attributs colonnes lisibles
+            # dans ce thread par create_deployment.
+            student = None if existing else db.query(User).filter(User.id == student_id).first()
+    except Exception as exc:
+        audit_logger.exception(
+            "assignment_spawn_lookup_failed",
+            extra={
+                "extra_fields": {
+                    "assignment_id": spec.assignment_id,
+                    "user_id": student_id,
+                    "error": str(exc),
+                }
+            },
+        )
+        return BulkSpawnResult(user_id=student_id, username=username, status="error", error=str(exc)[:200])
 
-                result = await deployment_service.create_deployment(
-                    name=dep_name,
-                    image=image,
-                    replicas=1,
-                    namespace=None,
-                    create_service=True,
-                    service_port=port,
-                    service_target_port=port,
-                    service_type=svc_type,
-                    deployment_type=dep_type,
-                    cpu_request=_preset_cpu(asgn.cpu_preset, "request"),
-                    cpu_limit=_preset_cpu(asgn.cpu_preset, "limit"),
-                    memory_request=_preset_ram(asgn.ram_preset, "request"),
-                    memory_limit=_preset_ram(asgn.ram_preset, "limit"),
-                    additional_labels={"labondemand.io/assignment-id": str(aid)},
-                    current_user=student,
-                )
-                dep_id = None
-                if isinstance(result, dict) and "deployment_db_id" in result:
-                    dep_id = result["deployment_db_id"]
-                ad = AssignmentDeployment(assignment_id=aid, user_id=student.id, deployment_id=dep_id, spawn_status="ok")
-                db.add(ad)
-                db.commit()
-                return BulkSpawnResult(user_id=student.id, username=student.username, status="ok", deployment_name=dep_name)
-            except Exception as exc:
-                db.rollback()
-                ad = AssignmentDeployment(assignment_id=aid, user_id=student.id, spawn_status="error", spawn_error=str(exc)[:500])
-                db.add(ad)
-                db.commit()
-                return BulkSpawnResult(user_id=student.id, username=student.username, status="error", error=str(exc)[:200])
+    if existing:
+        return BulkSpawnResult(user_id=student_id, username=username, status="skipped", deployment_name=dep_name)
+    if student is None:
+        return BulkSpawnResult(user_id=student_id, username=username, status="error", error="Utilisateur introuvable")
 
-    results = await asyncio.gather(*[spawn_one(s) for s in students])
+    try:
+        result = deployment_service.create_deployment(
+            name=dep_name,
+            image=spec.image,
+            replicas=1,
+            namespace=None,
+            create_service=True,
+            service_port=spec.port,
+            service_target_port=spec.port,
+            service_type=spec.service_type,
+            deployment_type=spec.deployment_type,
+            cpu_request=spec.cpu_request,
+            cpu_limit=spec.cpu_limit,
+            memory_request=spec.memory_request,
+            memory_limit=spec.memory_limit,
+            additional_labels={"labondemand.io/assignment-id": str(spec.assignment_id)},
+            current_user=student,
+        )
+    except Exception as exc:
+        _record_spawn(spec.assignment_id, student_id, None, str(exc))
+        return BulkSpawnResult(user_id=student_id, username=username, status="error", error=str(exc)[:200])
+
+    dep_id = None
+    if isinstance(result, dict) and "deployment_db_id" in result:
+        dep_id = result["deployment_db_id"]
+    _record_spawn(spec.assignment_id, student_id, dep_id, None)
+    return BulkSpawnResult(user_id=student_id, username=username, status="ok", deployment_name=dep_name)
+
+
+async def _run_bulk_spawn(
+    spec: _BulkSpawnSpec, students: List[Tuple[int, str]], concurrency: int
+) -> List[BulkSpawnResult]:
+    """Déploie les labs en parallèle, au plus `concurrency` threads à la fois.
+
+    L'ordre des résultats suit celui des étudiants.
+    """
+    limiter = anyio.CapacityLimiter(max(1, concurrency))
+    results: List[Optional[BulkSpawnResult]] = [None] * len(students)
+
+    async def _spawn(index: int, student_id: int, username: str) -> None:
+        results[index] = await anyio.to_thread.run_sync(
+            _spawn_student_lab, spec, student_id, username, limiter=limiter
+        )
+
+    async with anyio.create_task_group() as tg:
+        for index, (student_id, username) in enumerate(students):
+            tg.start_soon(_spawn, index, student_id, username)
+    return [r for r in results if r is not None]
+
+
+@classrooms_router.post("/{cid}/assignments/{aid}/deploy-all", response_model=BulkSpawnReport, dependencies=[Depends(is_teacher_or_admin)])
+async def deploy_assignment_to_class(
+    cid: int,
+    aid: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Async uniquement pour orchestrer les threads : tout le travail bloquant
+    # (DB, Kubernetes) est déporté.
+    spec, students = await run_in_threadpool(_prepare_bulk_spawn, cid, aid, current_user, db)
+    results = await _run_bulk_spawn(spec, students, settings.BULK_SPAWN_CONCURRENCY)
     ok = sum(1 for r in results if r.status == "ok")
     skipped = sum(1 for r in results if r.status == "skipped")
     errors = sum(1 for r in results if r.status == "error")
@@ -948,6 +1056,18 @@ async def test_now(
     db: Session = Depends(get_db),
 ):
     """Lance un Grading Run contre le lab de démo du prof, pour valider ses tests."""
+    # Async uniquement pour planifier la tâche de fond : la partie DB est déportée.
+    response = await run_in_threadpool(_queue_teacher_test_run, cid, aid, current_user, db)
+    grader_service.schedule_grading(response.id)
+    audit_logger.info(
+        "grading_run_started",
+        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": response.id, "trigger": "teacher"}},
+    )
+    return response
+
+
+def _queue_teacher_test_run(cid: int, aid: int, current_user: User, db: Session) -> GradingRunResponse:
+    """Contrôles d'accès et création du run « teacher » (thread du pool)."""
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
     _get_assignment_or_404(cid, aid, db)
@@ -970,12 +1090,6 @@ async def test_now(
     db.add(run)
     db.commit()
     db.refresh(run)
-
-    asyncio.create_task(grader_service.run_grading(run.id))
-    audit_logger.info(
-        "grading_run_started",
-        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "teacher"}},
-    )
     return grader_service.run_to_response(run, for_student=False)
 
 
@@ -1016,6 +1130,20 @@ async def run_tests_all(
     db: Session = Depends(get_db),
 ):
     """(Re)lance les tests sur toute la classe : un Grading Run par étudiant ayant un lab."""
+    # Async uniquement pour planifier le lot : la partie DB est déportée et les
+    # runs s'exécutent en arrière-plan, au plus BULK_GRADING_CONCURRENCY à la fois.
+    run_ids = await run_in_threadpool(_queue_class_grading_runs, cid, aid, current_user, db)
+    grader_service.schedule_grading_batch(run_ids, settings.BULK_GRADING_CONCURRENCY)
+
+    audit_logger.info(
+        "grading_runs_started_bulk",
+        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids)}},
+    )
+    return {"queued": len(run_ids)}
+
+
+def _queue_class_grading_runs(cid: int, aid: int, current_user: User, db: Session) -> List[int]:
+    """Contrôles d'accès et création des runs de la classe (thread du pool)."""
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
     _get_assignment_or_404(cid, aid, db)
@@ -1042,15 +1170,7 @@ async def run_tests_all(
         db.flush()
         run_ids.append(run.id)
     db.commit()
-
-    for rid in run_ids:
-        asyncio.create_task(grader_service.run_grading(rid))
-
-    audit_logger.info(
-        "grading_runs_started_bulk",
-        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids)}},
-    )
-    return {"queued": len(run_ids)}
+    return run_ids
 
 
 # ── TEACHER DASHBOARD ──────────────────────────────────────────────────────────

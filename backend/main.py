@@ -8,11 +8,9 @@ import logging
 import time
 import uuid
 import uvicorn
-from datetime import datetime
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 
 from .config import settings
 from .logging_config import (
@@ -297,45 +295,24 @@ async def get_status():
     }
 
 
+@app.on_event("startup")
+async def configure_threadpool() -> None:
+    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE)."""
+    size = settings.configure_threadpool()
+    logger.info("threadpool_configured", extra={"extra_fields": {"size": size}})
+
+
 @app.get("/api/v1/health")
-async def health_check(db: Session = Depends(get_db)):
-    """Vérification de santé : DB, Redis et Kubernetes."""
-    result = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "db": "ok",
-        "redis": "ok",
-        "k8s": "ok",
-    }
-    healthy = True
+async def health_check() -> dict:
+    """Vérification de santé : DB, Redis et Kubernetes.
 
-    # --- Base de données ---
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception as e:
-        result["db"] = f"error: {e}"
-        healthy = False
+    Sondes en parallèle hors de la boucle, avec un délai court
+    (HEALTH_CHECK_TIMEOUT_SECONDS) ; toujours 200, status "healthy" ou
+    "degraded" (voir backend/health.py).
+    """
+    from .health import run_health_checks
 
-    # --- Redis ---
-    try:
-        from .session_store import session_store
-
-        session_store._r.ping()
-    except Exception as e:
-        result["redis"] = f"error: {e}"
-        healthy = False
-
-    # --- Kubernetes ---
-    try:
-        from kubernetes import client as k8s_client
-
-        k8s_client.CoreV1Api().list_namespace(limit=1)
-    except Exception as e:
-        result["k8s"] = f"error: {e}"
-        healthy = False
-
-    result["status"] = "healthy" if healthy else "degraded"
-    return result
+    return await run_health_checks()
 
 
 # ============= ENDPOINT DE DIAGNOSTIC =============
@@ -360,9 +337,12 @@ if settings.DEBUG_MODE:
                     "details": None,
                 }
 
+            from starlette.concurrency import run_in_threadpool
+
             from .security import authenticate_user
 
-            user = authenticate_user(db, username, password)
+            # Hachage bcrypt + requête DB : hors de la boucle d'événements.
+            user = await run_in_threadpool(authenticate_user, db, username, password)
 
             if user:
                 return {

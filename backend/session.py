@@ -112,7 +112,7 @@ def setup_session_handler(app: FastAPI):
                 # Nettoyage toutes les heures
                 await asyncio.sleep(3600)
                 try:
-                    cleaned_count = session_store.cleanup()
+                    cleaned_count = await asyncio.to_thread(session_store.cleanup)
                     if cleaned_count:
                         logger.info(
                             "session_cleanup",

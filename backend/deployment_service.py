@@ -1072,7 +1072,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "paused_by": paused_by_values[0] if paused_by_values else None,
         }
 
-    async def pause_application(
+    def pause_application(
         self, namespace: str, name: str, current_user: User
     ) -> Dict[str, Any]:
         resolved = self._resolve_target_deployments(namespace, name, current_user)
@@ -1155,7 +1155,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "message": "Application mise en pause. Les pods seront libérés dans quelques secondes.",
         }
 
-    async def resume_application(
+    def resume_application(
         self, namespace: str, name: str, current_user: User
     ) -> Dict[str, Any]:
         resolved = self._resolve_target_deployments(namespace, name, current_user)
@@ -1524,7 +1524,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "spec": {"selector": {"app": name}, "type": service_type, "ports": ports},
         }
 
-    async def create_deployment(
+    def create_deployment(
         self,
         name: str,
         image: str,
@@ -1545,7 +1545,10 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         existing_pvc_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Méthode principale pour créer un déploiement
+        Méthode principale pour créer un déploiement.
+
+        Synchrone (appels K8s et DB bloquants) : un appelant async doit passer
+        par un thread (run_in_threadpool / anyio.to_thread.run_sync).
         """
         # Validation et formatage
         name = validate_k8s_name(name)
@@ -1567,7 +1570,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         effective_namespace = build_user_namespace(current_user)
 
         # S'assurer que le namespace existe (idempotent)
-        ns_ok = await ensure_namespace_exists(effective_namespace)
+        ns_ok = ensure_namespace_exists(effective_namespace)
         if not ns_ok:
             logger.error(
                 "namespace_unavailable",
@@ -1591,8 +1594,20 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         try:
             role_val = getattr(current_user.role, "value", str(current_user.role))
             ensure_namespace_baseline(effective_namespace, str(role_val))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Best-effort : le déploiement continue, mais quota/limites absents
+            # doivent rester visibles pour l'exploitation.
+            logger.warning(
+                "namespace_baseline_failed",
+                exc_info=True,
+                extra={
+                    "extra_fields": {
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "error": str(exc),
+                    }
+                },
+            )
 
         # Valider les permissions
         self.validate_permissions(current_user, deployment_type)
@@ -1653,7 +1668,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 planned_pods=2,
                 planned_deployments=2,
             )
-            result = await self._create_wordpress_stack(
+            result = self._create_wordpress_stack(
                 name=name,
                 effective_namespace=effective_namespace,
                 service_type=service_type,
@@ -1726,7 +1741,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 planned_deployments=2,
             )
 
-            result = await self._create_mysql_pma_stack(
+            result = self._create_mysql_pma_stack(
                 name=name,
                 effective_namespace=effective_namespace,
                 service_type=service_type,
@@ -1811,7 +1826,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 planned_deployments=3,
             )
 
-            result = await self._create_lamp_stack(
+            result = self._create_lamp_stack(
                 name=name,
                 effective_namespace=effective_namespace,
                 service_type=service_type,

@@ -115,7 +115,7 @@ def _soft_delete_deployment(db: Session, user_id: int, name: str) -> None:
 
 
 @router.get("/deployments/labondemand")
-async def get_labondemand_deployments(
+def get_labondemand_deployments(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -259,7 +259,17 @@ async def get_labondemand_deployments(
             )
 
         return {"deployments": deployments, "k8s_available": True}
-    except Exception:
+    except Exception as exc:
+        # Réponse dégradée conservée pour l'UI, mais l'erreur doit rester visible.
+        logger.exception(
+            "labondemand_deployments_list_failed",
+            extra={
+                "extra_fields": {
+                    "user_id": getattr(current_user, "id", None),
+                    "error": str(exc),
+                }
+            },
+        )
         return {"deployments": [], "k8s_available": False}
 
 
@@ -267,7 +277,7 @@ async def get_labondemand_deployments(
 
 
 @router.get("/deployments/{namespace}/{name}/details")
-async def get_deployment_details(
+def get_deployment_details(
     namespace: str, name: str, current_user: User = Depends(get_current_user)
 ):
     """Obtenir les détails d'un déploiement."""
@@ -668,7 +678,7 @@ async def get_deployment_details(
 
 
 @router.get("/deployments/{namespace}/{name}/credentials")
-async def get_deployment_credentials(
+def get_deployment_credentials(
     namespace: str, name: str, current_user: User = Depends(get_current_user)
 ):
     """Récupère les identifiants (secrets) associés à un déploiement LabOnDemand."""
@@ -895,7 +905,7 @@ async def get_deployment_credentials(
 
 @router.post("/pods")
 @limiter.limit(lambda: settings.RATE_LIMIT_DEPLOY)  # par utilisateur (rate_limit.py)
-async def create_pod(
+def create_pod(
     request: Request,
     name: str,
     image: str,
@@ -927,7 +937,7 @@ async def create_pod(
 
 @router.post("/deployments")
 @limiter.limit(lambda: settings.RATE_LIMIT_DEPLOY)  # par utilisateur (rate_limit.py)
-async def create_deployment(
+def create_deployment(
     request: Request,
     name: str,
     image: str,
@@ -958,7 +968,7 @@ async def create_deployment(
             }
         },
     )
-    return await deployment_service.create_deployment(
+    return deployment_service.create_deployment(
         name=name,
         image=image,
         replicas=replicas,
@@ -982,7 +992,7 @@ async def create_deployment(
 
 
 @router.post("/deployments/{namespace}/{name}/pause")
-async def pause_deployment(
+def pause_deployment(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
@@ -990,7 +1000,7 @@ async def pause_deployment(
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.pause_application(namespace, name, current_user)
+        return deployment_service.pause_application(namespace, name, current_user)
     except HTTPException:
         raise
     except Exception as exc:
@@ -998,7 +1008,7 @@ async def pause_deployment(
 
 
 @router.post("/deployments/{namespace}/{name}/resume")
-async def resume_deployment(
+def resume_deployment(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
@@ -1006,7 +1016,7 @@ async def resume_deployment(
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.resume_application(
+        return deployment_service.resume_application(
             namespace, name, current_user
         )
     except HTTPException:
@@ -1019,7 +1029,7 @@ async def resume_deployment(
 
 
 @router.delete("/pods/{namespace}/{name}")
-async def delete_pod(
+def delete_pod(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
@@ -1038,7 +1048,7 @@ async def delete_pod(
 
 
 @router.delete("/deployments/{namespace}/{name}")
-async def delete_deployment(
+def delete_deployment(
     namespace: str,
     name: str,
     delete_service: bool = True,

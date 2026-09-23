@@ -58,7 +58,7 @@ chmod 644 /workdir/index.php
 class LAMPDeployMixin:
     """Fournit _create_lamp_stack() pour DeploymentService."""
 
-    async def _create_lamp_stack(
+    def _create_lamp_stack(
         self,
         name: str,
         effective_namespace: str,
