@@ -163,6 +163,9 @@ class Settings:
     # Déploiements simultanés (threads dédiés) lors d'un déploiement en masse
     # d'un devoir sur une classe, par requête.
     BULK_SPAWN_CONCURRENCY = max(1, int(os.getenv("BULK_SPAWN_CONCURRENCY", "5")))
+    # Grading Runs simultanés lors d'un « lancer les tests sur toute la classe »
+    # (par lot ; les runs suivants attendent leur tour en arrière-plan).
+    BULK_GRADING_CONCURRENCY = max(1, int(os.getenv("BULK_GRADING_CONCURRENCY", "5")))
 
     @staticmethod
     def configure_threadpool() -> int:

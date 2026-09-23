@@ -10,7 +10,6 @@ Endpoints :
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import json
@@ -1057,6 +1056,18 @@ async def test_now(
     db: Session = Depends(get_db),
 ):
     """Lance un Grading Run contre le lab de démo du prof, pour valider ses tests."""
+    # Async uniquement pour planifier la tâche de fond : la partie DB est déportée.
+    response = await run_in_threadpool(_queue_teacher_test_run, cid, aid, current_user, db)
+    grader_service.schedule_grading(response.id)
+    audit_logger.info(
+        "grading_run_started",
+        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": response.id, "trigger": "teacher"}},
+    )
+    return response
+
+
+def _queue_teacher_test_run(cid: int, aid: int, current_user: User, db: Session) -> GradingRunResponse:
+    """Contrôles d'accès et création du run « teacher » (thread du pool)."""
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
     _get_assignment_or_404(cid, aid, db)
@@ -1079,12 +1090,6 @@ async def test_now(
     db.add(run)
     db.commit()
     db.refresh(run)
-
-    asyncio.create_task(grader_service.run_grading(run.id))
-    audit_logger.info(
-        "grading_run_started",
-        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "teacher"}},
-    )
     return grader_service.run_to_response(run, for_student=False)
 
 
@@ -1125,6 +1130,20 @@ async def run_tests_all(
     db: Session = Depends(get_db),
 ):
     """(Re)lance les tests sur toute la classe : un Grading Run par étudiant ayant un lab."""
+    # Async uniquement pour planifier le lot : la partie DB est déportée et les
+    # runs s'exécutent en arrière-plan, au plus BULK_GRADING_CONCURRENCY à la fois.
+    run_ids = await run_in_threadpool(_queue_class_grading_runs, cid, aid, current_user, db)
+    grader_service.schedule_grading_batch(run_ids, settings.BULK_GRADING_CONCURRENCY)
+
+    audit_logger.info(
+        "grading_runs_started_bulk",
+        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids)}},
+    )
+    return {"queued": len(run_ids)}
+
+
+def _queue_class_grading_runs(cid: int, aid: int, current_user: User, db: Session) -> List[int]:
+    """Contrôles d'accès et création des runs de la classe (thread du pool)."""
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
     _get_assignment_or_404(cid, aid, db)
@@ -1151,15 +1170,7 @@ async def run_tests_all(
         db.flush()
         run_ids.append(run.id)
     db.commit()
-
-    for rid in run_ids:
-        asyncio.create_task(grader_service.run_grading(rid))
-
-    audit_logger.info(
-        "grading_runs_started_bulk",
-        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids)}},
-    )
-    return {"queued": len(run_ids)}
+    return run_ids
 
 
 # ── TEACHER DASHBOARD ──────────────────────────────────────────────────────────

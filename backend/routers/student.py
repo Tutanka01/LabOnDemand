@@ -13,7 +13,6 @@ qu'ouvrir le lab existant. Le lien devoir<->lab fait foi via ``AssignmentDeploym
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -21,6 +20,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .. import grader_service
 from ..database import get_db
@@ -400,6 +400,20 @@ async def run_tests(
     db: Session = Depends(get_db),
 ):
     """Lance un Grading Run (self-check formatif) contre mon lab."""
+    # Async uniquement pour planifier la tâche de fond : la partie DB est déportée.
+    response = await run_in_threadpool(_queue_self_check_run, aid, current_user, db)
+
+    # Le watcher tourne en tâche de fond ; l'étudiant suit la progression en pollant.
+    grader_service.schedule_grading(response.id)
+    audit_logger.info(
+        "grading_run_started",
+        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": response.id, "trigger": "student_self"}},
+    )
+    return response
+
+
+def _queue_self_check_run(aid: int, current_user: User, db: Session) -> GradingRunResponse:
+    """Contrôles et création du run « student_self » (thread du pool)."""
     assignment = _get_my_assignment_or_404(aid, current_user, db)
     if assignment.grading_mode == "none":
         raise HTTPException(status_code=400, detail="Les tests ne sont pas activés pour ce devoir")
@@ -419,13 +433,6 @@ async def run_tests(
     db.add(run)
     db.commit()
     db.refresh(run)
-
-    # Le watcher tourne en tâche de fond ; l'étudiant suit la progression en pollant.
-    asyncio.create_task(grader_service.run_grading(run.id))
-    audit_logger.info(
-        "grading_run_started",
-        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "student_self"}},
-    )
     return grader_service.run_to_response(run, for_student=True)
 
 

@@ -6,7 +6,8 @@ Sections :
   - dimensionnement du pool de threads AnyIO ;
   - services K8s synchrones (exécutés hors boucle par les appelants) ;
   - garde statique : endpoints/dépendances async limités à une liste blanche ;
-  - déploiement en masse : concurrence bornée, sessions par thread, échecs partiels.
+  - déploiement en masse : concurrence bornée, sessions par thread, échecs partiels ;
+  - Grading Runs : travail bloquant hors boucle, lots bornés, tâches référencées.
 """
 
 from __future__ import annotations
@@ -492,3 +493,139 @@ async def test_bulk_spawn_rejects_archived_assignment(teacher_client, db, bulk_c
     db.commit()
     resp = await teacher_client.post(f"/api/v1/classrooms/{cid}/assignments/{aid}/deploy-all")
     assert resp.status_code == 400
+
+
+# ============================================================
+# Grading Runs
+# ============================================================
+
+
+async def test_run_grading_does_blocking_work_off_loop(client, db, teacher_user, student_user, monkeypatch):
+    from backend import grader_service
+    from backend.models import GradingRun
+    from backend.tests.test_grading import _assignment, _classroom, _deployment, _run, _spec
+
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    _spec(db, asgn.id)
+    dep = _deployment(db, student_user.id)
+    run = _run(db, asgn.id, student_user.id, status="queued", trigger="student_self", deployment_id=dep.id)
+    logs = (
+        f"{grader_service.RESULT_BEGIN}\n"
+        '{"checks": [{"id": "h1", "name": "H1", "status": "pass", "weight": 1, "visibility": "student"}]}'
+        f"\n{grader_service.RESULT_END}\n"
+    )
+
+    threads: Dict[str, int] = {}
+
+    def record(name: str, result: Any = None, delay: float = 0.0):
+        def _fn(*_args, **_kwargs):
+            threads[name] = threading.get_ident()
+            if delay:
+                time.sleep(delay)
+            return result
+        return _fn
+
+    real_factory = grader_service.SessionLocal
+    session_threads = []
+
+    def tracking_session_local():
+        session_threads.append(threading.get_ident())
+        return real_factory()
+
+    # Infra K8s lente (0.5 s) : la boucle doit continuer de servir /status.
+    monkeypatch.setattr(grader_service, "ensure_grader_infra", record("infra", delay=0.5))
+    monkeypatch.setattr(grader_service, "_create_job", record("create"))
+    monkeypatch.setattr(grader_service, "_delete_job", record("delete"))
+    monkeypatch.setattr(
+        grader_service, "_read_job_status", record("status", type("S", (), {"succeeded": 1, "failed": 0})())
+    )
+    monkeypatch.setattr(grader_service, "_read_job_logs", record("logs", logs))
+    monkeypatch.setattr(grader_service, "SessionLocal", tracking_session_local)
+    monkeypatch.setattr(grader_service.settings, "GRADER_POLL_INTERVAL_SECONDS", 0)
+
+    await _assert_loop_responsive(client, grader_service.run_grading(run.id))
+
+    loop_thread = threading.get_ident()
+    assert set(threads) == {"infra", "create", "delete", "status", "logs"}
+    assert loop_thread not in threads.values()
+    assert session_threads and loop_thread not in session_threads
+    db.expire_all()
+    assert db.query(GradingRun).filter(GradingRun.id == run.id).one().status == "done"
+
+
+async def test_run_tests_all_bounds_concurrent_grading_runs(teacher_client, db, teacher_user, monkeypatch):
+    from backend import grader_service
+    from backend.config import Settings
+    from backend.models import GradingRun, User, UserRole
+    from backend.security import get_password_hash
+    from backend.tests.test_grading import _assignment, _classroom, _deployment, _enroll, _link_lab, _spec
+
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    _spec(db, asgn.id)
+    hashed = get_password_hash("GradePass@1234!")
+    for index in range(5):
+        user = User(
+            username=f"grade{index}",
+            email=f"grade{index}@test.lab",
+            hashed_password=hashed,
+            role=UserRole.student,
+            is_active=True,
+            auth_provider="local",
+        )
+        db.add(user)
+        db.commit()
+        _enroll(db, cls.id, user.id)
+        dep = _deployment(db, user.id, name=f"tp-test-u{user.id}")
+        _link_lab(db, asgn.id, user.id, dep.id)
+
+    monkeypatch.setattr(Settings, "BULK_GRADING_CONCURRENCY", 2)
+    state = {"active": 0, "max": 0}
+    seen = []
+
+    async def fake_run_grading(run_id: int) -> None:
+        state["active"] += 1
+        state["max"] = max(state["max"], state["active"])
+        await asyncio.sleep(0.05)
+        seen.append(run_id)
+        state["active"] -= 1
+
+    monkeypatch.setattr(grader_service, "run_grading", fake_run_grading)
+
+    resp = await teacher_client.post(f"/api/v1/classrooms/{cls.id}/assignments/{asgn.id}/run-tests-all")
+    assert resp.status_code == 200
+    assert resp.json() == {"queued": 5}
+
+    # Un seul lot en arrière-plan, référencé jusqu'à sa fin.
+    pending = list(grader_service._background_tasks)
+    assert len(pending) == 1
+    await asyncio.gather(*pending)
+    await asyncio.sleep(0)
+
+    run_ids = [r.id for r in db.query(GradingRun).filter(GradingRun.assignment_id == asgn.id)]
+    assert sorted(seen) == sorted(run_ids)
+    assert state["max"] == 2
+    assert not grader_service._background_tasks
+
+
+async def test_schedule_grading_keeps_a_reference_until_done(monkeypatch):
+    from backend import grader_service
+
+    release = asyncio.Event()
+    calls = []
+
+    async def fake_run_grading(run_id: int) -> None:
+        calls.append(run_id)
+        await release.wait()
+
+    monkeypatch.setattr(grader_service, "run_grading", fake_run_grading)
+    task = grader_service.schedule_grading(42)
+    assert task in grader_service._background_tasks
+    await asyncio.sleep(0)
+    release.set()
+    await task
+    await asyncio.sleep(0)
+    assert calls == [42]
+    assert task not in grader_service._background_tasks
+    assert grader_service.schedule_grading_batch([], 3) is None
