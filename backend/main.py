@@ -320,9 +320,12 @@ if settings.DEBUG_MODE:
                     "details": None,
                 }
 
+            from starlette.concurrency import run_in_threadpool
+
             from .security import authenticate_user
 
-            user = authenticate_user(db, username, password)
+            # Hachage bcrypt + requête DB : hors de la boucle d'événements.
+            user = await run_in_threadpool(authenticate_user, db, username, password)
 
             if user:
                 return {

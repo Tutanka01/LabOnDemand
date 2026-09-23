@@ -13,6 +13,22 @@ from ._helpers import raise_k8s_http
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 logger = logging.getLogger("labondemand.k8s")
 
+# Délai total (s) du ping : réponse en flux, donc sans délai de lecture par défaut.
+_PING_TIMEOUT_SECONDS = 5
+
+
+def _log_k8s_unavailable(event: str, current_user: User, **fields: Any) -> None:
+    """Journalise l'erreur masquée par une réponse dégradée ``k8s_available: False``."""
+    logger.exception(
+        event,
+        extra={
+            "extra_fields": {
+                "user_id": getattr(current_user, "id", None),
+                **fields,
+            }
+        },
+    )
+
 
 def _parse_cpu_metrics_to_millicores(cpu: str) -> float:
     """Convertit une valeur CPU des metrics (ex: '123456789n', '250m', '1') en millicores."""
@@ -30,7 +46,7 @@ def _parse_cpu_metrics_to_millicores(cpu: str) -> float:
 
 
 @router.get("/stats/cluster")
-async def get_cluster_stats(
+def get_cluster_stats(
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin)
 ):
@@ -182,18 +198,27 @@ async def get_cluster_stats(
 
 
 @router.get("/ping")
-async def ping_k8s(current_user: User = Depends(get_current_user)):
+def ping_k8s(current_user: User = Depends(get_current_user)):
     """Vérifie la disponibilité de l'API Kubernetes (léger)."""
     try:
         v1 = client.CoreV1Api()
-        v1.list_namespace(_preload_content=False, limit=1)
+        resp = v1.list_namespace(
+            _preload_content=False, limit=1, _request_timeout=_PING_TIMEOUT_SECONDS
+        )
+        # Réponse non consommée : rendre la connexion au pool urllib3.
+        resp.release_conn()
         return {"k8s": True}
-    except Exception:
+    except Exception as e:
+        # Sondé régulièrement par l'UI : avertissement sans trace complète.
+        logger.warning(
+            "k8s_ping_failed",
+            extra={"extra_fields": {"user_id": getattr(current_user, "id", None), "error": str(e)}},
+        )
         return {"k8s": False}
 
 
 @router.get("/pods")
-async def get_pods(current_user: User = Depends(get_current_user), _: bool = Depends(is_admin)):
+def get_pods(current_user: User = Depends(get_current_user), _: bool = Depends(is_admin)):
     """Lister tous les pods (admin uniquement)."""
     try:
         v1 = client.CoreV1Api()
@@ -211,11 +236,12 @@ async def get_pods(current_user: User = Depends(get_current_user), _: bool = Dep
         ]
         return {"pods": pods, "k8s_available": True}
     except Exception:
+        _log_k8s_unavailable("k8s_pods_list_failed", current_user)
         return {"pods": [], "k8s_available": False}
 
 
 @router.get("/namespaces")
-async def get_namespaces(current_user: User = Depends(get_current_user), _: bool = Depends(is_teacher_or_admin)):
+def get_namespaces(current_user: User = Depends(get_current_user), _: bool = Depends(is_teacher_or_admin)):
     """Lister les namespaces (admin ou enseignant)."""
     try:
         v1 = client.CoreV1Api()
@@ -223,11 +249,12 @@ async def get_namespaces(current_user: User = Depends(get_current_user), _: bool
         namespaces = [ns.metadata.name for ns in ret.items]
         return {"namespaces": namespaces, "k8s_available": True}
     except Exception:
+        _log_k8s_unavailable("k8s_namespaces_list_failed", current_user)
         return {"namespaces": [], "k8s_available": False}
 
 
 @router.get("/deployments")
-async def get_deployments(current_user: User = Depends(get_current_user), _: bool = Depends(is_teacher_or_admin)):
+def get_deployments(current_user: User = Depends(get_current_user), _: bool = Depends(is_teacher_or_admin)):
     """Lister tous les déploiements (admin ou enseignant)."""
     try:
         v1 = client.AppsV1Api()
@@ -238,11 +265,12 @@ async def get_deployments(current_user: User = Depends(get_current_user), _: boo
         ]
         return {"deployments": deployments, "k8s_available": True}
     except Exception:
+        _log_k8s_unavailable("k8s_deployments_list_failed", current_user)
         return {"deployments": [], "k8s_available": False}
 
 
 @router.get("/usage/my-apps")
-async def get_my_apps_usage(current_user: User = Depends(get_current_user)):
+def get_my_apps_usage(current_user: User = Depends(get_current_user)):
     """Retourne l'usage CPU/Mémoire par application de l'utilisateur courant."""
     try:
         core_v1 = client.CoreV1Api()
@@ -352,7 +380,7 @@ async def get_my_apps_usage(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/pods/{namespace}")
-async def get_pods_by_namespace(
+def get_pods_by_namespace(
     namespace: str,
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_teacher_or_admin)
@@ -375,4 +403,7 @@ async def get_pods_by_namespace(
         ]
         return {"namespace": namespace, "pods": pods, "k8s_available": True}
     except Exception:
+        _log_k8s_unavailable(
+            "k8s_namespace_pods_list_failed", current_user, namespace=namespace
+        )
         return {"namespace": namespace, "pods": [], "k8s_available": False}

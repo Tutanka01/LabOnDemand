@@ -4,7 +4,8 @@ Tests de non-blocage de la boucle asyncio et de bornage des appels K8s.
 Sections :
   - délais par défaut du client REST Kubernetes (backend/k8s_timeouts.py) ;
   - dimensionnement du pool de threads AnyIO ;
-  - services K8s synchrones (exécutés hors boucle par les appelants).
+  - services K8s synchrones (exécutés hors boucle par les appelants) ;
+  - garde statique : endpoints/dépendances async limités à une liste blanche.
 """
 
 from __future__ import annotations
@@ -236,3 +237,65 @@ def test_ensure_namespace_exists_reports_failure(mock_k8s):
         status=403
     )
     assert ensure_namespace_exists("labondemand-user-42") is False
+
+
+# ============================================================
+# Garde statique : endpoints et dépendances async
+# ============================================================
+
+# Seuls ces endpoints peuvent rester `async def` : ils attendent réellement
+# quelque chose (WebSocket, orchestration concurrente, tâche de fond) et
+# déportent chaque partie bloquante dans un thread. Tout autre endpoint doit
+# être `def` pour que FastAPI l'exécute dans le pool de threads.
+ASYNC_ENDPOINT_ALLOWLIST = {
+    "backend.main.read_root",
+    "backend.main.get_status",
+    "backend.main.health_check",
+    "backend.main.test_auth",
+    "backend.routers.k8s_terminal.ws_pod_terminal",
+    "backend.routers.classrooms.deploy_assignment_to_class",
+    "backend.routers.classrooms.test_now",
+    "backend.routers.classrooms.run_tests_all",
+    "backend.routers.student.run_tests",
+}
+
+
+def _endpoint_id(func) -> str:
+    func = inspect.unwrap(func)
+    return f"{func.__module__}.{func.__qualname__}"
+
+
+def _iter_dependency_calls(dependant):
+    for dep in dependant.dependencies:
+        if dep.call is not None:
+            yield dep.call
+        yield from _iter_dependency_calls(dep)
+
+
+def test_async_endpoints_are_allowlisted():
+    from backend.main import app
+
+    offenders = sorted(
+        _endpoint_id(route.endpoint)
+        for route in app.routes
+        if getattr(route, "endpoint", None) is not None
+        and _endpoint_id(route.endpoint).startswith("backend.")
+        and inspect.iscoroutinefunction(inspect.unwrap(route.endpoint))
+        and _endpoint_id(route.endpoint) not in ASYNC_ENDPOINT_ALLOWLIST
+    )
+    assert offenders == [], f"endpoints async hors liste blanche : {offenders}"
+
+
+def test_request_dependencies_are_sync():
+    from backend.main import app
+
+    offenders = set()
+    for route in app.routes:
+        dependant = getattr(route, "dependant", None)
+        if dependant is None:
+            continue
+        for call in _iter_dependency_calls(dependant):
+            module = getattr(call, "__module__", "") or ""
+            if module.startswith("backend.") and inspect.iscoroutinefunction(call):
+                offenders.add(f"{module}.{getattr(call, '__qualname__', call)}")
+    assert offenders == set(), f"dépendances async (bloquantes ?) : {sorted(offenders)}"

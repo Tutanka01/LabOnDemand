@@ -356,7 +356,7 @@ def create_and_enroll_student(
 
 
 @classrooms_router.post("/{cid}/students/import", status_code=200, dependencies=[Depends(is_teacher_or_admin)])
-async def import_students_csv(
+def import_students_csv(
     cid: int,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -368,7 +368,7 @@ async def import_students_csv(
     if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Le fichier doit être au format CSV (.csv)")
 
-    content = await file.read()
+    content = file.file.read()
     try:
         text_content = content.decode("utf-8-sig")
     except UnicodeDecodeError:
