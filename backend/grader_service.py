@@ -318,10 +318,21 @@ class _GradingPlan:
 def _prepare_run(run_id: int) -> Optional[_GradingPlan]:
     """Phase DB initiale (thread de travail, session dédiée).
 
-    Charge le run, résout la cible et construit le manifeste ; passe le run en
-    ``running``. Retourne None si le run est absent ou déjà clos en erreur.
+    Réclame le run (``queued`` → ``running``) par un UPDATE conditionnel
+    atomique, puis résout la cible et construit le manifeste. Retourne None si
+    le run est absent, n'est plus ``queued`` (déjà réclamé, ou clos par la
+    réconciliation pendant son attente) ou vient d'être clos en erreur.
     """
     with SessionLocal() as db:
+        claimed = (
+            db.query(GradingRun)
+            .filter(GradingRun.id == run_id, GradingRun.status == "queued")
+            .update({"status": "running", "started_at": _now()}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
+            logger.info("grading_run_not_claimed", extra={"extra_fields": {"run_id": run_id}})
+            return None
         run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
         if not run:
             return None
@@ -348,10 +359,6 @@ def _prepare_run(run_id: int) -> Optional[_GradingPlan]:
             target=target,
             custom_script=spec.custom_script,
         )
-
-        run.status = "running"
-        run.started_at = _now()
-        db.commit()
         return _GradingPlan(manifest=manifest, timeout=timeout)
 
 

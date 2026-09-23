@@ -49,8 +49,13 @@ LAB_GRACE_PERIOD_DAYS = int(
     os.getenv("LAB_GRACE_PERIOD_DAYS", "3")
 )  # délai avant suppression après pause
 CLEANUP_INTERVAL_MINUTES = int(os.getenv("CLEANUP_INTERVAL_MINUTES", "60"))
-# Délai au-delà duquel un Grading Run encore queued/running est considéré bloqué.
+# Délai (depuis son démarrage) au-delà duquel un Grading Run encore running est
+# considéré bloqué (Job disparu, watcher mort avec l'API).
 GRADING_RUN_STUCK_MINUTES = int(os.getenv("GRADING_RUN_STUCK_MINUTES", "15"))
+# Délai (depuis sa création) au-delà duquel un Grading Run encore queued est
+# considéré perdu. Plus long : un lancement sur toute la classe met les runs en
+# file (BULK_GRADING_CONCURRENCY) et les derniers attendent leur tour.
+GRADING_RUN_QUEUED_STUCK_MINUTES = int(os.getenv("GRADING_RUN_QUEUED_STUCK_MINUTES", "120"))
 
 _ROLE_TTL_DAYS = {
     "student": LAB_TTL_STUDENT_DAYS,
@@ -70,6 +75,70 @@ def compute_expires_at(role: str) -> datetime | None:
     if ttl is None:
         return None
     return datetime.now(timezone.utc) + timedelta(days=ttl)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def reconcile_stuck_grading_runs(db, now: datetime) -> list[int]:
+    """Clôt en error les Grading Runs bloqués ; retourne leurs identifiants.
+
+    - ``running`` depuis plus de GRADING_RUN_STUCK_MINUTES (depuis started_at) ;
+    - ``queued`` depuis plus de GRADING_RUN_QUEUED_STUCK_MINUTES (depuis
+      created_at) : la tâche de fond a été perdue (redémarrage de l'API).
+
+    Chaque run est clos par un UPDATE conditionnel sur le statut lu : un run
+    réclamé entre-temps par son watcher (queued → running) n'est pas écrasé.
+    Le Job grader éventuel est supprimé (filet en plus du TTL K8s).
+    """
+    from ..models import GradingRun
+    from .. import grader_service
+
+    limits = {
+        "running": now - timedelta(minutes=GRADING_RUN_STUCK_MINUTES),
+        "queued": now - timedelta(minutes=GRADING_RUN_QUEUED_STUCK_MINUTES),
+    }
+    candidates = (
+        db.query(GradingRun.id, GradingRun.status, GradingRun.started_at, GradingRun.created_at)
+        .filter(GradingRun.status.in_(list(limits)))
+        .all()
+    )
+    reconciled: list[int] = []
+    for run_id, status, started_at, created_at in candidates:
+        reference = _as_utc(started_at if status == "running" else created_at) or _as_utc(created_at)
+        if reference is None or reference > limits[status]:
+            continue
+        updated = (
+            db.query(GradingRun)
+            .filter(GradingRun.id == run_id, GradingRun.status == status)
+            .update(
+                {
+                    "status": "error",
+                    "error": "Run interrompu (réconciliation automatique)",
+                    "finished_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        if not updated:
+            continue
+        reconciled.append(run_id)
+        logger.info(
+            "grading_run_reconciled_stuck",
+            extra={"extra_fields": {"run_id": run_id, "previous_status": status}},
+        )
+        try:
+            grader_service._delete_job(grader_service.job_name_for_run(run_id))
+        except Exception as exc:
+            logger.warning(
+                "grading_job_cleanup_failed",
+                extra={"extra_fields": {"run_id": run_id, "error": str(exc)}},
+            )
+    return reconciled
 
 
 def _run_cleanup_cycle() -> None:
@@ -172,40 +241,9 @@ def _run_cleanup_cycle() -> None:
                 )
 
         # ── 1c. Réconciliation des Grading Runs bloqués ─────────────────────
-        #    Un run resté en queued/running au-delà d'un délai max (le Job a pu
-        #    disparaître, le watcher a pu mourir avec l'API) est marqué en error,
-        #    et son Job grader éventuel est supprimé (filet en plus du TTL K8s).
+        #    Voir reconcile_stuck_grading_runs (délais distincts queued/running).
         try:
-            from ..models import GradingRun
-            from .. import grader_service
-
-            stuck_limit = now - timedelta(minutes=GRADING_RUN_STUCK_MINUTES)
-            stuck_runs = (
-                db.query(GradingRun)
-                .filter(GradingRun.status.in_(["queued", "running"]))
-                .all()
-            )
-            for run in stuck_runs:
-                started = run.started_at or run.created_at
-                if started is not None and started.tzinfo is None:
-                    started = started.replace(tzinfo=timezone.utc)
-                if started is None or started > stuck_limit:
-                    continue
-                run.status = "error"
-                run.error = "Run interrompu (réconciliation automatique)"
-                run.finished_at = now
-                db.commit()
-                logger.info(
-                    "grading_run_reconciled_stuck",
-                    extra={"extra_fields": {"run_id": run.id}},
-                )
-                try:
-                    grader_service._delete_job(grader_service.job_name_for_run(run.id))
-                except Exception as exc:
-                    logger.warning(
-                        "grading_job_cleanup_failed",
-                        extra={"extra_fields": {"run_id": run.id, "error": str(exc)}},
-                    )
+            reconcile_stuck_grading_runs(db, now)
         except Exception as exc:
             db.rollback()
             logger.warning(

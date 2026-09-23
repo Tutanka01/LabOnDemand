@@ -7,8 +7,10 @@ Couvre :
   - pipeline « pull » complet du watcher avec K8s mocké.
 """
 import json
+from datetime import datetime, timedelta, timezone
 
 from backend import grader_service
+from backend.tasks import cleanup
 from backend.models import (
     Assignment,
     AssignmentDeployment,
@@ -352,3 +354,122 @@ async def test_run_grading_pull_pipeline(db, teacher_user, student_user, monkeyp
     assert refreshed.score_suggestion == "10/20"  # 2/(2+2)*20
     stored = json.loads(refreshed.results)
     assert {r["id"] for r in stored} == {"h1", "h2"}
+
+
+# ── Réclamation atomique & réconciliation ─────────────────────────────────
+
+
+def _queued_run_with_lab(db, teacher_user, student_user):
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    _spec(db, asgn.id)
+    dep = _deployment(db, student_user.id)
+    return _run(db, asgn.id, student_user.id, status="queued", trigger="student_self", deployment_id=dep.id)
+
+
+async def test_prepare_run_claims_a_queued_run_only_once(db, teacher_user, student_user):
+    run = _queued_run_with_lab(db, teacher_user, student_user)
+
+    first = grader_service._prepare_run(run.id)
+    second = grader_service._prepare_run(run.id)
+
+    assert first is not None
+    assert second is None
+    db.expire_all()
+    refreshed = db.query(GradingRun).filter(GradingRun.id == run.id).first()
+    assert refreshed.status == "running"
+    assert refreshed.started_at is not None
+
+
+async def test_run_closed_while_queued_is_never_started(db, teacher_user, student_user, monkeypatch):
+    """Un run clos par la réconciliation pendant son attente reste en error."""
+    run = _queued_run_with_lab(db, teacher_user, student_user)
+    run.status = "error"
+    run.error = "Run interrompu (réconciliation automatique)"
+    db.commit()
+
+    created_jobs = []
+    monkeypatch.setattr(grader_service, "ensure_grader_infra", lambda: None)
+    monkeypatch.setattr(grader_service, "_create_job", created_jobs.append)
+    monkeypatch.setattr(grader_service, "_delete_job", lambda name: None)
+
+    await grader_service.run_grading(run.id)
+
+    assert created_jobs == []
+    db.expire_all()
+    refreshed = db.query(GradingRun).filter(GradingRun.id == run.id).first()
+    assert refreshed.status == "error"
+    assert refreshed.started_at is None
+
+
+async def test_reconciler_uses_distinct_limits_for_queued_and_running(
+    db, teacher_user, student_user, monkeypatch
+):
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    now = datetime.now(timezone.utc)
+    running_stuck = _run(db, asgn.id, student_user.id, status="running",
+                         started_at=now - timedelta(minutes=20), created_at=now - timedelta(minutes=21))
+    running_recent = _run(db, asgn.id, student_user.id, status="running",
+                          started_at=now - timedelta(minutes=5), created_at=now - timedelta(hours=3))
+    queued_waiting = _run(db, asgn.id, student_user.id, status="queued",
+                          created_at=now - timedelta(minutes=30))
+    queued_lost = _run(db, asgn.id, student_user.id, status="queued",
+                       created_at=now - timedelta(hours=3))
+    finished = _run(db, asgn.id, student_user.id, status="done",
+                    started_at=now - timedelta(hours=5), created_at=now - timedelta(hours=5))
+
+    deleted_jobs = []
+    monkeypatch.setattr(grader_service, "_delete_job", deleted_jobs.append)
+    monkeypatch.setattr(cleanup, "GRADING_RUN_STUCK_MINUTES", 15)
+    monkeypatch.setattr(cleanup, "GRADING_RUN_QUEUED_STUCK_MINUTES", 120)
+
+    reconciled = cleanup.reconcile_stuck_grading_runs(db, now)
+
+    assert sorted(reconciled) == sorted([running_stuck.id, queued_lost.id])
+    assert sorted(deleted_jobs) == sorted(
+        grader_service.job_name_for_run(i) for i in (running_stuck.id, queued_lost.id)
+    )
+    db.expire_all()
+    statuses = {
+        r.id: r.status
+        for r in db.query(GradingRun).filter(GradingRun.assignment_id == asgn.id)
+    }
+    assert statuses == {
+        running_stuck.id: "error",
+        running_recent.id: "running",
+        queued_waiting.id: "queued",
+        queued_lost.id: "error",
+        finished.id: "done",
+    }
+
+
+async def test_reconciler_does_not_overwrite_a_run_claimed_meanwhile(
+    db, teacher_user, student_user, monkeypatch
+):
+    """Le watcher réclame le run entre la lecture et l'UPDATE du réconciliateur."""
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    now = datetime.now(timezone.utc)
+    run = _run(db, asgn.id, student_user.id, status="queued", created_at=now - timedelta(hours=3))
+
+    monkeypatch.setattr(grader_service, "_delete_job", lambda name: None)
+    real_query = db.query
+
+    def claim_then_query(*entities):
+        query = real_query(*entities)
+        if entities and entities[0] is GradingRun:
+            # La première requête sur le modèle complet est l'UPDATE conditionnel.
+            real_query(GradingRun).filter(GradingRun.id == run.id).update(
+                {"status": "running", "started_at": now}, synchronize_session=False
+            )
+            db.commit()
+            monkeypatch.setattr(db, "query", real_query)
+        return query
+
+    monkeypatch.setattr(db, "query", claim_then_query)
+
+    assert cleanup.reconcile_stuck_grading_runs(db, now) == []
+    db.expire_all()
+    refreshed = real_query(GradingRun).filter(GradingRun.id == run.id).first()
+    assert refreshed.status == "running"
