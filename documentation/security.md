@@ -115,6 +115,20 @@ Enforcement dans `security.py:validate_password_strength()`. Appliqué à :
 - La modification de mot de passe (`PUT /users/{id}`, `POST /change-password`, `PUT /me`)
 - L'import CSV (`POST /users/import`)
 
+### Stockage des mots de passe
+
+Hachage **bcrypt** (`$2b$`, coût 12) via la bibliothèque `bcrypt` utilisée
+directement (`backend/password_hashing.py`, exposé par `security.py`) ; passlib,
+non maintenu, a été retiré. Les hachages existants (`$2b$`, `$2a$`, `$2y$`)
+restent valides sans migration.
+
+bcrypt n'utilise que les **72 premiers octets** (UTF-8) du mot de passe. Comme
+passlib auparavant, l'application tronque explicitement à 72 octets, au hachage
+comme à la vérification : les comptes créés avec un mot de passe plus long
+continuent de se connecter avec le même mot de passe. Un mot de passe contenant
+un caractère NUL est refusé ; un hachage vide (comptes SSO) ou invalide ne
+vérifie jamais.
+
 ---
 
 ## Rate limiting

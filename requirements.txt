@@ -5,8 +5,7 @@ python-dotenv==1.1.0
 sqlalchemy==2.0.40
 pymysql==1.1.0
 cryptography==44.0.3
-bcrypt>=4.0.1,<4.1
-passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
 python-multipart==0.0.6
 pydantic[email]==2.11.4
 redis>=5.0.0

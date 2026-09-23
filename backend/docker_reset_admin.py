@@ -7,8 +7,6 @@ import os
 import sys
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from passlib.context import CryptContext
 
 # Configuration de la base de données
 DB_USER = os.getenv("DB_USER", "labondemand")
@@ -24,12 +22,11 @@ SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{D
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Configuration du contexte de hachage de mot de passe
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 def get_password_hash(password):
-    """Crée un hash du mot de passe"""
-    return pwd_context.hash(password)
+    """Crée un hash du mot de passe (même implémentation bcrypt que l'API)"""
+    # Import tardif : /app n'est ajouté à sys.path que dans __main__
+    from backend.password_hashing import hash_password
+    return hash_password(password)
 
 def reset_admin_account():
     """

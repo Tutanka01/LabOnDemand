@@ -1,5 +1,4 @@
 import logging
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import APIKeyCookie
 from sqlalchemy.orm import Session
@@ -30,21 +29,25 @@ except ImportError:
     from session_store import session_store
     from logging_config import shorten_token
 
-# Configuration du contexte de hachage de mot de passe
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Hachage des mots de passe : bcrypt direct, compatible avec les hachages
+# produits par passlib (voir password_hashing.py)
+try:
+    from .password_hashing import hash_password, verify_password as _verify_password_hash
+except ImportError:
+    from password_hashing import hash_password, verify_password as _verify_password_hash
 
 # Clé API pour la sécurité basée sur les cookies
 cookie_security = APIKeyCookie(name="session_id", auto_error=False)
 
 logger = logging.getLogger("labondemand.security")
 
-# Vérification des mots de passe
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+# Vérification des mots de passe (un hachage vide ou invalide renvoie False)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return _verify_password_hash(plain_password, hashed_password)
 
-# Génération de hachage de mot de passe
-def get_password_hash(password):
-    return pwd_context.hash(password)
+# Génération de hachage de mot de passe (bcrypt $2b$, coût 12)
+def get_password_hash(password: str) -> str:
+    return hash_password(password)
 
 # Validation de la force du mot de passe
 def validate_password_strength(password: str) -> bool:
