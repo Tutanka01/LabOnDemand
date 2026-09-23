@@ -8,7 +8,9 @@ Sections :
   - garde statique : endpoints/dépendances async limités à une liste blanche ;
   - déploiement en masse : concurrence bornée, sessions par thread, échecs partiels ;
   - Grading Runs : travail bloquant hors boucle, lots bornés, tâches référencées ;
-  - nettoyage périodique : cycle en thread, verrou Redis de leader, Redis en panne.
+  - nettoyage périodique : cycle en thread, verrou Redis de leader, Redis en panne ;
+  - réactivité : un appel Kubernetes lent (listing, cycle de vie, fichiers)
+    ne retarde pas une requête concurrente.
 """
 
 from __future__ import annotations
@@ -800,3 +802,106 @@ def test_cleanup_cycle_is_synchronous():
     from backend.tasks import cleanup
 
     assert not inspect.iscoroutinefunction(cleanup._run_cleanup_cycle)
+
+
+# ============================================================
+# Réactivité : un appel Kubernetes lent ne retarde pas /status
+# ============================================================
+
+_SLOW_K8S_SECONDS = 0.5
+
+
+def _slow(result=None, calls: list = None):
+    """side_effect K8s qui bloque son thread 0,5 s (appel réseau lent)."""
+
+    def _side_effect(*args, **kwargs):
+        if calls is not None:
+            calls.append({"args": args, "kwargs": kwargs, "on_loop": _on_event_loop()})
+        time.sleep(_SLOW_K8S_SECONDS)
+        return result
+
+    return _side_effect
+
+
+def _on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+async def test_slow_deployment_listing_does_not_block_loop(student_client, mock_k8s):
+    calls: list = []
+    mock_k8s["apps"].list_deployment_for_all_namespaces.side_effect = _slow(
+        MagicMock(items=[]), calls
+    )
+
+    resp = await _assert_loop_responsive(
+        student_client, student_client.get("/api/v1/k8s/deployments/labondemand")
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"deployments": [], "k8s_available": True}
+    assert [call["on_loop"] for call in calls] == [False]
+
+
+async def test_slow_lifecycle_action_does_not_block_loop(
+    student_client, mock_k8s, student_user
+):
+    from backend.k8s_utils import build_user_namespace
+
+    namespace = build_user_namespace(student_user)
+    deployment = MagicMock()
+    deployment.spec.replicas = 1
+    deployment.metadata.name = "mylab"
+    deployment.metadata.annotations = {}
+    deployment.metadata.labels = {
+        "managed-by": "labondemand",
+        "user-id": str(student_user.id),
+    }
+    deployment.status.ready_replicas = 1
+    deployment.status.available_replicas = 1
+    calls: list = []
+    mock_k8s["apps"].read_namespaced_deployment.side_effect = _slow(deployment, calls)
+    mock_k8s["apps"].patch_namespaced_deployment.return_value = deployment
+
+    resp = await _assert_loop_responsive(
+        student_client,
+        student_client.post(f"/api/v1/k8s/deployments/{namespace}/mylab/pause"),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["action"] == "paused"
+    assert [call["on_loop"] for call in calls] == [False]
+
+
+async def test_slow_file_listing_does_not_block_loop(
+    student_client, mock_k8s, student_user
+):
+    from unittest.mock import patch
+
+    from backend.k8s_utils import build_user_namespace
+    from backend.tests.test_files import _exec_result, _find_line, _make_pod
+
+    namespace = build_user_namespace(student_user)
+    mock_k8s["core"].read_namespaced_pod.return_value = _make_pod(
+        "vscode-1", namespace, student_user.id
+    )
+    calls: list = []
+    slow_exec = _slow(
+        _exec_result(_find_line("f", 12, 1700000000.0, "notes.md")), calls
+    )
+
+    with patch("backend.routers.k8s_files.k8s_stream", side_effect=slow_exec):
+        resp = await _assert_loop_responsive(
+            student_client,
+            student_client.get(
+                "/api/v1/k8s/files", params={"namespace": namespace, "pod": "vscode-1"}
+            ),
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert [entry["name"] for entry in resp.json()["entries"]] == ["notes.md"]
+    assert calls and not any(call["on_loop"] for call in calls)
+
