@@ -18,6 +18,8 @@ from .security import (
     is_admin, is_teacher_or_admin, limiter, validate_password_strength
 )
 from .session import set_session_cookie, clear_session_cookie
+from .rate_limit import ip_key, login_failure_throttle, login_ip_limit
+from .i18n import get_locale, t
 from .session_store import session_store
 from .config import settings
 from .sso import (
@@ -34,7 +36,9 @@ logger = logging.getLogger("labondemand.auth")
 audit_logger = logging.getLogger("labondemand.audit")
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")
+# Par IP (large : NAT des salles de TP) ; le seuil par nom d'utilisateur est
+# appliqué dans le corps (backend/rate_limit.py).
+@limiter.limit(login_ip_limit, key_func=ip_key)
 def login(
     user_credentials: UserLogin,
     response: Response,
@@ -55,7 +59,27 @@ def login(
             }
         },
     )
-    
+
+    # Trop d'échecs récents pour ce nom (toutes IP confondues) : refus
+    # immédiat, sans vérification bcrypt, même si le mot de passe est bon.
+    retry_after = login_failure_throttle.retry_after(user_credentials.username)
+    if retry_after:
+        audit_logger.warning(
+            "login_throttled",
+            extra={
+                "extra_fields": {
+                    "username": user_credentials.username,
+                    "client_ip": getattr(client, "host", None),
+                    "retry_after": retry_after,
+                }
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=t("error.login_throttled", get_locale(request), seconds=retry_after),
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
     if user and settings.SSO_ENABLED and user.auth_provider != "local":
         raise HTTPException(
@@ -63,6 +87,7 @@ def login(
             detail="Connexion locale désactivée pour les comptes SSO",
         )
     if not user:
+        login_failure_throttle.record_failure(user_credentials.username)
         audit_logger.warning(
             "login_failed",
             extra={
@@ -78,7 +103,9 @@ def login(
             detail="Nom d'utilisateur ou mot de passe incorrect",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    login_failure_throttle.clear(user_credentials.username)
+
     # Créer une session pour l'utilisateur
     session_id = create_session(user.id, user.username, user.role)
     session_preview = shorten_token(session_id)

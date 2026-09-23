@@ -31,7 +31,7 @@ from . import (
 from .security import limiter
 from .migrations import run_migrations
 from .seed import seed_admin, seed_templates, seed_runtime_configs
-from slowapi import _rate_limit_exceeded_handler
+from .rate_limit import rate_limit_exceeded_handler, validate_rate_limit_settings
 from slowapi.errors import RateLimitExceeded
 
 setup_logging()
@@ -71,9 +71,10 @@ app = FastAPI(
     debug=settings.DEBUG_MODE,
 )
 
-# Configuration du rate limiting
+# Configuration du rate limiting (429 traduit avec en-tête Retry-After)
+validate_rate_limit_settings()
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 @app.middleware("http")

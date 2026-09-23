@@ -8,11 +8,6 @@ import secrets
 import os
 import json
 import base64
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-# Limiteur de débit pour l'API
-limiter = Limiter(key_func=get_remote_address)
 
 # Gestion des importations pour fonctionner à la fois comme module et comme script
 try:
@@ -22,6 +17,9 @@ try:
     from .schemas import SessionData
     from .session_store import session_store
     from .logging_config import shorten_token
+    # Limiteur de débit : défini dans rate_limit.py, réexporté ici pour les
+    # imports existants (``from .security import limiter``).
+    from .rate_limit import limiter  # noqa: F401
 except ImportError:
     # Pour l'utilisation comme script direct
     from database import get_db
@@ -29,6 +27,7 @@ except ImportError:
     from schemas import SessionData
     from session_store import session_store
     from logging_config import shorten_token
+    from rate_limit import limiter  # noqa: F401
 
 # Configuration du contexte de hachage de mot de passe
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

@@ -8,7 +8,8 @@ Group overview:
 - **CORS**: allowed origins (comma-separated ``CORS_ORIGINS`` env var).
 - **Kubernetes**: cluster external IP, NodePort mode, user namespace prefix.
 - **Ingress**: toggle, base domain, IngressClass, TLS secret, per-type opt-in/out.
-- **Sessions**: Redis URL, expiry, cookie flags (SameSite, Secure, Domain).
+- **Sessions**: Redis URL, expiry, cookie flags (SameSite, Secure, Domain),
+  rate limiting (storage, login / deployment limits).
 - **SSO / OIDC**: issuer, client credentials, redirect URI, role-claim mapping.
 - **Admin**: default admin password seeded on first boot.
 
@@ -177,6 +178,22 @@ class Settings:
     # Laisser vide (cookie limité à l'hôte) sauf besoin explicite. Ne doit
     # jamais englober INGRESS_BASE_DOMAIN : contrôle bloquant au démarrage.
     COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
+    # Limitation de débit (backend/rate_limit.py). Syntaxe « limits » :
+    # « 30/minute », « 10/5minute », plusieurs limites séparées par « ; ».
+    # Compteurs dans Redis (partagés entre workers) ; RATE_LIMIT_STORAGE_URI
+    # permet un stockage dédié (« memory:// » = compteurs par processus).
+    RATE_LIMIT_STORAGE_URI = (
+        os.getenv("RATE_LIMIT_STORAGE_URI", "").strip() or REDIS_URL or "memory://"
+    )
+    # Connexion, par IP cliente : assez large pour une salle derrière un NAT.
+    RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "").strip() or "30/minute"
+    # Échecs de connexion par nom d'utilisateur (toutes IP confondues) ;
+    # remis à zéro par une connexion réussie.
+    RATE_LIMIT_LOGIN_FAILURES = (
+        os.getenv("RATE_LIMIT_LOGIN_FAILURES", "").strip() or "10/15minute"
+    )
+    # Création de déploiements, par utilisateur authentifié (IP à défaut).
+    RATE_LIMIT_DEPLOY = os.getenv("RATE_LIMIT_DEPLOY", "").strip() or "10/5minute"
 
     # SSO (OpenID Connect — OIDC)
     SSO_ENABLED = os.getenv("SSO_ENABLED", "False").lower() in ["true", "1", "yes"]

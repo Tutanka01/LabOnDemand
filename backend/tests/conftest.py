@@ -95,7 +95,8 @@ _db_mod.SessionLocal = _TestSession
 from backend.database import Base, get_db  # noqa: E402
 from backend.main import app  # noqa: E402  ← triggers init_kubernetes() + create_all()
 from backend.models import User, UserRole, Template, RuntimeConfig  # noqa: E402
-from backend.security import get_password_hash, create_session, limiter  # noqa: E402
+from backend.security import get_password_hash, create_session  # noqa: E402
+from backend.rate_limit import reset_rate_limit_state  # noqa: E402
 
 # Ensure schema exists (idempotent)
 Base.metadata.create_all(bind=_test_engine)
@@ -122,9 +123,10 @@ def _isolate():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     flush_fake_redis()
-    # Compteurs du limiteur : sans remise à zéro, les connexions des tests
-    # précédents déclenchent des 429 dans les suivants (ordre-dépendant).
-    limiter.reset()
+    # Compteurs de limitation (Redis, replis mémoire, état « Redis en panne ») :
+    # sans remise à zéro, les connexions des tests précédents déclenchent des
+    # 429 dans les suivants (ordre-dépendant).
+    reset_rate_limit_state()
 
 
 # ---------- Database session ----------

@@ -894,7 +894,7 @@ async def get_deployment_credentials(
 
 
 @router.post("/pods")
-@limiter.limit("10/5minute")
+@limiter.limit(lambda: settings.RATE_LIMIT_DEPLOY)  # par utilisateur (rate_limit.py)
 async def create_pod(
     request: Request,
     name: str,
@@ -926,7 +926,7 @@ async def create_pod(
 
 
 @router.post("/deployments")
-@limiter.limit("10/5minute")
+@limiter.limit(lambda: settings.RATE_LIMIT_DEPLOY)  # par utilisateur (rate_limit.py)
 async def create_deployment(
     request: Request,
     name: str,
