@@ -7,6 +7,17 @@
 # aucune base MariaDB ni Redis réels. La suite tourne en mémoire (SQLite,
 # faux Redis, client Kubernetes mocké — voir backend/tests/conftest.py) et ne
 # peut donc ni toucher le cluster ni les données locales.
+#
+# Profil opt-in « mariadb » : vérifie les migrations Alembic sur un vrai
+# MariaDB jetable (stockage en tmpfs, aucun port publié, aucun volume nommé) :
+#
+#   docker compose -f compose.test.yaml --profile mariadb run --rm --build tests-mariadb
+#   docker compose -f compose.test.yaml --profile mariadb down -v
+
+# Nom de projet propre : sans lui, Compose dériverait le même nom que la stack
+# applicative (répertoire du dépôt) et « down -v » viserait son projet.
+name: lod-test
+
 services:
   tests:
     build:
@@ -23,3 +34,46 @@ services:
       # après toute modification de requirements*.txt ou du Dockerfile.
       - ./backend:/app/backend
     command: ["python", "-m", "pytest", "backend/tests", "-q"]
+
+  mariadb-test:
+    image: mariadb:11.8
+    profiles: ["mariadb"]
+    environment:
+      # Identifiants jetables : ce serveur n'existe que le temps des tests.
+      MARIADB_ROOT_PASSWORD: lod-test-root
+      MARIADB_DATABASE: labondemand_test
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  tests-mariadb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    profiles: ["mariadb"]
+    depends_on:
+      mariadb-test:
+        condition: service_healthy
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      TEST_MARIADB: "1"
+      # Compte root du serveur jetable : chaque test crée puis supprime sa base.
+      TEST_MARIADB_URL: mysql+pymysql://root:lod-test-root@mariadb-test:3306/labondemand_test
+    volumes:
+      - ./backend:/app/backend
+    command:
+      - python
+      - -m
+      - pytest
+      - backend/tests/test_alembic_mariadb.py
+      - backend/tests/test_alembic_migrations.py
+      - backend/tests/test_migrations.py
+      - -v
