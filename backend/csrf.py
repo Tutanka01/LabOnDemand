@@ -25,13 +25,23 @@ qui peuvent poser des cookies sur le domaine parent (« cookie tossing »).
 
 Origines de confiance
 ---------------------
-- chaque entrée de ``CORS_ORIGINS`` (``*`` est ignoré : ce n'est pas une
-  origine et il ne doit jamais valider une requête authentifiée) ;
+- chaque entrée de ``CORS_ORIGINS``. ``*`` y est refusé au démarrage
+  (:func:`validate_cors_origins`) et, par défense en profondeur, ignoré ici :
+  ce n'est pas une origine et il ne doit jamais valider une requête
+  authentifiée ;
 - l'origine de ``FRONTEND_BASE_URL`` si elle est définie ;
 - l'origine de la requête elle-même : schéma (``X-Forwarded-Proto`` via
   uvicorn ``--proxy-headers``, proxy de confiance uniquement) + en-tête
   ``Host`` transmis par nginx (``Host: $http_host``, port inclus).
   ``X-Forwarded-Host`` n'est jamais utilisé.
+- la variante ``https://`` de ce même ``Host`` : derrière un terminateur TLS
+  placé devant nginx, la requête arrive en http alors que le navigateur
+  annonce ``Origin: https://…``. Accepter https pour une requête http est
+  sans risque (un navigateur ne ment pas sur ``Origin``, et une page https
+  du même hôte est au moins aussi fiable) ; l'inverse (http pour une
+  requête https) est refusé, une page http pouvant être injectée par un
+  attaquant réseau. Définir tout de même ``FRONTEND_BASE_URL`` en
+  production : c'est la source explicite et la plus robuste.
 
 La connexion (``POST /api/v1/auth/login``) est protégée comme le reste pour
 empêcher le « login CSRF » (connecter la victime au compte de l'attaquant).
@@ -46,7 +56,7 @@ from __future__ import annotations
 import logging
 import re
 from functools import lru_cache
-from typing import FrozenSet, Optional, Tuple
+from typing import FrozenSet, Iterable, Optional, Tuple
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
@@ -123,6 +133,26 @@ def normalize_origin(value: Optional[str], *, strict: bool = True) -> Optional[s
     return f"{scheme}://{host}:{port}"
 
 
+def validate_cors_origins(cors_origins: Iterable[str]) -> None:
+    """Refuse de démarrer si ``CORS_ORIGINS`` contient ``*``.
+
+    Le CORS de l'API autorise les cookies (``allow_credentials=True``) : avec
+    ``*``, Starlette renvoie l'origine de l'appelant dans
+    ``Access-Control-Allow-Origin``, si bien que n'importe quel site pourrait
+    lire les réponses authentifiées d'un utilisateur connecté.
+
+    Raises:
+        RuntimeError: ``*`` figure dans la liste.
+    """
+    if any(entry.strip() == "*" for entry in cors_origins):
+        raise RuntimeError(
+            "CORS_ORIGINS=* est refusé : les cookies de session étant autorisés "
+            "en CORS, tout site pourrait lire les réponses authentifiées. "
+            "Listez explicitement les origines du frontend "
+            "(ex. CORS_ORIGINS=https://labondemand.example.org)."
+        )
+
+
 @lru_cache(maxsize=8)
 def _configured_origins(cors_origins: Tuple[str, ...], frontend_base_url: Optional[str]) -> FrozenSet[str]:
     """Origines de confiance issues de la configuration (mises en cache)."""
@@ -164,13 +194,26 @@ def request_origin(scope: Scope) -> Optional[str]:
     return normalize_origin(f"{scheme}://{host.strip()}")
 
 
+def request_origins(scope: Scope) -> FrozenSet[str]:
+    """Origines « same-origin » acceptées : celle de la requête + sa variante https.
+
+    La variante https couvre un terminateur TLS placé devant nginx (voir
+    l'en-tête du module) ; aucune variante http n'est jamais ajoutée.
+    """
+    host = Headers(scope=scope).get("host")
+    if not host:
+        return frozenset()
+    origins = {request_origin(scope), normalize_origin(f"https://{host.strip()}")}
+    return frozenset(origin for origin in origins if origin)
+
+
 def is_trusted_origin(origin: Optional[str], scope: Scope) -> bool:
     """Vrai si l'origine (déjà normalisée) est de confiance pour cette requête."""
     if not origin:
         return False
     if origin in configured_trusted_origins():
         return True
-    return origin == request_origin(scope)
+    return origin in request_origins(scope)
 
 
 def _origin_rejection_reason(headers: Headers, scope: Scope, *, require_origin: bool) -> Optional[str]:

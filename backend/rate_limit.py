@@ -9,16 +9,25 @@ Modèle
   processus (les limites restent appliquées, par worker) et revérifie Redis
   avec un recul exponentiel ; en dernier recours l'erreur est avalée (la
   requête passe) plutôt que de transformer une panne Redis en erreurs 500.
-- **Connexion** : deux protections complémentaires.
+- **Connexion** : trois protections complémentaires.
 
-  1. Par IP (``RATE_LIMIT_LOGIN``, 30/minute par défaut) : large, car toute
-     une salle de TP peut sortir par la même IP (NAT universitaire).
-  2. Par nom d'utilisateur (``RATE_LIMIT_LOGIN_FAILURES``, 10 échecs / 15 min)
-     toutes IP confondues : freine le « password spraying » distribué. Le
-     compteur est remis à zéro par une connexion réussie ; une fois le seuil
-     atteint, la tentative est refusée (429 + ``Retry-After``) AVANT toute
-     vérification bcrypt. Les noms inconnus sont comptés comme les autres
-     (pas d'oracle d'énumération).
+  1. Par IP (``RATE_LIMIT_LOGIN``, 60/minute par défaut), toutes tentatives
+     confondues : simple garde-fou contre l'inondation, large car toute une
+     salle de TP peut sortir par la même IP (NAT universitaire).
+  2. Par couple (compte, IP) (``RATE_LIMIT_LOGIN_FAILURES``, 10 / 15 min) :
+     freine la force brute depuis une source sans bloquer le titulaire du
+     compte, qui se connecte depuis une autre IP.
+  3. Par compte, toutes IP confondues (``RATE_LIMIT_LOGIN_FAILURES_ACCOUNT``,
+     50 / 15 min) : plafonne le « password spraying » distribué. Une IP
+     déjà bloquée au niveau 2 n'alimente plus ce compteur : bloquer un compte
+     exige donc plusieurs sources (5 avec les valeurs par défaut).
+
+  Les niveaux 2 et 3 incrémentent leurs compteurs de façon atomique AVANT la
+  vérification bcrypt (pas de course « lecture puis écriture » entre
+  requêtes parallèles) ; au-delà du seuil, la tentative est refusée (429 +
+  ``Retry-After``) sans vérifier le mot de passe. Une connexion réussie remet
+  les deux compteurs à zéro. Les noms inconnus sont comptés comme les autres
+  (pas d'oracle d'énumération).
 - **Création de déploiements** (``RATE_LIMIT_DEPLOY``) : clé = identifiant de
   l'utilisateur authentifié, IP à défaut (une salle derrière un NAT ne
   partage donc pas le même quota).
@@ -33,11 +42,13 @@ de confiance est donc ignoré.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
 import math
 import time
 import unicodedata
-from typing import Callable, Dict, List, TypeVar
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional, TypeVar
 
 from limits import RateLimitItem, parse_many
 from limits.storage import MemoryStorage, storage_from_string
@@ -65,10 +76,19 @@ _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 _REDIS_SCHEMES = frozenset({"redis", "rediss"})
 
 # Paramètres validés au démarrage (syntaxe « limits »).
-LIMIT_SETTING_NAMES = ("RATE_LIMIT_LOGIN", "RATE_LIMIT_LOGIN_FAILURES", "RATE_LIMIT_DEPLOY")
+LIMIT_SETTING_NAMES = (
+    "RATE_LIMIT_LOGIN",
+    "RATE_LIMIT_LOGIN_FAILURES",
+    "RATE_LIMIT_LOGIN_FAILURES_ACCOUNT",
+    "RATE_LIMIT_DEPLOY",
+)
 
-# Espace de noms des compteurs d'échecs de connexion.
-_LOGIN_FAILURE_SCOPE = "login_failures"
+# Espaces de noms des compteurs de tentatives de connexion.
+_LOGIN_FAILURE_SCOPE_ACCOUNT_IP = "login_failures_account_ip"
+_LOGIN_FAILURE_SCOPE_ACCOUNT = "login_failures_account"
+# Seuls les premiers caractères d'un nom sont normalisés : coût borné même
+# si un appelant oublie la validation de longueur (voir schemas.UserLogin).
+_MAX_NORMALIZED_USERNAME_CHARS = 256
 # Après une erreur Redis, durée pendant laquelle le compteur d'échecs
 # utilise le stockage mémoire avant de retenter Redis.
 _LOGIN_THROTTLE_RETRY_PRIMARY_SECONDS = 30.0
@@ -215,11 +235,11 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSO
 
 
 # ============================================================
-# Échecs de connexion par nom d'utilisateur
+# Tentatives de connexion par compte et par (compte, IP)
 # ============================================================
 
 def normalize_username(username: str) -> str:
-    """Forme canonique (par excès) d'un nom d'utilisateur pour le compteur.
+    """Forme canonique (par excès) d'un nom d'utilisateur pour les compteurs.
 
     MariaDB compare les noms avec une collation insensible à la casse et
     aux accents, qui ignore aussi les espaces finaux : « Admin », « ádmin »
@@ -227,18 +247,49 @@ def normalize_username(username: str) -> str:
     attaquant contournerait le seuil en variant la graphie. On supprime
     donc casse, diacritiques, espaces et caractères de format ou de
     contrôle ; fusionner à tort deux noms réellement distincts est sans
-    danger (au pire un compteur partagé).
+    danger (au pire un compteur partagé). Les graphies que la collation
+    confond mais que Unicode ne rapproche pas (đ, ł, ø…) sont couvertes par
+    l'appelant, qui passe le nom tel qu'enregistré en base.
     """
-    decomposed = unicodedata.normalize("NFKD", (username or "").casefold())
+    truncated = (username or "")[:_MAX_NORMALIZED_USERNAME_CHARS]
+    decomposed = unicodedata.normalize("NFKD", truncated.casefold())
     return "".join(ch for ch in decomposed if unicodedata.category(ch)[0] not in ("M", "C", "Z"))
 
 
-class LoginFailureThrottle:
-    """Compteur d'échecs de connexion par nom d'utilisateur.
+def ip_bucket(ip: str) -> str:
+    """Regroupement d'IP du compteur (compte, IP) : IPv4 exacte, IPv6 par /64.
 
-    Fenêtre fixe démarrant au premier échec. Stocké dans Redis (partagé
-    entre workers) avec repli mémoire temporaire si Redis est injoignable.
-    Seule une empreinte SHA-256 du nom normalisé est stockée.
+    Un poste IPv6 dispose couramment de tout un /64 : sans regroupement,
+    chaque adresse du préfixe obtiendrait son propre quota d'échecs.
+    """
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if address.version == 6:
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+@dataclass(frozen=True)
+class LoginThrottleBlock:
+    """Tentative refusée : niveau atteint et délai avant la réouverture."""
+
+    scope: str  # "account_ip" ou "account"
+    retry_after: int
+
+
+class LoginFailureThrottle:
+    """Compteurs de tentatives de connexion : par (compte, IP) et par compte.
+
+    Fenêtres fixes ouvertes à la première tentative. Chaque tentative est
+    comptée (incrément atomique) avant la vérification du mot de passe, puis
+    une connexion réussie remet les compteurs à zéro : seuls les échecs
+    s'accumulent. Stocké dans Redis (partagé entre workers) avec repli
+    mémoire temporaire si Redis est injoignable. Seules des empreintes
+    SHA-256 (nom normalisé, IP) sont stockées.
     """
 
     def __init__(self, storage_uri: str) -> None:
@@ -249,18 +300,26 @@ class LoginFailureThrottle:
         self._primary_down_until = 0.0
 
     @staticmethod
-    def _items() -> List[RateLimitItem]:
-        value = settings.RATE_LIMIT_LOGIN_FAILURES
+    def _items(setting_name: str) -> List[RateLimitItem]:
+        value = getattr(settings, setting_name)
         try:
             return list(parse_many(value))
         except ValueError:
             # Validé au démarrage : ne peut arriver qu'après un patch à chaud.
-            logger.error("login_throttle_invalid_limit", extra={"extra_fields": {"value": value}})
+            logger.error(
+                "login_throttle_invalid_limit",
+                extra={"extra_fields": {"setting": setting_name, "value": value}},
+            )
             return []
 
     @staticmethod
-    def _identifier(username: str) -> str:
-        return hashlib.sha256(normalize_username(username).encode("utf-8")).hexdigest()
+    def _account_identifier(account: str) -> str:
+        return hashlib.sha256(normalize_username(account).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _account_ip_identifier(account: str, ip: str) -> str:
+        material = f"{normalize_username(account)}\x00{ip_bucket(ip)}"
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def _run(self, operation: Callable[[FixedWindowRateLimiter], _T]) -> _T:
         """Exécute ``operation`` sur Redis, ou sur la mémoire si Redis est en panne."""
@@ -280,46 +339,54 @@ class LoginFailureThrottle:
                 )
         return operation(self._fallback)
 
-    def retry_after(self, username: str) -> int:
-        """0 si une tentative est permise, sinon secondes avant la prochaine."""
-        items = self._items()
-        if not items:
-            return 0
-        identifier = self._identifier(username)
+    @staticmethod
+    def _hit(
+        strategy: FixedWindowRateLimiter, items: List[RateLimitItem], scope: str, identifier: str
+    ) -> int:
+        """Incrémente chaque fenêtre ; 0 si toutes sont respectées, sinon le délai."""
+        wait = 0
+        for item in items:
+            if not strategy.hit(item, scope, identifier):
+                reset_time, _remaining = strategy.get_window_stats(item, scope, identifier)
+                wait = max(wait, _seconds_until(reset_time))
+        return wait
 
-        def check(strategy: FixedWindowRateLimiter) -> int:
-            wait = 0
-            for item in items:
-                if not strategy.test(item, _LOGIN_FAILURE_SCOPE, identifier):
-                    reset_time, _remaining = strategy.get_window_stats(item, _LOGIN_FAILURE_SCOPE, identifier)
-                    wait = max(wait, _seconds_until(reset_time))
-            return wait
+    def register_attempt(self, account: str, ip: str) -> Optional[LoginThrottleBlock]:
+        """Compte une tentative sur ``account`` depuis ``ip`` ; bloc si refusée.
 
-        return self._run(check)
+        Le compteur par compte n'est incrémenté que si le couple (compte, IP)
+        est sous son seuil : une source unique ne peut donc pas, à elle
+        seule, bloquer le compte pour toutes les autres.
+        """
+        account_ip_items = self._items("RATE_LIMIT_LOGIN_FAILURES")
+        account_items = self._items("RATE_LIMIT_LOGIN_FAILURES_ACCOUNT")
+        account_ip_id = self._account_ip_identifier(account, ip)
+        account_id = self._account_identifier(account)
 
-    def record_failure(self, username: str) -> None:
-        """Comptabilise un échec de connexion pour ``username``."""
-        items = self._items()
-        if not items:
-            return
-        identifier = self._identifier(username)
+        def attempt(strategy: FixedWindowRateLimiter) -> Optional[LoginThrottleBlock]:
+            wait = self._hit(strategy, account_ip_items, _LOGIN_FAILURE_SCOPE_ACCOUNT_IP, account_ip_id)
+            if wait:
+                return LoginThrottleBlock(scope="account_ip", retry_after=wait)
+            wait = self._hit(strategy, account_items, _LOGIN_FAILURE_SCOPE_ACCOUNT, account_id)
+            if wait:
+                return LoginThrottleBlock(scope="account", retry_after=wait)
+            return None
 
-        def hit(strategy: FixedWindowRateLimiter) -> None:
-            for item in items:
-                strategy.hit(item, _LOGIN_FAILURE_SCOPE, identifier)
+        return self._run(attempt)
 
-        self._run(hit)
-
-    def clear(self, username: str) -> None:
-        """Remet à zéro le compteur de ``username`` (connexion réussie)."""
-        items = self._items()
-        if not items:
-            return
-        identifier = self._identifier(username)
+    def clear(self, account: str, ip: str) -> None:
+        """Remet à zéro les compteurs de ``account`` (connexion réussie depuis ``ip``)."""
+        targets = [
+            (self._items("RATE_LIMIT_LOGIN_FAILURES"), _LOGIN_FAILURE_SCOPE_ACCOUNT_IP,
+             self._account_ip_identifier(account, ip)),
+            (self._items("RATE_LIMIT_LOGIN_FAILURES_ACCOUNT"), _LOGIN_FAILURE_SCOPE_ACCOUNT,
+             self._account_identifier(account)),
+        ]
 
         def clear(strategy: FixedWindowRateLimiter) -> None:
-            for item in items:
-                strategy.clear(item, _LOGIN_FAILURE_SCOPE, identifier)
+            for items, scope, identifier in targets:
+                for item in items:
+                    strategy.clear(item, scope, identifier)
 
         # Le repli mémoire est toujours purgé : un compteur périmé ne doit
         # pas bloquer l'utilisateur lors d'une prochaine panne de Redis.

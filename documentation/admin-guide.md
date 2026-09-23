@@ -19,7 +19,7 @@ logs d'audit et dark mode.
 
 - **Gestion des utilisateurs** : `http://<host>/admin.html`
 - **Statistiques du cluster** : `http://<host>/admin-stats.html`
-- **API (Swagger)** : `http://<host>/docs` (uniquement si `DEBUG_MODE=true`)
+- **API (Swagger)** : `http://localhost:8000/docs`, depuis l'hôte Docker uniquement (le port 8000 écoute sur la boucle locale ; nginx ne relaie que `/api/`). Les requêtes `GET` fonctionnent depuis « Try it out » ; les `POST`/`PUT`/`PATCH`/`DELETE` y sont refusées (`403 csrf_failed`) faute d'en-tête `X-Requested-With` : utiliser l'interface ou `curl` (voir plus bas)
 - **Health check** : `GET /api/v1/health`
 
 Un compte administrateur est automatiquement créé au premier démarrage.
@@ -413,7 +413,7 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 ## Sécurité — rappels admin
 
 - Changer `ADMIN_DEFAULT_PASSWORD` dès la première connexion
-- Ne jamais activer `DEBUG_MODE=True` en production (expose Swagger + test-auth)
+- Ne jamais activer `DEBUG_MODE=True` en production (mode debug de FastAPI)
 - Surveiller `logs/audit.log` (ou l'onglet **Logs d'Audit** dans l'UI) pour les actions sensibles : `user_deleted`, `quota_override_set`, `users_imported_csv`
 - Les sessions expirées sont automatiquement purgées par Redis (TTL Redis = `SESSION_EXPIRY_HOURS`)
 - Un admin supprimé voit ses sessions immédiatement invalidées

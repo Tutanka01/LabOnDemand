@@ -158,8 +158,9 @@ class Settings:
     K8S_REQUEST_TIMEOUT_READ = float(os.getenv("K8S_REQUEST_TIMEOUT_READ", "30"))
     # Taille du pool de threads AnyIO qui exécute les endpoints `def`, les
     # dépendances synchrones et les appels déportés (run_in_threadpool).
-    # À garder <= pool_size + max_overflow du moteur SQLAlchemy : chaque thread
-    # peut tenir une connexion, au-delà les requêtes attendent le pool DB.
+    # À garder <= (pool_size + max_overflow) / 2 du moteur SQLAlchemy : un
+    # thread peut tenir deux connexions (session de requête + session de
+    # service) ; au-delà les requêtes attendent le pool DB (voir database.py).
     API_THREADPOOL_SIZE = max(1, int(os.getenv("API_THREADPOOL_SIZE", "40")))
     # Déploiements simultanés (threads dédiés) lors d'un déploiement en masse
     # d'un devoir sur une classe, par requête.
@@ -237,12 +238,18 @@ class Settings:
     RATE_LIMIT_STORAGE_URI = (
         os.getenv("RATE_LIMIT_STORAGE_URI", "").strip() or REDIS_URL or "memory://"
     )
-    # Connexion, par IP cliente : assez large pour une salle derrière un NAT.
-    RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "").strip() or "30/minute"
-    # Échecs de connexion par nom d'utilisateur (toutes IP confondues) ;
-    # remis à zéro par une connexion réussie.
+    # Connexion, par IP cliente, toutes tentatives : garde-fou contre
+    # l'inondation, assez large pour une salle derrière un NAT.
+    RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "").strip() or "60/minute"
+    # Échecs de connexion par couple (compte, IP) ; remis à zéro par une
+    # connexion réussie. Ne bloque pas le titulaire depuis une autre IP.
     RATE_LIMIT_LOGIN_FAILURES = (
         os.getenv("RATE_LIMIT_LOGIN_FAILURES", "").strip() or "10/15minute"
+    )
+    # Échecs de connexion par compte, toutes IP confondues (attaques
+    # distribuées) ; une IP déjà bloquée ci-dessus n'y contribue plus.
+    RATE_LIMIT_LOGIN_FAILURES_ACCOUNT = (
+        os.getenv("RATE_LIMIT_LOGIN_FAILURES_ACCOUNT", "").strip() or "50/15minute"
     )
     # Création de déploiements, par utilisateur authentifié (IP à défaut).
     RATE_LIMIT_DEPLOY = os.getenv("RATE_LIMIT_DEPLOY", "").strip() or "10/5minute"

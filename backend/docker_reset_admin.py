@@ -41,10 +41,12 @@ def reset_admin_account():
     """
     Réinitialise le compte administrateur avec des identifiants connus
     """
-    from backend.models import User, UserRole, Base
+    from backend.models import User, UserRole
+    from backend.db_migrate import upgrade_schema
     
-    # S'assurer que les tables existent
-    Base.metadata.create_all(bind=engine)
+    # Amener le schéma à la révision Alembic attendue (comme au démarrage de
+    # l'API) : create_all créerait des tables sans version Alembic.
+    upgrade_schema(engine)
     
     # Créer une session
     db = SessionLocal()

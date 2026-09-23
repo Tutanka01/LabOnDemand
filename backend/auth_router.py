@@ -18,7 +18,7 @@ from .security import (
     is_admin, is_teacher_or_admin, limiter, validate_password_strength
 )
 from .session import set_session_cookie, clear_session_cookie
-from .rate_limit import ip_key, login_failure_throttle, login_ip_limit
+from .rate_limit import client_ip, ip_key, login_failure_throttle, login_ip_limit
 from .i18n import get_locale, t
 from .session_store import session_store
 from .config import settings
@@ -35,9 +35,23 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 logger = logging.getLogger("labondemand.auth")
 audit_logger = logging.getLogger("labondemand.audit")
 
+
+def _login_account_name(db: Session, username: str) -> str:
+    """Nom du compte visé tel qu'enregistré en base, sinon le nom saisi.
+
+    La recherche passe par la collation MariaDB (insensible à la casse et
+    aux accents) : toutes les graphies qu'elle confond avec un compte
+    partagent ses compteurs d'échecs, y compris celles que la normalisation
+    Unicode ne rapproche pas (đ, ł, ø…). Une graphie qu'elle ne confond pas
+    ne peut de toute façon pas ouvrir ce compte.
+    """
+    row = db.query(User.username).filter(User.username == username).first()
+    return row[0] if row else username
+
+
 @router.post("/login", response_model=LoginResponse)
-# Par IP (large : NAT des salles de TP) ; le seuil par nom d'utilisateur est
-# appliqué dans le corps (backend/rate_limit.py).
+# Par IP (large : NAT des salles de TP) ; les seuils d'échecs par compte et
+# par (compte, IP) sont appliqués dans le corps (backend/rate_limit.py).
 @limiter.limit(login_ip_limit, key_func=ip_key)
 def login(
     user_credentials: UserLogin,
@@ -60,24 +74,28 @@ def login(
         },
     )
 
-    # Trop d'échecs récents pour ce nom (toutes IP confondues) : refus
-    # immédiat, sans vérification bcrypt, même si le mot de passe est bon.
-    retry_after = login_failure_throttle.retry_after(user_credentials.username)
-    if retry_after:
+    # Tentative comptée AVANT la vérification (incrément atomique : des
+    # requêtes parallèles ne peuvent pas dépasser le seuil) ; au-delà, refus
+    # immédiat sans bcrypt, même si le mot de passe est bon.
+    account = _login_account_name(db, user_credentials.username)
+    client_host = client_ip(request)
+    block = login_failure_throttle.register_attempt(account, client_host)
+    if block:
         audit_logger.warning(
             "login_throttled",
             extra={
                 "extra_fields": {
                     "username": user_credentials.username,
-                    "client_ip": getattr(client, "host", None),
-                    "retry_after": retry_after,
+                    "client_ip": client_host,
+                    "scope": block.scope,
+                    "retry_after": block.retry_after,
                 }
             },
         )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=t("error.login_throttled", get_locale(request), seconds=retry_after),
-            headers={"Retry-After": str(retry_after)},
+            detail=t("error.login_throttled", get_locale(request), seconds=block.retry_after),
+            headers={"Retry-After": str(block.retry_after)},
         )
 
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
@@ -87,7 +105,7 @@ def login(
             detail="Connexion locale désactivée pour les comptes SSO",
         )
     if not user:
-        login_failure_throttle.record_failure(user_credentials.username)
+        # La tentative reste comptée : c'est un échec.
         audit_logger.warning(
             "login_failed",
             extra={
@@ -104,7 +122,7 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    login_failure_throttle.clear(user_credentials.username)
+    login_failure_throttle.clear(account, client_host)
 
     # Créer une session pour l'utilisateur
     session_id = create_session(user.id, user.username, user.role)

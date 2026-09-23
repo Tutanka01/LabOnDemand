@@ -13,25 +13,50 @@ class UserRoleEnum(str, Enum):
     teacher = "teacher"
     admin = "admin"
 
+# Bornes des identifiants : une valeur démesurée est refusée (422) par la
+# validation, avant toute normalisation (compteur d'échecs) ou tout hachage.
+# Le nom de connexion reste large devant la colonne users.username (50) ;
+# bcrypt n'utilise de toute façon que les 72 premiers octets du mot de passe.
+LOGIN_USERNAME_MAX_LENGTH = 150
+PASSWORD_MAX_LENGTH = 1024
+
+
+def _reject_nul_password(value: Optional[str]) -> Optional[str]:
+    """Refuse un mot de passe contenant NUL (bcrypt ne sait pas le hacher)."""
+    if value is not None and "\x00" in value:
+        raise ValueError("Le mot de passe ne doit pas contenir le caractère NUL")
+    return value
+
+
 # Schéma pour la création d'utilisateur
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
     full_name: Optional[str] = None
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=8, max_length=PASSWORD_MAX_LENGTH)
     role: UserRoleEnum = UserRoleEnum.student
     is_active: Optional[bool] = True
     auth_provider: Optional[str] = None
     external_id: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def reject_nul_password(cls, v: Optional[str]) -> Optional[str]:
+        return _reject_nul_password(v)
 
 # Schéma pour la mise à jour d'utilisateur
 class UserUpdate(BaseModel):
     # str au lieu de EmailStr pour accepter les domaines internes (.local, .internal, etc.)
     email: Optional[str] = None
     full_name: Optional[str] = None
-    password: Optional[str] = Field(None, min_length=8)
+    password: Optional[str] = Field(None, min_length=8, max_length=PASSWORD_MAX_LENGTH)
     role: Optional[UserRoleEnum] = None
     is_active: Optional[bool] = None
+
+    @field_validator("password")
+    @classmethod
+    def reject_nul_password(cls, v: Optional[str]) -> Optional[str]:
+        return _reject_nul_password(v)
 
     @field_validator("email")
     @classmethod
@@ -42,8 +67,8 @@ class UserUpdate(BaseModel):
 
 # Schéma pour l'authentification
 class UserLogin(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., max_length=LOGIN_USERNAME_MAX_LENGTH)
+    password: str = Field(..., max_length=PASSWORD_MAX_LENGTH)
 
 # Schéma pour la réponse utilisateur (sans mot de passe)
 class UserResponse(BaseModel):
@@ -213,8 +238,13 @@ class VolumeFileRenameRequest(BaseModel):
 
 # ====== Change Password ======
 class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str = Field(..., min_length=12)
+    old_password: str = Field(..., max_length=PASSWORD_MAX_LENGTH)
+    new_password: str = Field(..., min_length=12, max_length=PASSWORD_MAX_LENGTH)
+
+    @field_validator("new_password")
+    @classmethod
+    def reject_nul_password(cls, v: Optional[str]) -> Optional[str]:
+        return _reject_nul_password(v)
 
 
 # ====== Classroom / Enrollment / Assignment ======

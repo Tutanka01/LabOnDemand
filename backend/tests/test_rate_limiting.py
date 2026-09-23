@@ -1,11 +1,13 @@
-"""Limitation de débit : connexion (IP + nom d'utilisateur) et déploiements.
+"""Limitation de débit : connexion (IP, compte, compte + IP) et déploiements.
 
 Couvre aussi l'égalisation du temps de réponse de ``authenticate_user`` :
 un nom inconnu ne doit pas répondre plus vite qu'un mauvais mot de passe.
 """
+import asyncio
 import os
 import subprocess
 import sys
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -24,6 +26,7 @@ from backend.database import get_db
 from backend.main import app
 from backend.models import User, UserRole
 from backend.rate_limit import (
+    ip_bucket,
     limiter,
     login_failure_throttle,
     normalize_username,
@@ -105,8 +108,9 @@ def test_dummy_hash_never_matches():
 # ============================================================
 
 def test_default_limits():
-    assert settings.RATE_LIMIT_LOGIN == "30/minute"
+    assert settings.RATE_LIMIT_LOGIN == "60/minute"
     assert settings.RATE_LIMIT_LOGIN_FAILURES == "10/15minute"
+    assert settings.RATE_LIMIT_LOGIN_FAILURES_ACCOUNT == "50/15minute"
     assert settings.RATE_LIMIT_DEPLOY == "10/5minute"
     validate_rate_limit_settings()
 
@@ -146,7 +150,7 @@ def tight_login_limit():
 
 
 async def test_classroom_behind_one_nat_can_log_in(db):
-    """30 étudiants derrière la même IP (NAT de salle de TP) se connectent."""
+    """60 étudiants derrière la même IP (NAT de salle de TP) se connectent."""
     db.add_all(
         User(
             username=f"student{i:02d}",
@@ -156,7 +160,7 @@ async def test_classroom_behind_one_nat_can_log_in(db):
             is_active=True,
             auth_provider="local",
         )
-        for i in range(31)
+        for i in range(61)
     )
     db.commit()
 
@@ -166,10 +170,10 @@ async def test_classroom_behind_one_nat_can_log_in(db):
 
     with patch("backend.auth_router.authenticate_user", side_effect=fast_authenticate):
         async with _client_from(db, "198.51.100.7") as c:
-            for i in range(30):
+            for i in range(60):
                 resp = await _login(c, f"student{i:02d}", "Student@Pass123")
                 assert resp.status_code == 200, (i, resp.text)
-            blocked = await _login(c, "student30", "Student@Pass123")
+            blocked = await _login(c, "student60", "Student@Pass123")
 
     assert blocked.status_code == 429
     assert _retry_after(blocked) <= 60
@@ -204,19 +208,31 @@ async def test_rate_limit_message_is_localized(db, tight_login_limit):
 
 
 # ============================================================
-# Connexion : échecs par nom d'utilisateur
+# Connexion : échecs par (compte, IP) et par compte
 # ============================================================
 
-async def test_username_throttle_blocks_across_ips_before_bcrypt(db, admin_user):
-    with patch.object(settings, "RATE_LIMIT_LOGIN_FAILURES", "3/15minute"):
-        for i in range(3):
-            async with _client_from(db, f"203.0.113.{i + 1}") as c:
-                assert (await _login(c, "testadmin")).status_code == 401
+@pytest.fixture()
+def failure_limits():
+    """Seuils réduits : (compte, IP) et compte, toutes IP confondues."""
 
-        with patch(
-            "backend.auth_router.authenticate_user", wraps=security.authenticate_user
-        ) as auth:
-            async with _client_from(db, "203.0.113.50") as c:
+    def apply(account_ip: str, account: str = "50/15minute"):
+        return patch.multiple(
+            settings,
+            RATE_LIMIT_LOGIN_FAILURES=account_ip,
+            RATE_LIMIT_LOGIN_FAILURES_ACCOUNT=account,
+        )
+
+    return apply
+
+
+async def test_account_ip_throttle_blocks_before_bcrypt(db, admin_user, failure_limits):
+    with failure_limits("3/15minute"):
+        async with _client_from(db, "203.0.113.1") as c:
+            for _ in range(3):
+                assert (await _login(c, "testadmin")).status_code == 401
+            with patch(
+                "backend.auth_router.authenticate_user", wraps=security.authenticate_user
+            ) as auth:
                 resp = await _login(c, "testadmin", ADMIN_PASSWORD)
             auth.assert_not_called()
 
@@ -226,16 +242,76 @@ async def test_username_throttle_blocks_across_ips_before_bcrypt(db, admin_user)
     assert resp.json()["detail"].startswith("Trop de tentatives de connexion")
 
 
-async def test_username_throttle_counts_unknown_usernames(db):
+async def test_account_ip_throttle_does_not_lock_out_the_owner(db, admin_user, failure_limits):
+    """Un tiers qui épuise le seuil depuis son IP ne bloque pas le titulaire."""
+    with failure_limits("3/15minute"):
+        async with _client_from(db, "203.0.113.2") as attacker:
+            codes = [(await _login(attacker, "testadmin")).status_code for _ in range(6)]
+        async with _client_from(db, "198.51.100.200") as owner:
+            resp = await _login(owner, "testadmin", ADMIN_PASSWORD)
+
+    assert codes == [401, 401, 401, 429, 429, 429]
+    assert resp.status_code == 200
+
+
+async def test_account_throttle_blocks_distributed_attempts(db, admin_user, failure_limits):
+    with failure_limits("2/15minute", account="4/15minute"):
+        for ip in ("203.0.113.3", "203.0.113.4"):
+            async with _client_from(db, ip) as c:
+                for _ in range(2):
+                    assert (await _login(c, "testadmin")).status_code == 401
+        with patch(
+            "backend.auth_router.authenticate_user", wraps=security.authenticate_user
+        ) as auth:
+            async with _client_from(db, "203.0.113.5") as c:
+                resp = await _login(c, "testadmin", ADMIN_PASSWORD)
+            auth.assert_not_called()
+
+    assert resp.status_code == 429
+    assert 850 <= _retry_after(resp) <= 900
+
+
+async def test_blocked_ip_stops_feeding_the_account_counter(db, admin_user, failure_limits):
+    """Une source unique, même insistante, ne peut pas bloquer le compte."""
+    with failure_limits("2/15minute", account="4/15minute"):
+        async with _client_from(db, "203.0.113.6") as c:
+            codes = [(await _login(c, "testadmin")).status_code for _ in range(10)]
+        async with _client_from(db, "203.0.113.7") as c:
+            resp = await _login(c, "testadmin", ADMIN_PASSWORD)
+
+    assert codes == [401, 401] + [429] * 8
+    assert resp.status_code == 200
+
+
+async def test_concurrent_attempts_cannot_exceed_the_threshold(db, failure_limits):
+    """Incrément atomique avant bcrypt : pas de course lecture/écriture."""
+    checked = []
+
+    def slow_failure(session, username, password):
+        checked.append(username)
+        time.sleep(0.05)
+        return False
+
+    with failure_limits("2/15minute"), patch(
+        "backend.auth_router.authenticate_user", side_effect=slow_failure
+    ), patch("backend.auth_router._login_account_name", side_effect=lambda session, name: name):
+        async with _client_from(db, "203.0.113.8") as c:
+            responses = await asyncio.gather(*(_login(c, "victim") for _ in range(6)))
+
+    assert sorted(r.status_code for r in responses) == [401, 401, 429, 429, 429, 429]
+    assert len(checked) == 2
+
+
+async def test_login_throttle_counts_unknown_usernames(db, failure_limits):
     """Même traitement qu'un compte existant : pas d'oracle d'énumération."""
-    with patch.object(settings, "RATE_LIMIT_LOGIN_FAILURES", "2/15minute"):
+    with failure_limits("2/15minute"):
         async with _client_from(db, "203.0.113.9") as c:
             codes = [(await _login(c, "ghost")).status_code for _ in range(3)]
     assert codes == [401, 401, 429]
 
 
-async def test_successful_login_resets_failure_counter(db, admin_user):
-    with patch.object(settings, "RATE_LIMIT_LOGIN_FAILURES", "3/15minute"):
+async def test_successful_login_resets_failure_counter(db, admin_user, failure_limits):
+    with failure_limits("3/15minute"):
         async with _client_from(db, "203.0.113.10") as c:
             for _ in range(2):
                 assert (await _login(c, "testadmin")).status_code == 401
@@ -245,21 +321,57 @@ async def test_successful_login_resets_failure_counter(db, admin_user):
             assert (await _login(c, "testadmin", ADMIN_PASSWORD)).status_code == 429
 
 
-async def test_username_throttle_is_per_username(db, admin_user):
-    with patch.object(settings, "RATE_LIMIT_LOGIN_FAILURES", "2/15minute"):
+async def test_successful_login_resets_the_account_counter(db, admin_user, failure_limits):
+    with failure_limits("10/15minute", account="3/15minute"):
+        async with _client_from(db, "203.0.113.14") as c:
+            for _ in range(2):
+                assert (await _login(c, "testadmin")).status_code == 401
+        async with _client_from(db, "203.0.113.15") as c:
+            assert (await _login(c, "testadmin", ADMIN_PASSWORD)).status_code == 200
+        async with _client_from(db, "203.0.113.14") as c:
+            codes = [(await _login(c, "testadmin")).status_code for _ in range(3)]
+    assert codes == [401, 401, 401]
+
+
+async def test_login_throttle_is_per_account(db, admin_user, failure_limits):
+    with failure_limits("2/15minute"):
         async with _client_from(db, "203.0.113.11") as c:
             codes = [(await _login(c, "victim")).status_code for _ in range(3)]
             assert codes == [401, 401, 429]
             assert (await _login(c, "testadmin", ADMIN_PASSWORD)).status_code == 200
 
 
-async def test_username_throttle_ignores_spelling_variants(db, admin_user):
+async def test_login_throttle_ignores_spelling_variants(db, admin_user, failure_limits):
     """La collation MariaDB confond ces graphies : le compteur aussi."""
-    with patch.object(settings, "RATE_LIMIT_LOGIN_FAILURES", "3/15minute"):
+    with failure_limits("3/15minute"):
         async with _client_from(db, "203.0.113.12") as c:
             for variant in ("TestAdmin", "testadmin  ", "t\u00e9st\u200badmin"):
                 assert (await _login(c, variant)).status_code == 401
             assert (await _login(c, "TESTADMIN", ADMIN_PASSWORD)).status_code == 429
+
+
+async def test_login_throttle_keys_on_the_stored_account_name(db, admin_user, failure_limits):
+    """Graphie confondue par la collation mais pas par Unicode (ł ≠ l en NFKD)."""
+    assert normalize_username("\u0142estadmin") != normalize_username("testadmin")
+
+    def mariadb_like_lookup(session, name):
+        # uca1400_ai_ci : « łestadmin » désigne le compte « testadmin ».
+        return "testadmin" if normalize_username(name) in {"testadmin", "\u0142estadmin"} else name
+
+    with failure_limits("3/15minute"), patch(
+        "backend.auth_router._login_account_name", side_effect=mariadb_like_lookup
+    ):
+        async with _client_from(db, "203.0.113.16") as c:
+            for _ in range(3):
+                assert (await _login(c, "\u0142estadmin")).status_code == 401
+            assert (await _login(c, "testadmin", ADMIN_PASSWORD)).status_code == 429
+
+
+def test_login_account_name_uses_the_stored_spelling(db, admin_user):
+    from backend.auth_router import _login_account_name
+
+    assert _login_account_name(db, "testadmin") == "testadmin"
+    assert _login_account_name(db, "ghost") == "ghost"
 
 
 @pytest.mark.parametrize(
@@ -284,13 +396,27 @@ def test_normalize_username_keeps_distinct_names_apart():
     assert normalize_username("") == ""
 
 
+def test_normalize_username_cost_is_bounded():
+    assert normalize_username("A" * 1_000_000) == "a" * 256
+
+
+def test_ip_bucket_groups_ipv6_by_prefix():
+    assert ip_bucket("198.51.100.7") == "198.51.100.7"
+    assert ip_bucket("2001:db8:1:2::1") == ip_bucket("2001:db8:1:2:ffff::9") == "2001:db8:1:2::/64"
+    assert ip_bucket("2001:db8:1:3::1") != ip_bucket("2001:db8:1:2::1")
+    assert ip_bucket("::ffff:198.51.100.7") == "198.51.100.7"
+    assert ip_bucket("unknown") == "unknown"
+
+
 async def test_login_throttle_stores_only_a_digest(db):
     async with _client_from(db, "203.0.113.13") as c:
         assert (await _login(c, "secret-user")).status_code == 401
 
     keys = [k.decode() for k in redis.from_url(settings.REDIS_URL).keys("*")]
-    assert any("login_failures" in k for k in keys), keys
-    assert not any("secret" in k for k in keys), keys
+    assert any("login_failures_account_ip" in k for k in keys), keys
+    assert any("login_failures_account/" in k or "login_failures_account:" in k for k in keys), keys
+    failure_keys = [k for k in keys if "login_failures" in k]
+    assert not any("secret" in k or "203.0.113.13" in k for k in failure_keys), failure_keys
 
 
 # ============================================================
@@ -453,7 +579,7 @@ async def test_limiter_fails_open_when_every_storage_fails(db, tight_login_limit
     assert codes == [401, 401, 401]
 
 
-async def test_username_throttle_falls_back_to_memory_when_redis_down(db):
+async def test_login_throttle_falls_back_to_memory_when_redis_down(db):
     storage = login_failure_throttle._primary.storage
     down = redis.exceptions.ConnectionError("redis down")
     with patch.object(settings, "RATE_LIMIT_LOGIN_FAILURES", "2/15minute"), patch.object(

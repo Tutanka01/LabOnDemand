@@ -17,8 +17,10 @@ Sections :
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import inspect
+import logging
 import threading
 import time
 from typing import Any, Dict
@@ -29,6 +31,7 @@ import pytest
 import urllib3
 from kubernetes import client as k8s_client
 from kubernetes.client import rest
+from sqlalchemy import event
 
 from backend import k8s_timeouts
 from backend.config import settings
@@ -213,6 +216,39 @@ async def test_threadpool_startup_hook_is_registered():
     assert configure_threadpool in app.router.on_startup
 
 
+async def test_startup_warns_when_db_pool_cannot_serve_every_thread(monkeypatch, caplog):
+    from backend import main
+    from backend.config import Settings
+
+    monkeypatch.setattr(Settings, "API_THREADPOOL_SIZE", 40)
+    monkeypatch.setattr(
+        main, "ENGINE_OPTIONS", {"pool_size": 10, "max_overflow": 30}
+    )
+    with caplog.at_level(logging.WARNING, logger=main.logger.name):
+        await main.configure_threadpool()
+
+    warnings = [r for r in caplog.records if r.getMessage() == "db_pool_undersized"]
+    assert len(warnings) == 1
+    fields = warnings[0].extra_fields
+    assert fields["threads"] == 40
+    assert fields["pool_capacity"] == 40
+    assert fields["missing_connections"] == 40
+
+
+async def test_startup_is_silent_when_db_pool_is_large_enough(monkeypatch, caplog):
+    from backend import main
+    from backend.config import Settings
+
+    monkeypatch.setattr(Settings, "API_THREADPOOL_SIZE", 40)
+    monkeypatch.setattr(
+        main, "ENGINE_OPTIONS", {"pool_size": 10, "max_overflow": 70}
+    )
+    with caplog.at_level(logging.WARNING, logger=main.logger.name):
+        await main.configure_threadpool()
+
+    assert not [r for r in caplog.records if r.getMessage() == "db_pool_undersized"]
+
+
 # ============================================================
 # Services K8s synchrones
 # ============================================================
@@ -264,7 +300,6 @@ ASYNC_ENDPOINT_ALLOWLIST = {
     "backend.main.read_root",
     "backend.main.get_status",
     "backend.main.health_check",
-    "backend.main.test_auth",
     "backend.routers.k8s_terminal.ws_pod_terminal",
     "backend.routers.classrooms.deploy_assignment_to_class",
     "backend.routers.classrooms.test_now",
@@ -560,6 +595,78 @@ async def test_run_grading_does_blocking_work_off_loop(client, db, teacher_user,
     assert session_threads and loop_thread not in session_threads
     db.expire_all()
     assert db.query(GradingRun).filter(GradingRun.id == run.id).one().status == "done"
+
+
+@contextlib.contextmanager
+def _sql_statement_threads(engine):
+    """Enregistre le thread de chaque requête SQL émise sur ``engine``."""
+    threads = []
+
+    def _before(conn, cursor, statement, parameters, context, executemany):
+        threads.append(threading.get_ident())
+
+    event.listen(engine, "before_cursor_execute", _before)
+    try:
+        yield threads
+    finally:
+        event.remove(engine, "before_cursor_execute", _before)
+
+
+@contextlib.contextmanager
+def _audit_records():
+    """Capture le logger d'audit (qui ne propage pas vers la racine)."""
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    audit = logging.getLogger("labondemand.audit")
+    audit.addHandler(handler)
+    try:
+        yield records
+    finally:
+        audit.removeHandler(handler)
+
+
+@pytest.mark.parametrize(
+    "actor, path",
+    [
+        ("student", "/api/v1/student/assignments/{aid}/run-tests"),
+        ("teacher", "/api/v1/classrooms/{cid}/assignments/{aid}/test-now"),
+        ("teacher", "/api/v1/classrooms/{cid}/assignments/{aid}/run-tests-all"),
+    ],
+)
+async def test_grading_endpoints_run_no_sql_on_the_loop(
+    actor, path, student_client, teacher_client, db, teacher_user, student_user, monkeypatch
+):
+    """Après le commit déporté, l'audit ne relit pas l'utilisateur expiré sur la boucle."""
+    from backend import grader_service
+    from backend.tests.test_grading import (
+        _assignment, _classroom, _deployment, _enroll, _link_lab, _spec,
+    )
+
+    monkeypatch.setattr(grader_service, "schedule_grading", lambda run_id: None)
+    monkeypatch.setattr(grader_service, "schedule_grading_batch", lambda run_ids, limit: None)
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    _spec(db, asgn.id)
+    _enroll(db, cls.id, student_user.id)
+    student_lab = _deployment(db, student_user.id)
+    _link_lab(db, asgn.id, student_user.id, student_lab.id)
+    demo_lab = _deployment(db, teacher_user.id, name="tp-demo", ns="labondemand-user-teacher")
+    _link_lab(db, asgn.id, teacher_user.id, demo_lab.id)
+    actor_user = student_user if actor == "student" else teacher_user
+    actor_id = actor_user.id
+    client = student_client if actor == "student" else teacher_client
+    url = path.format(cid=cls.id, aid=asgn.id)  # lu avant d'enregistrer le SQL
+
+    loop_thread = threading.get_ident()
+    with _sql_statement_threads(db.get_bind()) as sql_threads, _audit_records() as audits:
+        resp = await client.post(url)
+
+    assert resp.status_code == 200, resp.text
+    assert sql_threads, "le handler doit bien écrire en base (hors boucle)"
+    assert loop_thread not in sql_threads
+    started = [r for r in audits if r.getMessage().startswith("grading_run")]
+    assert [r.extra_fields["user_id"] for r in started] == [actor_id]
 
 
 async def test_run_tests_all_bounds_concurrent_grading_runs(teacher_client, db, teacher_user, monkeypatch):
@@ -990,6 +1097,40 @@ async def test_health_times_out_a_hung_dependency(client, mock_k8s, monkeypatch)
     assert body["k8s"] == "error: timeout after 1s"
     assert body["db"] == "ok" and body["redis"] == "ok"
     assert elapsed < 2, f"health bloqué {elapsed:.2f}s par une dépendance figée"
+
+
+async def test_abandoned_probes_cannot_pile_up_threads(monkeypatch):
+    """Une sonde abandonnée garde sa place jusqu'à la vraie fin de son thread."""
+    from backend import health
+
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(health, "_probe_slots", slots)
+    limiter = health._probe_limiter()
+    release = threading.Event()
+    calls = []
+
+    def hung(_timeout):
+        calls.append("hung")
+        release.wait(10)
+
+    def healthy(_timeout):
+        calls.append("healthy")
+
+    try:
+        assert await health._probe("db", hung, 0.2, limiter) == "error: timeout after 0.2s"
+        # Le thread figé tient toujours la seule place : pas de nouvel appel.
+        assert (await health._probe("db", healthy, 0.2, limiter)).startswith("error: busy")
+        assert calls == ["hung"]
+    finally:
+        release.set()
+
+    for _ in range(100):
+        if slots.acquire(blocking=False):
+            slots.release()
+            break
+        await asyncio.sleep(0.02)
+    assert await health._probe("db", healthy, 0.2, limiter) == "ok"
+    assert calls == ["hung", "healthy"]
 
 
 async def test_health_reports_unreachable_redis_as_degraded(client, mock_k8s, monkeypatch):

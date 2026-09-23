@@ -8,9 +8,8 @@ import logging
 import time
 import uuid
 import uvicorn
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
 
 from .config import settings
 from .logging_config import (
@@ -19,9 +18,9 @@ from .logging_config import (
     reset_request_id,
     shorten_token,
 )
-from .database import get_db, SessionLocal
+from .database import ENGINE_OPTIONS, SessionLocal, pool_capacity, pool_shortfall
 from .session import setup_session_handler, validate_cookie_settings
-from .csrf import CSRFMiddleware
+from .csrf import CSRFMiddleware, validate_cors_origins
 from .error_handlers import global_exception_handler
 from . import (
     models,
@@ -160,7 +159,8 @@ app.add_exception_handler(Exception, global_exception_handler)
 # inverse) : les refus 403 portent les en-têtes CORS des origines autorisées.
 app.add_middleware(CSRFMiddleware)
 
-# Configuration CORS
+# Configuration CORS (cookies autorisés : CORS_ORIGINS=* refuse le démarrage)
+validate_cors_origins(settings.CORS_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -297,9 +297,27 @@ async def get_status():
 
 @app.on_event("startup")
 async def configure_threadpool() -> None:
-    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE)."""
+    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE).
+
+    Avertit si le pool de connexions SQLAlchemy ne couvre pas deux connexions
+    par thread (session de requête + session de service) : en pic, les
+    requêtes attendraient DB_POOL_TIMEOUT puis échoueraient.
+    """
     size = settings.configure_threadpool()
     logger.info("threadpool_configured", extra={"extra_fields": {"size": size}})
+    missing = pool_shortfall(size, ENGINE_OPTIONS)
+    if missing:
+        logger.warning(
+            "db_pool_undersized",
+            extra={
+                "extra_fields": {
+                    "threads": size,
+                    "pool_capacity": pool_capacity(ENGINE_OPTIONS),
+                    "missing_connections": missing,
+                    "hint": "augmenter DB_MAX_OVERFLOW ou réduire API_THREADPOOL_SIZE",
+                }
+            },
+        )
 
 
 @app.get("/api/v1/health")
@@ -314,62 +332,6 @@ async def health_check() -> dict:
 
     return await run_health_checks()
 
-
-# ============= ENDPOINT DE DIAGNOSTIC =============
-
-if settings.DEBUG_MODE:
-
-    @app.post("/api/v1/diagnostic/test-auth")
-    async def test_auth(request: Request, db: Session = Depends(get_db)):
-        """
-        Endpoint de diagnostic pour tester l'authentification.
-        Disponible uniquement en mode DEBUG.
-        """
-        try:
-            body = await request.json()
-            username = body.get("username")
-            password = body.get("password")
-
-            if not username or not password:
-                return {
-                    "success": False,
-                    "message": "Le nom d'utilisateur et le mot de passe sont requis",
-                    "details": None,
-                }
-
-            from starlette.concurrency import run_in_threadpool
-
-            from .security import authenticate_user
-
-            # Hachage bcrypt + requête DB : hors de la boucle d'événements.
-            user = await run_in_threadpool(authenticate_user, db, username, password)
-
-            if user:
-                return {
-                    "success": True,
-                    "message": "Authentification réussie",
-                    "details": {
-                        "user_id": user.id,
-                        "username": user.username,
-                        "email": user.email,
-                        "role": user.role.value,
-                        "is_active": user.is_active,
-                    },
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": "Échec de l'authentification",
-                    "details": None,
-                }
-        except Exception as e:
-            import traceback
-
-            return {
-                "success": False,
-                "message": f"Erreur lors de l'authentification: {str(e)}",
-                "details": traceback.format_exc(),
-            }
 
 # ============= POINT D'ENTRÉE =============
 

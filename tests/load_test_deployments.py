@@ -244,7 +244,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     template = TEMPLATE_PRESETS[args.template]
 
     session = requests.Session()
-    session.headers.update({"User-Agent": "LabOnDemand-LoadTest/1.0"})
+    # X-Requested-With : exigé par la protection CSRF de l'API sur toute
+    # requête mutante (connexion, création et suppression de labs).
+    session.headers.update(
+        {"User-Agent": "LabOnDemand-LoadTest/1.0", "X-Requested-With": "XMLHttpRequest"}
+    )
 
     print(f"🔐 Logging in as {args.username} @ {args.base_url}")
     login(session, args.base_url, args.username, args.password)

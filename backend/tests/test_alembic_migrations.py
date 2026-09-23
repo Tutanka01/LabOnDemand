@@ -223,6 +223,25 @@ def test_unknown_revision_is_refused(scratch_engine):
 
 # ---------- Verrou ----------
 
+def test_docker_reset_admin_brings_the_schema_to_head(scratch_engine, monkeypatch, capsys):
+    """Le script de réinitialisation passe par Alembic, pas par create_all
+    (qui créerait des tables sans version et bloquerait le démarrage suivant)."""
+    from sqlalchemy.orm import sessionmaker
+
+    from backend import docker_reset_admin
+
+    monkeypatch.setattr(docker_reset_admin, "engine", scratch_engine)
+    monkeypatch.setattr(docker_reset_admin, "SessionLocal", sessionmaker(bind=scratch_engine))
+
+    docker_reset_admin.reset_admin_account()
+
+    assert _revision(scratch_engine) == get_head_revision()
+    assert _diffs(scratch_engine) == []
+    with scratch_engine.connect() as conn:
+        role = conn.execute(text("SELECT role FROM users WHERE username = 'admin'")).scalar()
+    assert role == "admin"
+
+
 def test_lock_timeout_setting_is_validated(monkeypatch):
     monkeypatch.setenv(db_migrate.LOCK_TIMEOUT_ENV, "12")
     assert db_migrate._lock_timeout_from_env() == 12

@@ -223,7 +223,7 @@ des namespaces orphelins (voir `documentation/lifecycle.md`).
 
 ### Origines de confiance (CSRF)
 
-- les entrées de `CORS_ORIGINS` (`*` est ignoré) ;
+- les entrées de `CORS_ORIGINS` (`*` refuse le démarrage de l'API : le CORS autorise les cookies) ;
 - l'origine de `FRONTEND_BASE_URL` ;
 - l'hôte de la requête elle-même (en-tête `Host` transmis par nginx et schéma `X-Forwarded-Proto` d'un proxy de confiance).
 
@@ -233,12 +233,13 @@ L'interface servie par nginx fonctionne sans réglage. Un frontend servi depuis 
 
 | Variable | Défaut | Clé |
 | --- | --- | --- |
-| `RATE_LIMIT_LOGIN` | `30/minute` | IP cliente |
-| `RATE_LIMIT_LOGIN_FAILURES` | `10/15minute` | nom d'utilisateur (normalisé, empreinte SHA-256), toutes IP |
+| `RATE_LIMIT_LOGIN` | `60/minute` | IP cliente (toutes tentatives) |
+| `RATE_LIMIT_LOGIN_FAILURES` | `10/15minute` | compte + IP cliente (IPv6 par /64) |
+| `RATE_LIMIT_LOGIN_FAILURES_ACCOUNT` | `50/15minute` | compte, toutes IP |
 | `RATE_LIMIT_DEPLOY` | `10/5minute` | utilisateur authentifié (IP à défaut) |
 | `RATE_LIMIT_STORAGE_URI` | `REDIS_URL` | stockage des compteurs |
 
-Au-delà du seuil d'échecs, la connexion est refusée **avant** la vérification du mot de passe, même correct, jusqu'à la fin de la fenêtre ; les noms inconnus sont comptés aussi. Contrepartie : connaissant un nom d'utilisateur, un tiers peut bloquer ses connexions locales pendant la fenêtre. Les compteurs sont dans Redis (partagés entre workers) ; si Redis tombe, ils passent en mémoire par processus. L'IP cliente n'est lue dans `X-Forwarded-For` que pour les proxys listés dans `FORWARDED_ALLOW_IPS` (par défaut l'IP fixe de nginx, jamais `*`). Une valeur invalide empêche l'API de démarrer. Détails : [`security.md`](security.md#limitation-de-débit).
+Au-delà d'un seuil d'échecs, la connexion est refusée **avant** la vérification du mot de passe, même correct, jusqu'à la fin de la fenêtre ; les noms inconnus sont comptés aussi. Le seuil compte + IP ne bloque que la source fautive : le titulaire se connecte toujours depuis une autre IP. Seul le seuil par compte, qu'une IP déjà bloquée n'alimente plus, peut bloquer le titulaire : il faut pour cela plusieurs sources distinctes (5 avec les valeurs par défaut). Les compteurs sont dans Redis (partagés entre workers) ; si Redis tombe, ils passent en mémoire par processus. L'IP cliente n'est lue dans `X-Forwarded-For` que pour les proxys listés dans `FORWARDED_ALLOW_IPS` (par défaut l'IP fixe de nginx, jamais `*`). Une valeur invalide empêche l'API de démarrer. Détails : [`security.md`](security.md#limitation-de-débit).
 
 ### Domaine du cookie et domaine des labs
 
@@ -264,7 +265,7 @@ Les labs (`<app>-<id>-u<user>.<INGRESS_BASE_DOMAIN>`) exécutent du contenu cont
 | Tous les utilisateurs SSO sont `student` | Vérifier `OIDC_ROLE_CLAIM` et les valeurs dans `OIDC_TEACHER_VALUES` |
 | Sessions expirées trop tôt | Vérifier `SESSION_EXPIRY_HOURS` et l'horloge Redis |
 | `403` avec `"error": "csrf_failed"` | Ajouter `X-Requested-With: XMLHttpRequest` (scripts, `curl`) ; pour un frontend servi depuis une autre origine, l'ajouter à `CORS_ORIGINS` |
-| `429` à la connexion | Lire `Retry-After` ; toute une salle derrière un NAT → relever `RATE_LIMIT_LOGIN` ; un seul compte → seuil d'échecs atteint, attendre la fin de la fenêtre |
+| `429` à la connexion | Lire `Retry-After` ; toute une salle derrière un NAT → relever `RATE_LIMIT_LOGIN` ; un seul compte → seuil d'échecs atteint (`scope` de l'événement d'audit `login_throttled`), attendre la fin de la fenêtre |
 | Tous les utilisateurs partagent la même limite par IP | uvicorn ne fait pas confiance au proxy : vérifier `FORWARDED_ALLOW_IPS` (IP de nginx, `FRONTEND_IPV4_ADDRESS`) |
 | L'API refuse de démarrer (`COOKIE_DOMAIN … englobe INGRESS_BASE_DOMAIN`) | Vider `COOKIE_DOMAIN` ou servir les labs sur un autre domaine |
 | Cookie non envoyé | Confirmer `COOKIE_DOMAIN` et `SECURE_COOKIES` en fonction du protocole (HTTP vs HTTPS) |

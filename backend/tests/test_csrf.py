@@ -4,6 +4,9 @@ Deux contrôles cumulatifs sur toute requête mutante sous /api/ :
 en-tête ``X-Requested-With: XMLHttpRequest`` obligatoire, puis ``Origin``
 (ou, à défaut, ``Referer``) de confiance.
 """
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -201,6 +204,40 @@ async def test_wildcard_cors_origin_never_trusts_everyone(admin_client):
     _assert_csrf_rejected(r)
 
 
+@pytest.mark.parametrize("origins", [["*"], ["https://app.example.org", " * "]])
+def test_wildcard_cors_origin_refuses_startup(origins):
+    with pytest.raises(RuntimeError, match=r"CORS_ORIGINS=\*"):
+        csrf.validate_cors_origins(origins)
+
+
+def test_explicit_cors_origins_are_accepted():
+    csrf.validate_cors_origins(["https://app.example.org", "http://localhost:8080"])
+    csrf.validate_cors_origins([])
+
+
+def test_api_refuses_to_start_with_wildcard_cors_origin():
+    # Mêmes substitutions que conftest.py (Redis, kubeconfig), sans quoi
+    # l'import échouerait avant d'atteindre la configuration CORS.
+    code = (
+        "import fakeredis, redis, kubernetes.config as k\n"
+        "redis.from_url = lambda url, **kw: fakeredis.FakeRedis()\n"
+        "redis.Redis.from_url = staticmethod(redis.from_url)\n"
+        "k.load_kube_config = k.load_incluster_config = lambda **kw: None\n"
+        "import backend.main\n"
+    )
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=project_root,
+        env={**os.environ, "CORS_ORIGINS": "*"},
+    )
+    assert result.returncode != 0
+    assert "CORS_ORIGINS=* est refusé" in result.stderr
+
+
 async def test_same_origin_from_host_header_with_port(admin_client):
     host = "labondemand.local:8080"
     ok = await admin_client.post(
@@ -228,6 +265,42 @@ async def test_same_origin_uses_effective_scheme(db, admin_token):
     app.dependency_overrides.clear()
     _assert_csrf_rejected(ko)
     assert ok.status_code == 200
+
+
+async def test_https_origin_accepted_behind_tls_terminator(admin_client):
+    """Terminateur TLS devant nginx : la requête arrive en http, Origin en https."""
+    host = "lab.example.org"
+    ok = await admin_client.post(
+        f"{AUTH}/logout", headers={"Host": host, "Origin": f"https://{host}"}
+    )
+    assert ok.status_code == 200
+    ko = await admin_client.post(
+        f"{AUTH}/logout", headers={"Host": host, "Origin": "https://other.example.org"}
+    )
+    _assert_csrf_rejected(ko)
+
+
+async def test_https_variant_keeps_host_port(admin_client):
+    host = "lab.example.org:8443"
+    ok = await admin_client.post(
+        f"{AUTH}/logout", headers={"Host": host, "Origin": f"https://{host}"}
+    )
+    assert ok.status_code == 200
+    # Même hôte mais port par défaut : origine différente.
+    ko = await admin_client.post(
+        f"{AUTH}/logout", headers={"Host": host, "Origin": "https://lab.example.org"}
+    )
+    _assert_csrf_rejected(ko)
+
+
+def test_request_origins_never_add_http_variant():
+    scope = {"type": "http", "scheme": "https", "headers": [(b"host", b"lab.example.org")]}
+    assert csrf.request_origins(scope) == frozenset({"https://lab.example.org"})
+    scope = {"type": "http", "scheme": "http", "headers": [(b"host", b"lab.example.org")]}
+    assert csrf.request_origins(scope) == frozenset(
+        {"http://lab.example.org", "https://lab.example.org"}
+    )
+    assert csrf.request_origins({"type": "http", "scheme": "http", "headers": []}) == frozenset()
 
 
 async def test_trusted_referer_is_accepted_when_origin_absent(admin_client):
@@ -430,3 +503,5 @@ def test_websocket_origin_check_maps_ws_schemes():
     assert csrf.websocket_origin_rejection_reason(scope("wss", "https://lab.example.org")) is None
     assert csrf.websocket_origin_rejection_reason(scope("ws", "http://lab.example.org")) is None
     assert csrf.websocket_origin_rejection_reason(scope("wss", "http://lab.example.org")) == "untrusted_origin"
+    # Terminateur TLS devant nginx : poignée de main en ws, page en https.
+    assert csrf.websocket_origin_rejection_reason(scope("ws", "https://lab.example.org")) is None

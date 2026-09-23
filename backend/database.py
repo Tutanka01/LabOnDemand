@@ -16,11 +16,17 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME", "labondemand")
 
-# Valeurs par défaut du pool de connexions. pool_size + max_overflow (40)
-# couvre le pool de threads d'AnyIO (40 threads) dans lequel FastAPI exécute
-# les handlers synchrones : un pic de requêtes n'attend pas une connexion.
+# Connexions qu'un même thread peut tenir à la fois : la session de la
+# requête (get_db) et une session courte ouverte par un service pendant la
+# requête (SessionLocal() : quotas, runtimes, grading...).
+CONNECTIONS_PER_THREAD = 2
+
+# Valeurs par défaut du pool de connexions. pool_size + max_overflow (80)
+# couvre CONNECTIONS_PER_THREAD connexions pour chacun des 40 threads AnyIO
+# (API_THREADPOOL_SIZE) dans lesquels FastAPI exécute les handlers
+# synchrones : un pic de requêtes n'épuise pas le pool (pool_timeout).
 DEFAULT_POOL_SIZE = 10
-DEFAULT_MAX_OVERFLOW = 30
+DEFAULT_MAX_OVERFLOW = 70
 DEFAULT_POOL_TIMEOUT = 30
 # Recycler bien avant le wait_timeout de MariaDB (8 h par défaut) et les
 # coupures silencieuses des équipements réseau intermédiaires.
@@ -77,6 +83,20 @@ def engine_options(env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
         "pool_recycle": pool_recycle,
         "pool_pre_ping": True,
     }
+
+
+def pool_capacity(options: Mapping[str, Any]) -> int:
+    """Connexions simultanées maximales du pool (pool_size + max_overflow)."""
+    return int(options["pool_size"]) + int(options["max_overflow"])
+
+
+def pool_shortfall(threads: int, options: Mapping[str, Any]) -> int:
+    """Connexions manquantes pour servir ``threads`` threads (0 si suffisant).
+
+    Un thread pouvant tenir CONNECTIONS_PER_THREAD connexions, un pool plus
+    petit fait attendre les requêtes (pool_timeout) puis échouer en pic.
+    """
+    return max(0, CONNECTIONS_PER_THREAD * threads - pool_capacity(options))
 
 
 # Construction de l'URL de connexion (str() masque le mot de passe)
