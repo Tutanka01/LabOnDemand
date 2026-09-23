@@ -237,12 +237,18 @@ class Settings:
     RATE_LIMIT_STORAGE_URI = (
         os.getenv("RATE_LIMIT_STORAGE_URI", "").strip() or REDIS_URL or "memory://"
     )
-    # Connexion, par IP cliente : assez large pour une salle derrière un NAT.
-    RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "").strip() or "30/minute"
-    # Échecs de connexion par nom d'utilisateur (toutes IP confondues) ;
-    # remis à zéro par une connexion réussie.
+    # Connexion, par IP cliente, toutes tentatives : garde-fou contre
+    # l'inondation, assez large pour une salle derrière un NAT.
+    RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "").strip() or "60/minute"
+    # Échecs de connexion par couple (compte, IP) ; remis à zéro par une
+    # connexion réussie. Ne bloque pas le titulaire depuis une autre IP.
     RATE_LIMIT_LOGIN_FAILURES = (
         os.getenv("RATE_LIMIT_LOGIN_FAILURES", "").strip() or "10/15minute"
+    )
+    # Échecs de connexion par compte, toutes IP confondues (attaques
+    # distribuées) ; une IP déjà bloquée ci-dessus n'y contribue plus.
+    RATE_LIMIT_LOGIN_FAILURES_ACCOUNT = (
+        os.getenv("RATE_LIMIT_LOGIN_FAILURES_ACCOUNT", "").strip() or "50/15minute"
     )
     # Création de déploiements, par utilisateur authentifié (IP à défaut).
     RATE_LIMIT_DEPLOY = os.getenv("RATE_LIMIT_DEPLOY", "").strip() or "10/5minute"

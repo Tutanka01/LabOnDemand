@@ -18,8 +18,8 @@ est opaque pour le client et ne contient aucune donnée sensible.
 
 ```
 1. POST /api/v1/auth/login  {username, password}  + X-Requested-With (voir CSRF)
-2. Limitation de débit : par IP, puis seuil d'échecs par nom d'utilisateur
-   (429 + Retry-After, sans vérifier le mot de passe)
+2. Limitation de débit : par IP, puis seuils d'échecs par (compte, IP) et
+   par compte (429 + Retry-After, sans vérifier le mot de passe)
 3. Backend vérifie le hash bcrypt (même coût si le nom est inconnu)
 4. Crée une session Redis (token 32 octets URL-safe, TTL = SESSION_EXPIRY_HOURS)
 5. Set-Cookie: session_id=<token>; HttpOnly; SameSite=Lax; Path=/; [Secure]
@@ -170,28 +170,43 @@ Implémentation : `backend/rate_limit.py` (slowapi + limits).
 
 | Protection | Clé | Défaut | Variable |
 |------------|-----|--------|----------|
-| `POST /api/v1/auth/login` | IP cliente | 30 / minute | `RATE_LIMIT_LOGIN` |
-| Échecs de connexion | nom d'utilisateur, toutes IP | 10 / 15 minutes | `RATE_LIMIT_LOGIN_FAILURES` |
+| `POST /api/v1/auth/login` (toutes tentatives) | IP cliente | 60 / minute | `RATE_LIMIT_LOGIN` |
+| Échecs de connexion | compte + IP cliente | 10 / 15 minutes | `RATE_LIMIT_LOGIN_FAILURES` |
+| Échecs de connexion | compte, toutes IP | 50 / 15 minutes | `RATE_LIMIT_LOGIN_FAILURES_ACCOUNT` |
 | `POST /api/v1/k8s/deployments`, `POST /api/v1/k8s/pods` | utilisateur (IP à défaut) | 10 / 5 minutes | `RATE_LIMIT_DEPLOY` |
 
 - **Réponse** : `429 Too Many Requests` avec l'en-tête `Retry-After`
   (secondes) et un message traduit ; événements d'audit `rate_limit_exceeded`
   et `login_throttled`.
-- **Par IP, volontairement large** : toute une salle de TP peut sortir par la
-  même IP (NAT). Relever `RATE_LIMIT_LOGIN` si plus de 30 personnes se
-  connectent dans la même minute derrière un même NAT.
-- **Par nom d'utilisateur** : freine les attaques distribuées sur un compte.
-  Une fois le seuil atteint, la tentative est refusée **avant** toute
+- **Par IP, volontairement large** : simple garde-fou contre l'inondation,
+  qui compte aussi les connexions réussies ; toute une salle de TP peut
+  sortir par la même IP (NAT). Prévoir au moins deux fois l'effectif qui se
+  connecte dans la même minute derrière un même NAT.
+- **Par compte + IP** : freine la force brute depuis une source. Une fois le
+  seuil atteint, la tentative venant de cette IP est refusée **avant** toute
   vérification du mot de passe, même correct, jusqu'à la fin de la fenêtre
-  (ouverte au premier échec). Une connexion réussie remet le compteur à zéro.
-  Les noms inconnus sont comptés comme les autres et subissent la même
-  vérification bcrypt qu'un mauvais mot de passe : ni la réponse ni sa durée
-  ne révèlent l'existence d'un compte. Le nom est normalisé comme le fait la
-  collation MariaDB (casse, accents, espaces, caractères invisibles) ; seule
-  son empreinte SHA-256 est stockée.
-- **Compromis assumé** : connaissant un nom d'utilisateur, un tiers peut
-  bloquer ses connexions locales pendant la fenêtre. Le blocage cesse seul ;
-  ajuster `RATE_LIMIT_LOGIN_FAILURES` si besoin.
+  (ouverte à la première tentative) ; le titulaire du compte, connecté depuis
+  une autre IP, n'est pas bloqué. Les IPv6 sont regroupées par préfixe /64.
+- **Par compte, toutes IP** : plafonne les attaques distribuées sur un compte
+  (« password spraying »). Une IP déjà bloquée au niveau précédent n'alimente
+  plus ce compteur : avec les valeurs par défaut, bloquer un compte exige au
+  moins 5 sources distinctes.
+- **Comptage atomique** : chaque tentative incrémente les compteurs avant la
+  vérification bcrypt, puis une connexion réussie les remet à zéro ; des
+  requêtes parallèles ne peuvent donc pas dépasser les seuils.
+- **Identification du compte** : le nom saisi est d'abord recherché en base
+  (collation MariaDB) ; s'il désigne un compte, c'est le nom enregistré qui
+  sert de clé, sinon le nom saisi. Il est ensuite normalisé (casse, accents,
+  espaces, caractères invisibles) et seule son empreinte SHA-256 (avec l'IP
+  pour le compteur compte + IP) est stockée. Les noms inconnus sont comptés
+  comme les autres et subissent la même vérification bcrypt qu'un mauvais
+  mot de passe : ni la réponse ni sa durée ne révèlent l'existence d'un
+  compte.
+- **Compromis assumé** : un attaquant disposant de nombreuses IP peut encore
+  bloquer les connexions locales d'un compte pendant la fenêtre (le blocage
+  cesse seul). Garder `RATE_LIMIT_LOGIN_FAILURES_ACCOUNT` nettement au-dessus
+  de `RATE_LIMIT_LOGIN_FAILURES` ; l'événement d'audit `login_throttled`
+  indique le niveau atteint (`scope` : `account_ip` ou `account`).
 - **Stockage** : Redis (`REDIS_URL`, ou `RATE_LIMIT_STORAGE_URI` pour un
   stockage dédié) : compteurs partagés entre workers et conservés au
   redémarrage de l'API. Si Redis est injoignable, les compteurs passent en
