@@ -320,12 +320,20 @@ l'appelant).
 - l'origine de `FRONTEND_BASE_URL`, si elle est définie ;
 - l'origine de la requête elle-même : schéma (`X-Forwarded-Proto`, lu
   uniquement depuis un proxy de confiance) et en-tête `Host` transmis par
-  nginx, port compris. `X-Forwarded-Host` n'est jamais utilisé.
+  nginx, port compris. `X-Forwarded-Host` n'est jamais utilisé ;
+- la variante `https://` de ce même `Host` (jamais la variante `http://`).
 
 L'interface servie par nginx (même hôte que `/api/`) fonctionne donc sans
-configuration. Toute autre origine frontend (autre hôte ou port, serveur de
-développement) doit être ajoutée à `CORS_ORIGINS`. N'y ajoutez jamais un
-domaine de labs.
+configuration, y compris derrière un terminateur TLS (reverse proxy, load
+balancer) placé devant nginx : nginx transmet alors `X-Forwarded-Proto: http`
+mais le navigateur annonce `Origin: https://…`, d'où la variante https.
+
+**En production, définissez `FRONTEND_BASE_URL`** (URL publique de
+l'interface, p. ex. `https://labondemand.example.fr`) : c'est l'origine de
+confiance explicite, indépendante des en-têtes transmis par les proxys, et la
+cible de redirection après connexion SSO. Toute autre origine frontend (autre
+hôte ou port, serveur de développement) doit être ajoutée à `CORS_ORIGINS`.
+N'y ajoutez jamais un domaine de labs.
 
 ### Terminal WebSocket
 

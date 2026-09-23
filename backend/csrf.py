@@ -32,6 +32,14 @@ Origines de confiance
   uvicorn ``--proxy-headers``, proxy de confiance uniquement) + en-tête
   ``Host`` transmis par nginx (``Host: $http_host``, port inclus).
   ``X-Forwarded-Host`` n'est jamais utilisé.
+- la variante ``https://`` de ce même ``Host`` : derrière un terminateur TLS
+  placé devant nginx, la requête arrive en http alors que le navigateur
+  annonce ``Origin: https://…``. Accepter https pour une requête http est
+  sans risque (un navigateur ne ment pas sur ``Origin``, et une page https
+  du même hôte est au moins aussi fiable) ; l'inverse (http pour une
+  requête https) est refusé, une page http pouvant être injectée par un
+  attaquant réseau. Définir tout de même ``FRONTEND_BASE_URL`` en
+  production : c'est la source explicite et la plus robuste.
 
 La connexion (``POST /api/v1/auth/login``) est protégée comme le reste pour
 empêcher le « login CSRF » (connecter la victime au compte de l'attaquant).
@@ -164,13 +172,26 @@ def request_origin(scope: Scope) -> Optional[str]:
     return normalize_origin(f"{scheme}://{host.strip()}")
 
 
+def request_origins(scope: Scope) -> FrozenSet[str]:
+    """Origines « same-origin » acceptées : celle de la requête + sa variante https.
+
+    La variante https couvre un terminateur TLS placé devant nginx (voir
+    l'en-tête du module) ; aucune variante http n'est jamais ajoutée.
+    """
+    host = Headers(scope=scope).get("host")
+    if not host:
+        return frozenset()
+    origins = {request_origin(scope), normalize_origin(f"https://{host.strip()}")}
+    return frozenset(origin for origin in origins if origin)
+
+
 def is_trusted_origin(origin: Optional[str], scope: Scope) -> bool:
     """Vrai si l'origine (déjà normalisée) est de confiance pour cette requête."""
     if not origin:
         return False
     if origin in configured_trusted_origins():
         return True
-    return origin == request_origin(scope)
+    return origin in request_origins(scope)
 
 
 def _origin_rejection_reason(headers: Headers, scope: Scope, *, require_origin: bool) -> Optional[str]:
