@@ -9,8 +9,9 @@ Sections :
   - déploiement en masse : concurrence bornée, sessions par thread, échecs partiels ;
   - Grading Runs : travail bloquant hors boucle, lots bornés, tâches référencées ;
   - nettoyage périodique : cycle en thread, verrou Redis de leader, Redis en panne ;
-  - réactivité : un appel Kubernetes lent (listing, cycle de vie, fichiers)
-    ne retarde pas une requête concurrente.
+  - réactivité : un appel Kubernetes lent (listing, cycle de vie, fichiers,
+    health) ne retarde pas une requête concurrente ;
+  - health check : sondes parallèles hors boucle, délais courts, forme inchangée.
 """
 
 from __future__ import annotations
@@ -905,3 +906,134 @@ async def test_slow_file_listing_does_not_block_loop(
     assert [entry["name"] for entry in resp.json()["entries"]] == ["notes.md"]
     assert calls and not any(call["on_loop"] for call in calls)
 
+
+async def test_slow_health_check_does_not_block_loop(client, mock_k8s):
+    calls: list = []
+    mock_k8s["core"].list_namespace.side_effect = _slow(MagicMock(items=[]), calls)
+
+    resp = await _assert_loop_responsive(client, client.get("/api/v1/health"))
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "healthy"
+    [call] = calls
+    assert call["on_loop"] is False
+    # Délai court et entier (un float serait ignoré par le client).
+    assert call["kwargs"]["_request_timeout"] == settings.HEALTH_CHECK_TIMEOUT_SECONDS
+    assert isinstance(call["kwargs"]["_request_timeout"], int)
+
+
+# ============================================================
+# Health check : sondes parallèles, bornées, forme inchangée
+# ============================================================
+
+
+async def test_health_probes_run_in_parallel_off_loop(client, mock_k8s, monkeypatch):
+    from backend import health
+
+    threads: Dict[str, bool] = {}
+
+    def _recording(component, check, delay):
+        def _probe(timeout):
+            threads[component] = _on_event_loop()
+            time.sleep(delay)
+            check(timeout)
+
+        return _probe
+
+    monkeypatch.setattr(
+        health,
+        "_CHECKS",
+        {name: _recording(name, check, 0.3) for name, check in health._CHECKS.items()},
+    )
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    resp = await client.get("/api/v1/health")
+    elapsed = loop.time() - start
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert list(body) == ["status", "timestamp", "db", "redis", "k8s"]
+    assert (body["status"], body["db"], body["redis"], body["k8s"]) == (
+        "healthy",
+        "ok",
+        "ok",
+        "ok",
+    )
+    assert threads == {"db": False, "redis": False, "k8s": False}
+    # Trois sondes de 0,3 s en parallèle, pas 0,9 s en série.
+    assert elapsed < 0.75, f"sondes exécutées en série ? ({elapsed:.2f}s)"
+
+
+async def test_health_times_out_a_hung_dependency(client, mock_k8s, monkeypatch):
+    from backend.config import Settings
+
+    monkeypatch.setattr(Settings, "HEALTH_CHECK_TIMEOUT_SECONDS", 1)
+    release = threading.Event()
+    mock_k8s["core"].list_namespace.side_effect = lambda *a, **kw: release.wait(10)
+
+    try:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        resp = await client.get("/api/v1/health")
+        elapsed = loop.time() - start
+    finally:
+        release.set()
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["k8s"] == "error: timeout after 1s"
+    assert body["db"] == "ok" and body["redis"] == "ok"
+    assert elapsed < 2, f"health bloqué {elapsed:.2f}s par une dépendance figée"
+
+
+async def test_health_reports_unreachable_redis_as_degraded(client, mock_k8s, monkeypatch):
+    import fakeredis
+
+    from backend import health
+
+    down = fakeredis.FakeServer()
+    down.connected = False
+    monkeypatch.setattr(health, "_redis_client", fakeredis.FakeRedis(server=down))
+
+    resp = await client.get("/api/v1/health")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["redis"].startswith("error: ")
+    assert body["db"] == "ok" and body["k8s"] == "ok"
+
+
+async def test_health_reports_kubernetes_error_as_degraded(client, mock_k8s):
+    mock_k8s["core"].list_namespace.side_effect = k8s_client.exceptions.ApiException(
+        status=403, reason="Forbidden"
+    )
+
+    resp = await client.get("/api/v1/health")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["k8s"].startswith("error: ")
+    assert body["db"] == "ok" and body["redis"] == "ok"
+
+
+def test_health_redis_client_has_short_timeouts(monkeypatch):
+    from backend import health
+
+    captured: Dict[str, Any] = {}
+
+    def _from_url(url, **kwargs):
+        captured.update(kwargs, url=url)
+        return MagicMock()
+
+    monkeypatch.setattr(health, "_redis_client", None)
+    monkeypatch.setattr(health.redis, "from_url", _from_url)
+    health._health_redis_client(3)
+    health._health_redis_client(3)
+
+    assert captured["url"] == settings.REDIS_URL
+    assert captured["socket_connect_timeout"] == 3
+    assert captured["socket_timeout"] == 3

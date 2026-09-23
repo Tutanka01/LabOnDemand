@@ -175,6 +175,10 @@ class Settings:
     TERMINAL_IDLE_TIMEOUT_SECONDS = max(
         0, int(os.getenv("TERMINAL_IDLE_TIMEOUT_SECONDS", "1800"))
     )
+    # Délai (s, entier) de chaque sonde de GET /api/v1/health (DB, Redis, K8s).
+    HEALTH_CHECK_TIMEOUT_SECONDS = max(
+        1, int(os.getenv("HEALTH_CHECK_TIMEOUT_SECONDS", "3"))
+    )
 
     @staticmethod
     def configure_threadpool() -> int:

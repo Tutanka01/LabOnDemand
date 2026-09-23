@@ -333,6 +333,7 @@ L'API tourne dans une seule boucle asyncio (uvicorn). Tout appel bloquant (SQLAl
 - **Grading Runs** : lancés en tâches de fond référencées (`grader_service.schedule_grading` / `schedule_grading_batch`, sinon la boucle peut collecter une tâche en vol). Chaque phase DB ou Kubernetes de `run_grading` s'exécute dans un thread avec sa propre session ; aucune session n'est tenue pendant l'attente du Job. « Lancer les tests sur toute la classe » exécute au plus `BULK_GRADING_CONCURRENCY` runs à la fois (défaut 5, par lot).
 - **Tâches de fond** : le cycle de nettoyage (`backend/tasks/cleanup.py`) s'exécute dans un thread et un seul processus l'exécute grâce au verrou Redis de leader `backend/redis_lock.py` (voir `documentation/lifecycle.md`, TTL `CLEANUP_LOCK_TTL_SECONDS`). Le nettoyage des sessions Redis (`backend/session.py`) passe aussi par `asyncio.to_thread`.
 - **Terminal WebSocket** (`backend/routers/k8s_terminal.py`) : l'authentification et l'ouverture du flux exec passent par le pool de threads ; un thread lecteur dédié par session (hors pool AnyIO) attend la sortie du pod avec `update(timeout)`, sans attente active, et la relaie via la boucle, tandis que la saisie et le redimensionnement (canal exec 4) sont écrits depuis le pool. Flux et thread sont libérés quand le navigateur ferme, quand le processus du pod se termine ou après `TERMINAL_IDLE_TIMEOUT_SECONDS` sans échange (défaut 1800, code 4408). Voir `documentation/terminal.md`.
+- **Health check** (`backend/health.py`) : les sondes DB, Redis et Kubernetes s'exécutent en parallèle dans des threads dédiés (au plus 6), chacune bornée par `HEALTH_CHECK_TIMEOUT_SECONDS` (défaut 3) ; une dépendance figée fait échouer sa sonde sans bloquer la boucle ni la réponse.
 
 ---
 
@@ -349,6 +350,8 @@ L'API tourne dans une seule boucle asyncio (uvicorn). Tout appel bloquant (SQLAl
   "timestamp": "2026-01-01T00:00:00"
 }
 ```
+
+La réponse est toujours `200`. Chaque composant vaut `"ok"` ou `"error: ..."` (`"error: timeout after 3s"` si la sonde dépasse `HEALTH_CHECK_TIMEOUT_SECONDS`) ; `status` passe à `"degraded"` dès qu'un composant est en erreur. Les trois sondes tournent en parallèle : la réponse arrive en au plus ~`HEALTH_CHECK_TIMEOUT_SECONDS` secondes.
 
 Utilisé par Docker Compose (`healthcheck`), le monitoring externe, et les outils de déploiement CI/CD.
 
