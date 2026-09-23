@@ -170,6 +170,11 @@ class Settings:
     # une itération (intervalle + durée d'un cycle). 0 = auto : 2 x intervalle
     # (CLEANUP_INTERVAL_MINUTES), minimum 120 s.
     CLEANUP_LOCK_TTL_SECONDS = max(0, int(os.getenv("CLEANUP_LOCK_TTL_SECONDS", "0")))
+    # Fermeture (code 4408) d'un terminal WebSocket sans aucun échange, dans un
+    # sens ou dans l'autre, pendant ce délai (s). 0 = jamais.
+    TERMINAL_IDLE_TIMEOUT_SECONDS = max(
+        0, int(os.getenv("TERMINAL_IDLE_TIMEOUT_SECONDS", "1800"))
+    )
 
     @staticmethod
     def configure_threadpool() -> int:
