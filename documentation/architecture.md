@@ -40,6 +40,8 @@ En plus des labs individuels, la plateforme propose un **système pédagogique c
 
 Redis est utilisé comme store de sessions authentifié et reste sur le réseau interne. Les origines CORS sont autorisées explicitement côté application ; le proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
 
+Le proxy Nginx (`nginx/nginx.conf`) garde des connexions keepalive vers l'API, transmet `Host` (port public compris), `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For` et `X-Real-IP`, et sert une location dédiée au terminal WebSocket (`/api/v1/k8s/terminal/`, délais de 3600 s, sans mise en mémoire tampon). Les erreurs 500/502/503/504 générées par Nginx affichent la page autonome `frontend-app/public/50x.html`. La directive `server api:8000 resolve` exige Nginx ≥ 1.27.3 : l'image `frontend` épingle `nginx:1.30.5-alpine`.
+
 ---
 
 ## Structure du dépôt

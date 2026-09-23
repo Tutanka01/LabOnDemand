@@ -34,6 +34,9 @@ Le terminal intégré de LabOnDemand permet d’ouvrir une session shell interac
   bibliothèque WebSocket (`websockets` ou `wsproto`), uvicorn refuse la poignée de
   main (« Unsupported upgrade request ») et le terminal ne s'ouvre jamais.
   `backend/tests/test_runtime_dependencies.py` vérifie ce point dans l'image.
+- Derrière nginx, `/api/v1/k8s/terminal/` a sa propre location (`nginx/nginx.conf`) :
+  en-têtes `Upgrade`/`Connection` transmis, `proxy_buffering off` et délais de
+  lecture/écriture de 3600 s. Les autres routes `/api/` gardent 120 s.
 
 ## Sécurité et restrictions
 
@@ -53,3 +56,5 @@ Le terminal intégré de LabOnDemand permet d’ouvrir une session shell interac
 - Latence: la boucle de lecture côté backend utilise des timeouts courts et des rafales; WebGL améliore le rendu
 - Police/couleurs: la feuille de style du dashboard adapte l’apparence de la console
 - Déconnexion: si la connexion réseau coupe, ré-ouvrez le terminal depuis les détails du déploiement
+- Coupure après une longue inactivité : nginx ferme un WebSocket sans aucun échange
+  pendant 3600 s (`proxy_read_timeout`/`proxy_send_timeout`) ; ré-ouvrez le terminal.
