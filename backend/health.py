@@ -3,7 +3,9 @@
 Chaque dépendance (base de données, Redis, Kubernetes) est sondée dans un
 thread, en parallèle, avec un délai court (``HEALTH_CHECK_TIMEOUT_SECONDS``) :
 une dépendance lente ou figée ne bloque ni la boucle d'événements ni la
-réponse, qui reste 200 avec ``status="degraded"``.
+réponse, qui reste 200 avec ``status="degraded"``. Les threads que des sondes
+abandonnées peuvent immobiliser sont plafonnés (``_MAX_PROBE_THREADS``) : au-delà,
+la sonde répond ``error: busy`` sans lancer de nouvel appel.
 """
 from __future__ import annotations
 
@@ -25,13 +27,21 @@ from .config import settings
 
 logger = logging.getLogger("labondemand.health")
 
-# Threads réservés aux sondes, par boucle d'événements. Une sonde abandonnée
-# après son délai (dépendance figée) finit dans son thread : ce plafond borne
-# les threads qu'elles peuvent accumuler sans toucher au pool des endpoints.
+# Threads réservés aux sondes. Le limiteur AnyIO (un par boucle d'événements)
+# les tient à l'écart du pool des endpoints, mais rend son jeton dès qu'une
+# sonde est abandonnée après son délai alors que son thread continue (dépendance
+# figée). Le sémaphore, pris et rendu dans le thread lui-même, borne donc les
+# sondes réellement en cours : des appels répétés à /health pendant une panne
+# ne peuvent pas accumuler de threads.
 _MAX_PROBE_THREADS = 6
 _probe_limiters: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, anyio.CapacityLimiter]" = (
     weakref.WeakKeyDictionary()
 )
+_probe_slots = threading.BoundedSemaphore(_MAX_PROBE_THREADS)
+
+
+class ProbeBusyError(RuntimeError):
+    """Toutes les places de sonde sont tenues par des sondes encore en cours."""
 
 _redis_client: Optional[redis.Redis] = None
 _redis_client_lock = threading.Lock()
@@ -75,6 +85,16 @@ def _check_kubernetes(timeout: int) -> None:
     k8s_client.CoreV1Api().list_namespace(limit=1, _request_timeout=timeout)
 
 
+def _run_bounded(check: Callable[[int], None], timeout: int) -> None:
+    """Exécute la sonde si une place est libre (thread de travail)."""
+    if not _probe_slots.acquire(blocking=False):
+        raise ProbeBusyError()
+    try:
+        check(timeout)
+    finally:
+        _probe_slots.release()
+
+
 _CHECKS: Dict[str, Callable[[int], None]] = {
     "db": _check_database,
     "redis": _check_redis,
@@ -92,10 +112,16 @@ async def _probe(
     try:
         with anyio.fail_after(timeout):
             await anyio.to_thread.run_sync(
-                functools.partial(check, timeout),
+                functools.partial(_run_bounded, check, timeout),
                 limiter=limiter,
                 abandon_on_cancel=True,
             )
+    except ProbeBusyError:
+        logger.warning(
+            "health_check_busy",
+            extra={"extra_fields": {"component": component, "max_probe_threads": _MAX_PROBE_THREADS}},
+        )
+        return "error: busy (previous probes still running)"
     except TimeoutError:
         logger.warning(
             "health_check_timeout",

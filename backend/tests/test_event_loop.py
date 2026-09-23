@@ -1099,6 +1099,40 @@ async def test_health_times_out_a_hung_dependency(client, mock_k8s, monkeypatch)
     assert elapsed < 2, f"health bloqué {elapsed:.2f}s par une dépendance figée"
 
 
+async def test_abandoned_probes_cannot_pile_up_threads(monkeypatch):
+    """Une sonde abandonnée garde sa place jusqu'à la vraie fin de son thread."""
+    from backend import health
+
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(health, "_probe_slots", slots)
+    limiter = health._probe_limiter()
+    release = threading.Event()
+    calls = []
+
+    def hung(_timeout):
+        calls.append("hung")
+        release.wait(10)
+
+    def healthy(_timeout):
+        calls.append("healthy")
+
+    try:
+        assert await health._probe("db", hung, 0.2, limiter) == "error: timeout after 0.2s"
+        # Le thread figé tient toujours la seule place : pas de nouvel appel.
+        assert (await health._probe("db", healthy, 0.2, limiter)).startswith("error: busy")
+        assert calls == ["hung"]
+    finally:
+        release.set()
+
+    for _ in range(100):
+        if slots.acquire(blocking=False):
+            slots.release()
+            break
+        await asyncio.sleep(0.02)
+    assert await health._probe("db", healthy, 0.2, limiter) == "ok"
+    assert calls == ["hung", "healthy"]
+
+
 async def test_health_reports_unreachable_redis_as_degraded(client, mock_k8s, monkeypatch):
     import fakeredis
 
