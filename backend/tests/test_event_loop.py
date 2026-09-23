@@ -7,7 +7,8 @@ Sections :
   - services K8s synchrones (exécutés hors boucle par les appelants) ;
   - garde statique : endpoints/dépendances async limités à une liste blanche ;
   - déploiement en masse : concurrence bornée, sessions par thread, échecs partiels ;
-  - Grading Runs : travail bloquant hors boucle, lots bornés, tâches référencées.
+  - Grading Runs : travail bloquant hors boucle, lots bornés, tâches référencées ;
+  - nettoyage périodique : cycle en thread, verrou Redis de leader, Redis en panne.
 """
 
 from __future__ import annotations
@@ -629,3 +630,173 @@ async def test_schedule_grading_keeps_a_reference_until_done(monkeypatch):
     assert calls == [42]
     assert task not in grader_service._background_tasks
     assert grader_service.schedule_grading_batch([], 3) is None
+
+
+# ============================================================
+# Nettoyage périodique : cycle en thread + verrou de leader
+# ============================================================
+
+
+@pytest.fixture()
+def lock_server():
+    import fakeredis
+
+    return fakeredis.FakeServer()
+
+
+@pytest.fixture()
+def lock_redis(lock_server):
+    import fakeredis
+
+    return fakeredis.FakeRedis(server=lock_server)
+
+
+def _cleanup_lock(lock_redis, ttl_seconds: float = 30):
+    from backend.redis_lock import RedisLock
+    from backend.tasks import cleanup
+
+    return RedisLock(lock_redis, cleanup.CLEANUP_LOCK_KEY, ttl_seconds=ttl_seconds)
+
+
+def _recording_cycle(monkeypatch, delay: float = 0.0, gate: threading.Event = None):
+    from backend.tasks import cleanup
+
+    calls = []
+
+    def fake_cycle() -> None:
+        calls.append(threading.get_ident())
+        if delay:
+            time.sleep(delay)
+        if gate is not None:
+            gate.wait(5)
+
+    monkeypatch.setattr(cleanup, "_run_cleanup_cycle", fake_cycle)
+    return calls
+
+
+async def test_cleanup_leader_runs_cycle_in_a_thread(client, lock_redis, monkeypatch):
+    from backend.tasks import cleanup
+
+    calls = _recording_cycle(monkeypatch, delay=0.5)
+    lock = _cleanup_lock(lock_redis)
+
+    ran = await _assert_loop_responsive(client, cleanup._cleanup_iteration(lock))
+
+    assert ran is True
+    assert calls and calls[0] != threading.get_ident()
+    # Le leader garde le verrou entre deux itérations.
+    assert lock.owned
+    assert lock_redis.exists(cleanup.CLEANUP_LOCK_KEY) == 1
+
+
+async def test_cleanup_skips_iteration_when_another_process_leads(lock_redis, monkeypatch):
+    from backend.tasks import cleanup
+
+    calls = _recording_cycle(monkeypatch)
+    leader = _cleanup_lock(lock_redis)
+    leader.acquire()
+
+    follower = _cleanup_lock(lock_redis)
+    assert await cleanup._cleanup_iteration(follower) is False
+    assert calls == []
+    assert not follower.owned
+
+
+async def test_cleanup_leader_renews_lock_each_iteration(lock_redis, monkeypatch):
+    from backend.tasks import cleanup
+
+    calls = _recording_cycle(monkeypatch)
+    lock = _cleanup_lock(lock_redis, ttl_seconds=30)
+    assert await cleanup._cleanup_iteration(lock) is True
+    token = lock_redis.get(cleanup.CLEANUP_LOCK_KEY)
+    lock_redis.pexpire(cleanup.CLEANUP_LOCK_KEY, 1000)
+
+    assert await cleanup._cleanup_iteration(lock) is True
+    assert len(calls) == 2
+    assert lock_redis.get(cleanup.CLEANUP_LOCK_KEY) == token
+    assert lock_redis.pttl(cleanup.CLEANUP_LOCK_KEY) > 25_000
+
+
+async def test_cleanup_skips_iteration_when_redis_is_down(lock_server, lock_redis, monkeypatch, caplog):
+    from backend.tasks import cleanup
+
+    calls = _recording_cycle(monkeypatch)
+    lock_server.connected = False
+    caplog.set_level("WARNING", logger="labondemand.cleanup")
+
+    assert await cleanup._cleanup_iteration(_cleanup_lock(lock_redis)) is False
+    assert calls == []
+    assert "cleanup_skipped_redis_unavailable" in caplog.messages
+
+
+async def test_cleanup_heartbeat_keeps_lock_during_long_cycle(lock_redis, monkeypatch):
+    from backend.tasks import cleanup
+
+    # TTL 0.3 s, cycle 0.7 s : sans prolongation, le verrou expirerait en cours de cycle.
+    _recording_cycle(monkeypatch, delay=0.7)
+    lock = _cleanup_lock(lock_redis, ttl_seconds=0.3)
+    assert await cleanup._cleanup_iteration(lock) is True
+    assert lock.owned
+    assert lock_redis.exists(cleanup.CLEANUP_LOCK_KEY) == 1
+
+
+async def _wait_until(predicate, timeout: float = 3.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition non atteinte"
+        await asyncio.sleep(0.01)
+
+
+async def test_cleanup_loop_keeps_reference_and_releases_lock_on_shutdown(lock_redis, monkeypatch):
+    from backend.tasks import cleanup
+
+    calls = _recording_cycle(monkeypatch)
+    lock = _cleanup_lock(lock_redis)
+    task = asyncio.get_running_loop().create_task(cleanup.run_cleanup_loop(lock))
+    await _wait_until(lambda: calls)
+    await asyncio.sleep(0.05)
+    assert task in cleanup._loop_tasks
+    assert lock_redis.exists(cleanup.CLEANUP_LOCK_KEY) == 1
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task not in cleanup._loop_tasks
+    # Arrêt entre deux cycles : verrou rendu pour qu'un autre processus reprenne.
+    assert lock_redis.exists(cleanup.CLEANUP_LOCK_KEY) == 0
+
+
+async def test_cleanup_cancelled_mid_cycle_leaves_lock_to_expire(lock_redis, monkeypatch):
+    from backend.tasks import cleanup
+
+    gate = threading.Event()
+    calls = _recording_cycle(monkeypatch, gate=gate)
+    lock = _cleanup_lock(lock_redis)
+    task = asyncio.get_running_loop().create_task(cleanup.run_cleanup_loop(lock))
+    try:
+        await _wait_until(lambda: calls)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # Le cycle tourne encore dans son thread : pas de libération anticipée.
+        assert not lock.owned
+        assert lock_redis.exists(cleanup.CLEANUP_LOCK_KEY) == 1
+    finally:
+        gate.set()
+
+
+def test_cleanup_lock_ttl_exceeds_an_iteration(monkeypatch):
+    from backend.config import Settings
+    from backend.tasks import cleanup
+
+    monkeypatch.setattr(Settings, "CLEANUP_LOCK_TTL_SECONDS", 0)
+    assert cleanup._lock_ttl_seconds(3600) == 7200
+    assert cleanup._lock_ttl_seconds(10) == 120
+    monkeypatch.setattr(Settings, "CLEANUP_LOCK_TTL_SECONDS", 900)
+    assert cleanup._lock_ttl_seconds(3600) == 900
+
+
+def test_cleanup_cycle_is_synchronous():
+    from backend.tasks import cleanup
+
+    assert not inspect.iscoroutinefunction(cleanup._run_cleanup_cycle)

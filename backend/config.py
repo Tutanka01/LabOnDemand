@@ -166,6 +166,10 @@ class Settings:
     # Grading Runs simultanés lors d'un « lancer les tests sur toute la classe »
     # (par lot ; les runs suivants attendent leur tour en arrière-plan).
     BULK_GRADING_CONCURRENCY = max(1, int(os.getenv("BULK_GRADING_CONCURRENCY", "5")))
+    # TTL (s) du verrou Redis de leader de la tâche de nettoyage. Doit dépasser
+    # une itération (intervalle + durée d'un cycle). 0 = auto : 2 x intervalle
+    # (CLEANUP_INTERVAL_MINUTES), minimum 120 s.
+    CLEANUP_LOCK_TTL_SECONDS = max(0, int(os.getenv("CLEANUP_LOCK_TTL_SECONDS", "0")))
 
     @staticmethod
     def configure_threadpool() -> int:
