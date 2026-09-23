@@ -36,7 +36,7 @@ En plus des labs individuels, la plateforme propose un **système pédagogique c
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Technologies** : Python 3.13, FastAPI 0.141 (Starlette 1.x), SQLAlchemy 2, MariaDB (PyMySQL), Redis, kubernetes-client 36, Nginx, React 18, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
+**Technologies** : Python 3.13, FastAPI 0.141 (Starlette 1.x), SQLAlchemy 2, MariaDB (PyMySQL), Redis, kubernetes-client 36, Nginx 1.30, React 19, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
 
 Redis est utilisé comme store de sessions authentifié et reste sur le réseau interne. Les origines CORS sont autorisées explicitement côté application ; le proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
 
@@ -98,7 +98,7 @@ LabOnDemand/
 │   │   │   ├── fr.json             # Français
 │   │   │   └── en.json             # Anglais
 │   │   └── styles/main.css         # Tailwind + variables CSS
-│   ├── Dockerfile                  # Build Node.js 20 → runtime Nginx:alpine
+│   ├── Dockerfile                  # Build Node.js 24 (LTS) → runtime nginx:1.30.5-alpine
 │   └── package.json
 ├── frontend/                       # Ancien frontend HTML/Vanilla JS (legacy, non utilisé)
 ├── documentation/                  # Documentation détaillée (ce dossier)
@@ -354,7 +354,7 @@ Compatible Traefik et Nginx Ingress Controller. TLS via `INGRESS_TLS_SECRET`. Le
 
 ## Frontend (frontend-app/)
 
-L'interface est une SPA React 18 / TypeScript / Vite compilée dans une image Nginx. Elle n'est **jamais servie directement par Node.js en production** — uniquement via le conteneur `frontend`.
+L'interface est une SPA React 19 / TypeScript / Vite compilée dans une image Nginx. Elle n'est **jamais servie directement par Node.js en production** — uniquement via le conteneur `frontend`.
 
 Bibliothèques clés :
 - **Radix UI** : composants accessibles (dialog, dropdown, tabs, tooltip…)
