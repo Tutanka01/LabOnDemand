@@ -23,7 +23,7 @@ from backend.database import build_database_url, engine_options
 def test_engine_options_defaults():
     assert engine_options({}) == {
         "pool_size": 10,
-        "max_overflow": 30,
+        "max_overflow": 70,
         "pool_timeout": 30,
         "pool_recycle": 1800,
         "pool_pre_ping": True,
@@ -79,7 +79,7 @@ def test_engine_options_are_accepted_by_create_engine():
         pool = engine.pool
         assert pool.size() == 10
         assert pool.timeout() == 30
-        assert pool._max_overflow == 30
+        assert pool._max_overflow == 70
         assert pool._recycle == 1800
         assert pool._pre_ping is True
     finally:
@@ -90,6 +90,20 @@ def test_module_exposes_engine_options_from_environment():
     """Le moteur applicatif est construit avec les options lues au démarrage."""
     assert database.ENGINE_OPTIONS == engine_options(os.environ)
     assert database.ENGINE_OPTIONS["pool_pre_ping"] is True
+
+
+def test_default_pool_covers_two_connections_per_default_thread():
+    """Session de requête + session de service, pour chacun des 40 threads."""
+    defaults = engine_options({})
+    assert database.pool_capacity(defaults) == 80
+    assert database.pool_shortfall(40, defaults) == 0
+
+
+def test_pool_shortfall_counts_missing_connections():
+    options = engine_options({"DB_POOL_SIZE": "10", "DB_MAX_OVERFLOW": "30"})
+    assert database.pool_shortfall(40, options) == 40
+    assert database.pool_shortfall(20, options) == 0
+    assert database.pool_shortfall(21, options) == 2
 
 
 # ============= URL de connexion =============

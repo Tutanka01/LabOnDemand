@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import inspect
+import logging
 import threading
 import time
 from typing import Any, Dict
@@ -211,6 +212,39 @@ async def test_threadpool_startup_hook_is_registered():
     from backend.main import app, configure_threadpool
 
     assert configure_threadpool in app.router.on_startup
+
+
+async def test_startup_warns_when_db_pool_cannot_serve_every_thread(monkeypatch, caplog):
+    from backend import main
+    from backend.config import Settings
+
+    monkeypatch.setattr(Settings, "API_THREADPOOL_SIZE", 40)
+    monkeypatch.setattr(
+        main, "ENGINE_OPTIONS", {"pool_size": 10, "max_overflow": 30}
+    )
+    with caplog.at_level(logging.WARNING, logger=main.logger.name):
+        await main.configure_threadpool()
+
+    warnings = [r for r in caplog.records if r.getMessage() == "db_pool_undersized"]
+    assert len(warnings) == 1
+    fields = warnings[0].extra_fields
+    assert fields["threads"] == 40
+    assert fields["pool_capacity"] == 40
+    assert fields["missing_connections"] == 40
+
+
+async def test_startup_is_silent_when_db_pool_is_large_enough(monkeypatch, caplog):
+    from backend import main
+    from backend.config import Settings
+
+    monkeypatch.setattr(Settings, "API_THREADPOOL_SIZE", 40)
+    monkeypatch.setattr(
+        main, "ENGINE_OPTIONS", {"pool_size": 10, "max_overflow": 70}
+    )
+    with caplog.at_level(logging.WARNING, logger=main.logger.name):
+        await main.configure_threadpool()
+
+    assert not [r for r in caplog.records if r.getMessage() == "db_pool_undersized"]
 
 
 # ============================================================

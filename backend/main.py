@@ -18,7 +18,7 @@ from .logging_config import (
     reset_request_id,
     shorten_token,
 )
-from .database import SessionLocal
+from .database import ENGINE_OPTIONS, SessionLocal, pool_capacity, pool_shortfall
 from .session import setup_session_handler, validate_cookie_settings
 from .csrf import CSRFMiddleware
 from .error_handlers import global_exception_handler
@@ -296,9 +296,27 @@ async def get_status():
 
 @app.on_event("startup")
 async def configure_threadpool() -> None:
-    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE)."""
+    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE).
+
+    Avertit si le pool de connexions SQLAlchemy ne couvre pas deux connexions
+    par thread (session de requête + session de service) : en pic, les
+    requêtes attendraient DB_POOL_TIMEOUT puis échoueraient.
+    """
     size = settings.configure_threadpool()
     logger.info("threadpool_configured", extra={"extra_fields": {"size": size}})
+    missing = pool_shortfall(size, ENGINE_OPTIONS)
+    if missing:
+        logger.warning(
+            "db_pool_undersized",
+            extra={
+                "extra_fields": {
+                    "threads": size,
+                    "pool_capacity": pool_capacity(ENGINE_OPTIONS),
+                    "missing_connections": missing,
+                    "hint": "augmenter DB_MAX_OVERFLOW ou réduire API_THREADPOOL_SIZE",
+                }
+            },
+        )
 
 
 @app.get("/api/v1/health")

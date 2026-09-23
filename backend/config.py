@@ -158,8 +158,9 @@ class Settings:
     K8S_REQUEST_TIMEOUT_READ = float(os.getenv("K8S_REQUEST_TIMEOUT_READ", "30"))
     # Taille du pool de threads AnyIO qui exécute les endpoints `def`, les
     # dépendances synchrones et les appels déportés (run_in_threadpool).
-    # À garder <= pool_size + max_overflow du moteur SQLAlchemy : chaque thread
-    # peut tenir une connexion, au-delà les requêtes attendent le pool DB.
+    # À garder <= (pool_size + max_overflow) / 2 du moteur SQLAlchemy : un
+    # thread peut tenir deux connexions (session de requête + session de
+    # service) ; au-delà les requêtes attendent le pool DB (voir database.py).
     API_THREADPOOL_SIZE = max(1, int(os.getenv("API_THREADPOOL_SIZE", "40")))
     # Déploiements simultanés (threads dédiés) lors d'un déploiement en masse
     # d'un devoir sur une classe, par requête.
