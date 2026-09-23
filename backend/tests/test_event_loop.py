@@ -17,6 +17,7 @@ Sections :
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import inspect
 import logging
@@ -30,6 +31,7 @@ import pytest
 import urllib3
 from kubernetes import client as k8s_client
 from kubernetes.client import rest
+from sqlalchemy import event
 
 from backend import k8s_timeouts
 from backend.config import settings
@@ -593,6 +595,78 @@ async def test_run_grading_does_blocking_work_off_loop(client, db, teacher_user,
     assert session_threads and loop_thread not in session_threads
     db.expire_all()
     assert db.query(GradingRun).filter(GradingRun.id == run.id).one().status == "done"
+
+
+@contextlib.contextmanager
+def _sql_statement_threads(engine):
+    """Enregistre le thread de chaque requête SQL émise sur ``engine``."""
+    threads = []
+
+    def _before(conn, cursor, statement, parameters, context, executemany):
+        threads.append(threading.get_ident())
+
+    event.listen(engine, "before_cursor_execute", _before)
+    try:
+        yield threads
+    finally:
+        event.remove(engine, "before_cursor_execute", _before)
+
+
+@contextlib.contextmanager
+def _audit_records():
+    """Capture le logger d'audit (qui ne propage pas vers la racine)."""
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    audit = logging.getLogger("labondemand.audit")
+    audit.addHandler(handler)
+    try:
+        yield records
+    finally:
+        audit.removeHandler(handler)
+
+
+@pytest.mark.parametrize(
+    "actor, path",
+    [
+        ("student", "/api/v1/student/assignments/{aid}/run-tests"),
+        ("teacher", "/api/v1/classrooms/{cid}/assignments/{aid}/test-now"),
+        ("teacher", "/api/v1/classrooms/{cid}/assignments/{aid}/run-tests-all"),
+    ],
+)
+async def test_grading_endpoints_run_no_sql_on_the_loop(
+    actor, path, student_client, teacher_client, db, teacher_user, student_user, monkeypatch
+):
+    """Après le commit déporté, l'audit ne relit pas l'utilisateur expiré sur la boucle."""
+    from backend import grader_service
+    from backend.tests.test_grading import (
+        _assignment, _classroom, _deployment, _enroll, _link_lab, _spec,
+    )
+
+    monkeypatch.setattr(grader_service, "schedule_grading", lambda run_id: None)
+    monkeypatch.setattr(grader_service, "schedule_grading_batch", lambda run_ids, limit: None)
+    cls = _classroom(db, teacher_user.id)
+    asgn = _assignment(db, cls.id)
+    _spec(db, asgn.id)
+    _enroll(db, cls.id, student_user.id)
+    student_lab = _deployment(db, student_user.id)
+    _link_lab(db, asgn.id, student_user.id, student_lab.id)
+    demo_lab = _deployment(db, teacher_user.id, name="tp-demo", ns="labondemand-user-teacher")
+    _link_lab(db, asgn.id, teacher_user.id, demo_lab.id)
+    actor_user = student_user if actor == "student" else teacher_user
+    actor_id = actor_user.id
+    client = student_client if actor == "student" else teacher_client
+    url = path.format(cid=cls.id, aid=asgn.id)  # lu avant d'enregistrer le SQL
+
+    loop_thread = threading.get_ident()
+    with _sql_statement_threads(db.get_bind()) as sql_threads, _audit_records() as audits:
+        resp = await client.post(url)
+
+    assert resp.status_code == 200, resp.text
+    assert sql_threads, "le handler doit bien écrire en base (hors boucle)"
+    assert loop_thread not in sql_threads
+    started = [r for r in audits if r.getMessage().startswith("grading_run")]
+    assert [r.extra_fields["user_id"] for r in started] == [actor_id]
 
 
 async def test_run_tests_all_bounds_concurrent_grading_runs(teacher_client, db, teacher_user, monkeypatch):

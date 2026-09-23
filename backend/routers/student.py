@@ -400,6 +400,9 @@ async def run_tests(
     db: Session = Depends(get_db),
 ):
     """Lance un Grading Run (self-check formatif) contre mon lab."""
+    # Lu avant le commit du thread : ensuite l'instance est expirée et tout
+    # accès relancerait un SELECT bloquant sur la boucle.
+    user_id = current_user.id
     # Async uniquement pour planifier la tâche de fond : la partie DB est déportée.
     response = await run_in_threadpool(_queue_self_check_run, aid, current_user, db)
 
@@ -407,7 +410,7 @@ async def run_tests(
     grader_service.schedule_grading(response.id)
     audit_logger.info(
         "grading_run_started",
-        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": response.id, "trigger": "student_self"}},
+        extra={"extra_fields": {"assignment_id": aid, "user_id": user_id, "run_id": response.id, "trigger": "student_self"}},
     )
     return response
 
