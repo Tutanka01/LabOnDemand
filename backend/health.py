@@ -70,7 +70,8 @@ def _check_redis(timeout: int) -> None:
 
 
 def _check_kubernetes(timeout: int) -> None:
-    # Délai entier : le client Kubernetes ignore un _request_timeout float.
+    # Délai entier : kubernetes 32.x ignore un _request_timeout float
+    # (36.x l'accepte) ; un int est pris en compte par toutes les versions.
     k8s_client.CoreV1Api().list_namespace(limit=1, _request_timeout=timeout)
 
 

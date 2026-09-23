@@ -917,7 +917,7 @@ async def test_slow_health_check_does_not_block_loop(client, mock_k8s):
     assert resp.json()["status"] == "healthy"
     [call] = calls
     assert call["on_loop"] is False
-    # Délai court et entier (un float serait ignoré par le client).
+    # Délai court et entier (kubernetes 32.x ignore un float).
     assert call["kwargs"]["_request_timeout"] == settings.HEALTH_CHECK_TIMEOUT_SECONDS
     assert isinstance(call["kwargs"]["_request_timeout"], int)
 
