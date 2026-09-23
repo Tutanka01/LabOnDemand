@@ -164,11 +164,19 @@ class Settings:
     }
 
     # Sessions (Redis)
+    # Source unique de vérité pour les cookies de session : session.py et
+    # auth_router.py lisent ces valeurs, aucune autre lecture d'environnement.
     REDIS_URL = os.getenv("REDIS_URL", None)
     SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
-    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Strict")
+    # Lax par défaut (valeur effective historique) : Strict supprime le cookie
+    # lors du retour de l'IdP OIDC et des liens entrants, sans gain réel
+    # puisque les requêtes mutantes sont protégées par backend/csrf.py.
+    # Normalisé en minuscules ; validé au démarrage (lax, strict, none).
+    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Lax").strip().lower() or "lax"
     SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
-    COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
+    # Laisser vide (cookie limité à l'hôte) sauf besoin explicite. Ne doit
+    # jamais englober INGRESS_BASE_DOMAIN : contrôle bloquant au démarrage.
+    COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
 
     # SSO (OpenID Connect — OIDC)
     SSO_ENABLED = os.getenv("SSO_ENABLED", "False").lower() in ["true", "1", "yes"]

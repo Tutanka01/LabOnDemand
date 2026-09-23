@@ -17,7 +17,7 @@ from .security import (
     get_current_user, delete_session, delete_user_sessions,
     is_admin, is_teacher_or_admin, limiter, validate_password_strength
 )
-from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
+from .session import set_session_cookie, clear_session_cookie
 from .session_store import session_store
 from .config import settings
 from .sso import (
@@ -88,17 +88,7 @@ def login(
     # Créer la réponse : le jeton n'apparaît ni dans le corps ni dans un
     # en-tête, seulement dans le cookie HttpOnly ci-dessous.
     resp = LoginResponse(user=UserResponse.model_validate(user))
-
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite=SESSION_SAMESITE.lower(),
-        max_age=SESSION_EXPIRY_HOURS * 3600,
-        path="/",
-        domain=COOKIE_DOMAIN or None
-    )
+    set_session_cookie(response, session_id)
 
     audit_logger.info(
         "login_success",
@@ -152,7 +142,7 @@ def sso_login(request: Request, response: Response):
         key="oidc_state",
         value=state,
         httponly=True,
-        secure=SECURE_COOKIES,
+        secure=settings.SECURE_COOKIES,
         samesite="lax",
         max_age=600,  # 10 minutes
         path="/",
@@ -305,16 +295,7 @@ def sso_callback(request: Request, db: Session = Depends(get_db)):
     response = RedirectResponse(url=redirect_to)
     # Supprime le cookie de state OIDC
     response.delete_cookie(key="oidc_state", path="/")
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite=SESSION_SAMESITE.lower(),
-        max_age=SESSION_EXPIRY_HOURS * 3600,
-        path="/",
-        domain=COOKIE_DOMAIN or None,
-    )
+    set_session_cookie(response, session_id)
     return response
 
 @router.post("/logout")
@@ -334,14 +315,7 @@ def logout(response: Response, request: Request):
     if session_id:
         delete_session(session_id)
 
-    response.delete_cookie(
-        key="session_id",
-        path="/",
-        domain=COOKIE_DOMAIN or None,
-        secure=SECURE_COOKIES,
-        httponly=True,
-        samesite=SESSION_SAMESITE.lower(),
-    )
+    clear_session_cookie(response)
 
     audit_logger.info(
         "logout",

@@ -22,7 +22,7 @@ from .logging_config import (
     shorten_token,
 )
 from .database import Base, engine, get_db, SessionLocal
-from .session import setup_session_handler
+from .session import setup_session_handler, validate_cookie_settings
 from .error_handlers import global_exception_handler
 from . import (
     models,
@@ -163,7 +163,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration du middleware de session
+# Garde-fous des cookies de session : refuse de démarrer sur une configuration
+# dangereuse (ex. COOKIE_DOMAIN englobant le domaine des labs étudiants).
+validate_cookie_settings()
+
+# Nettoyage périodique des sessions expirées
 setup_session_handler(app)
 
 # Création des tables de base de données (nécessite l'import de models ci-dessus)
