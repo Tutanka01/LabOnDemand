@@ -233,6 +233,22 @@ def delete_user_sessions(user_id: int) -> int:
     )
     return deleted_count
 
+# Empreinte bcrypt constante d'un mot de passe aléatoire jamais conservé :
+# aucune saisie ne peut la valider. Coût 12, identique aux empreintes réelles
+# (vérifié par test_rate_limiting.py) : à régénérer si ce coût change.
+_DUMMY_PASSWORD_HASH = "$2b$12$Nhlh8YP12962NELT6UCtQOCvPX6OI9d.JT6xAOvMSOsEWqtgWpmFC"
+
+
+def _equalize_password_check_timing(password: str) -> None:
+    """Consomme le coût d'une vérification bcrypt sans résultat exploitable.
+
+    Sans cela, un nom inconnu (ou un compte SSO) répond sans calcul bcrypt,
+    donc nettement plus vite qu'un mauvais mot de passe : la durée de la
+    réponse révélerait quels comptes locaux existent (énumération).
+    """
+    verify_password(password, _DUMMY_PASSWORD_HASH)
+
+
 # Authentification utilisateur
 def authenticate_user(db: Session, username: str, password: str):
     logger.debug(
@@ -242,6 +258,7 @@ def authenticate_user(db: Session, username: str, password: str):
 
     user = db.query(User).filter(User.username == username).first()
     if not user:
+        _equalize_password_check_timing(password)
         logger.warning(
             "authenticate_user_failed",
             extra={"extra_fields": {"username": username, "reason": "user_not_found"}},
@@ -249,6 +266,7 @@ def authenticate_user(db: Session, username: str, password: str):
         return False
     
     if getattr(user, "auth_provider", "local") != "local":
+        _equalize_password_check_timing(password)
         logger.warning(
             "authenticate_user_failed",
             extra={"extra_fields": {"username": username, "reason": "non_local_auth"}},
