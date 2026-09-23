@@ -23,7 +23,7 @@ En plus des labs individuels, la plateforme propose un **système pédagogique c
 ┌─────────────────────────────────────────────────────────────────┐
 │  Navigateur                                                      │
 │  ├── React/Vite SPA (Nginx)  frontend-app/                       │
-│  └── REST API (FastAPI 0.115) backend/                           │
+│  └── REST API (FastAPI 0.141) backend/                           │
 │         │                                                        │
 │         ├── Auth + sessions  security.py  ◄──► Redis             │
 │         ├── Auth OIDC/SSO    sso.py + auth_router.py             │
@@ -36,7 +36,7 @@ En plus des labs individuels, la plateforme propose un **système pédagogique c
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Technologies** : Python 3.13, FastAPI 0.115, SQLAlchemy 2, MariaDB, Redis, kubernetes-client 32, Nginx, React 18, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
+**Technologies** : Python 3.13, FastAPI 0.141 (Starlette 1.x), SQLAlchemy 2, MariaDB (PyMySQL), Redis, kubernetes-client 36, Nginx, React 18, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
 
 Redis est utilisé comme store de sessions authentifié et reste sur le réseau interne. Les origines CORS sont autorisées explicitement côté application ; le proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
 
