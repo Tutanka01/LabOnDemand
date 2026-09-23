@@ -8,11 +8,8 @@ FROM python:3.13-slim AS base
 
 WORKDIR /app
 
-# Installation de kubectl (via dépôts Debian pour éviter les downloads externes)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates kubernetes-client && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Pas de kubectl : l'API pilote le cluster via le client Python kubernetes.
+# ca-certificates est déjà fourni par l'image python:3.13-slim.
 
 # Dépendances Python d'abord : la couche reste en cache tant que
 # requirements.txt ne change pas, même si le code backend évolue.
@@ -21,9 +18,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copie du code (ne copiez PAS le fichier .env dans l'image !)
 COPY backend/ /app/backend/
-
-# Vérification que kubectl est correctement installé
-RUN kubectl version --client
 
 # Image de test : dépendances pytest en plus, aucun secret ni kubeconfig.
 # Utilisée par compose.test.yaml (docker compose -f compose.test.yaml run --rm tests).
