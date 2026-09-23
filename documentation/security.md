@@ -330,8 +330,9 @@ l'appelant).
 
 ### Origines de confiance
 
-- chaque entrée de `CORS_ORIGINS` (`*` est ignoré, avec un avertissement
-  dans les journaux : ce n'est pas une origine) ;
+- chaque entrée de `CORS_ORIGINS`. `*` refuse le démarrage de l'API : le
+  CORS autorisant les cookies, Starlette renverrait l'origine de tout site
+  appelant, qui pourrait alors lire les réponses authentifiées ;
 - l'origine de `FRONTEND_BASE_URL`, si elle est définie ;
 - l'origine de la requête elle-même : schéma (`X-Forwarded-Proto`, lu
   uniquement depuis un proxy de confiance) et en-tête `Host` transmis par

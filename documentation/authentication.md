@@ -223,7 +223,7 @@ des namespaces orphelins (voir `documentation/lifecycle.md`).
 
 ### Origines de confiance (CSRF)
 
-- les entrées de `CORS_ORIGINS` (`*` est ignoré) ;
+- les entrées de `CORS_ORIGINS` (`*` refuse le démarrage de l'API : le CORS autorise les cookies) ;
 - l'origine de `FRONTEND_BASE_URL` ;
 - l'hôte de la requête elle-même (en-tête `Host` transmis par nginx et schéma `X-Forwarded-Proto` d'un proxy de confiance).
 

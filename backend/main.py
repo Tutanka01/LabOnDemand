@@ -20,7 +20,7 @@ from .logging_config import (
 )
 from .database import ENGINE_OPTIONS, SessionLocal, pool_capacity, pool_shortfall
 from .session import setup_session_handler, validate_cookie_settings
-from .csrf import CSRFMiddleware
+from .csrf import CSRFMiddleware, validate_cors_origins
 from .error_handlers import global_exception_handler
 from . import (
     models,
@@ -159,7 +159,8 @@ app.add_exception_handler(Exception, global_exception_handler)
 # inverse) : les refus 403 portent les en-têtes CORS des origines autorisées.
 app.add_middleware(CSRFMiddleware)
 
-# Configuration CORS
+# Configuration CORS (cookies autorisés : CORS_ORIGINS=* refuse le démarrage)
+validate_cors_origins(settings.CORS_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,

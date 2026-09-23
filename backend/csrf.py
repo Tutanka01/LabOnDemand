@@ -25,8 +25,10 @@ qui peuvent poser des cookies sur le domaine parent (« cookie tossing »).
 
 Origines de confiance
 ---------------------
-- chaque entrée de ``CORS_ORIGINS`` (``*`` est ignoré : ce n'est pas une
-  origine et il ne doit jamais valider une requête authentifiée) ;
+- chaque entrée de ``CORS_ORIGINS``. ``*`` y est refusé au démarrage
+  (:func:`validate_cors_origins`) et, par défense en profondeur, ignoré ici :
+  ce n'est pas une origine et il ne doit jamais valider une requête
+  authentifiée ;
 - l'origine de ``FRONTEND_BASE_URL`` si elle est définie ;
 - l'origine de la requête elle-même : schéma (``X-Forwarded-Proto`` via
   uvicorn ``--proxy-headers``, proxy de confiance uniquement) + en-tête
@@ -54,7 +56,7 @@ from __future__ import annotations
 import logging
 import re
 from functools import lru_cache
-from typing import FrozenSet, Optional, Tuple
+from typing import FrozenSet, Iterable, Optional, Tuple
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
@@ -129,6 +131,26 @@ def normalize_origin(value: Optional[str], *, strict: bool = True) -> Optional[s
     if port is None or port == _DEFAULT_PORTS[scheme]:
         return f"{scheme}://{host}"
     return f"{scheme}://{host}:{port}"
+
+
+def validate_cors_origins(cors_origins: Iterable[str]) -> None:
+    """Refuse de démarrer si ``CORS_ORIGINS`` contient ``*``.
+
+    Le CORS de l'API autorise les cookies (``allow_credentials=True``) : avec
+    ``*``, Starlette renvoie l'origine de l'appelant dans
+    ``Access-Control-Allow-Origin``, si bien que n'importe quel site pourrait
+    lire les réponses authentifiées d'un utilisateur connecté.
+
+    Raises:
+        RuntimeError: ``*`` figure dans la liste.
+    """
+    if any(entry.strip() == "*" for entry in cors_origins):
+        raise RuntimeError(
+            "CORS_ORIGINS=* est refusé : les cookies de session étant autorisés "
+            "en CORS, tout site pourrait lire les réponses authentifiées. "
+            "Listez explicitement les origines du frontend "
+            "(ex. CORS_ORIGINS=https://labondemand.example.org)."
+        )
 
 
 @lru_cache(maxsize=8)

@@ -4,6 +4,9 @@ Deux contrôles cumulatifs sur toute requête mutante sous /api/ :
 en-tête ``X-Requested-With: XMLHttpRequest`` obligatoire, puis ``Origin``
 (ou, à défaut, ``Referer``) de confiance.
 """
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -199,6 +202,40 @@ async def test_wildcard_cors_origin_never_trusts_everyone(admin_client):
     with patch.object(settings, "CORS_ORIGINS", ["*"]):
         r = await admin_client.post(f"{AUTH}/logout", headers={"Origin": "https://evil.example"})
     _assert_csrf_rejected(r)
+
+
+@pytest.mark.parametrize("origins", [["*"], ["https://app.example.org", " * "]])
+def test_wildcard_cors_origin_refuses_startup(origins):
+    with pytest.raises(RuntimeError, match=r"CORS_ORIGINS=\*"):
+        csrf.validate_cors_origins(origins)
+
+
+def test_explicit_cors_origins_are_accepted():
+    csrf.validate_cors_origins(["https://app.example.org", "http://localhost:8080"])
+    csrf.validate_cors_origins([])
+
+
+def test_api_refuses_to_start_with_wildcard_cors_origin():
+    # Mêmes substitutions que conftest.py (Redis, kubeconfig), sans quoi
+    # l'import échouerait avant d'atteindre la configuration CORS.
+    code = (
+        "import fakeredis, redis, kubernetes.config as k\n"
+        "redis.from_url = lambda url, **kw: fakeredis.FakeRedis()\n"
+        "redis.Redis.from_url = staticmethod(redis.from_url)\n"
+        "k.load_kube_config = k.load_incluster_config = lambda **kw: None\n"
+        "import backend.main\n"
+    )
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=project_root,
+        env={**os.environ, "CORS_ORIGINS": "*"},
+    )
+    assert result.returncode != 0
+    assert "CORS_ORIGINS=* est refusé" in result.stderr
 
 
 async def test_same_origin_from_host_header_with_port(admin_client):
