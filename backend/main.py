@@ -250,6 +250,13 @@ async def get_status():
     }
 
 
+@app.on_event("startup")
+async def configure_threadpool() -> None:
+    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE)."""
+    size = settings.configure_threadpool()
+    logger.info("threadpool_configured", extra={"extra_fields": {"size": size}})
+
+
 @app.get("/api/v1/health")
 async def health_check(db: Session = Depends(get_db)):
     """Vérification de santé : DB, Redis et Kubernetes."""

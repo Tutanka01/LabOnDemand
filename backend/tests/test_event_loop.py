@@ -2,7 +2,8 @@
 Tests de non-blocage de la boucle asyncio et de bornage des appels K8s.
 
 Sections :
-  - délais par défaut du client REST Kubernetes (backend/k8s_timeouts.py).
+  - délais par défaut du client REST Kubernetes (backend/k8s_timeouts.py) ;
+  - dimensionnement du pool de threads AnyIO.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import functools
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
+import anyio.to_thread
 import pytest
 import urllib3
 from kubernetes import client as k8s_client
@@ -174,3 +176,22 @@ def test_websocket_stream_path_is_untouched(default_timeouts):
     # Aucun délai injecté sur le chemin websocket (None = défaut du ws_client).
     assert captured.get("_request_timeout") is None
     assert captured.get("_preload_content") is False
+
+
+# ============================================================
+# Pool de threads AnyIO
+# ============================================================
+
+
+async def test_configure_threadpool_applies_setting(monkeypatch):
+    from backend.config import Settings
+
+    monkeypatch.setattr(Settings, "API_THREADPOOL_SIZE", 7)
+    assert settings.configure_threadpool() == 7
+    assert anyio.to_thread.current_default_thread_limiter().total_tokens == 7
+
+
+async def test_threadpool_startup_hook_is_registered():
+    from backend.main import app, configure_threadpool
+
+    assert configure_threadpool in app.router.on_startup

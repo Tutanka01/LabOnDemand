@@ -155,6 +155,24 @@ class Settings:
     # Les flux (watch, logs suivis) ne reçoivent jamais de délai de lecture.
     K8S_REQUEST_TIMEOUT_CONNECT = float(os.getenv("K8S_REQUEST_TIMEOUT_CONNECT", "5"))
     K8S_REQUEST_TIMEOUT_READ = float(os.getenv("K8S_REQUEST_TIMEOUT_READ", "30"))
+    # Taille du pool de threads AnyIO qui exécute les endpoints `def`, les
+    # dépendances synchrones et les appels déportés (run_in_threadpool).
+    # À garder <= pool_size + max_overflow du moteur SQLAlchemy : chaque thread
+    # peut tenir une connexion, au-delà les requêtes attendent le pool DB.
+    API_THREADPOOL_SIZE = max(1, int(os.getenv("API_THREADPOOL_SIZE", "40")))
+
+    @staticmethod
+    def configure_threadpool() -> int:
+        """Applique API_THREADPOOL_SIZE au limiteur de threads AnyIO par défaut.
+
+        Le limiteur est propre à la boucle d'événements : appeler depuis un
+        événement de démarrage de l'application. Retourne la taille appliquée.
+        """
+        import anyio.to_thread
+
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        limiter.total_tokens = Settings.API_THREADPOOL_SIZE
+        return int(limiter.total_tokens)
     # ===================== Fin concurrence & client Kubernetes =====================
 
     # Grader Pod (MVP-2) — exécution isolée des tests boîte noire

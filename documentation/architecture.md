@@ -322,6 +322,16 @@ Les étapes 1 et 2 sont non-bloquantes : une erreur K8s ou Redis n'empêche pas 
 
 ---
 
+## Concurrence et boucle d'événements
+
+L'API tourne dans une seule boucle asyncio (uvicorn). Tout appel bloquant (SQLAlchemy, Redis, client Kubernetes, lecture de fichiers) exécuté directement dans la boucle gèle **toutes** les requêtes en cours. Règles :
+
+- **Endpoints `def` par défaut** : FastAPI exécute les endpoints et dépendances synchrones dans le pool de threads AnyIO. Un endpoint ne reste `async def` que s'il doit réellement attendre (WebSocket, orchestration concurrente, planification d'une tâche de fond) et il déporte alors chaque partie bloquante via `run_in_threadpool` / `anyio.to_thread.run_sync`.
+- **Pool de threads** : dimensionné au démarrage par `API_THREADPOOL_SIZE` (défaut 40). Il doit rester **≤ `pool_size` + `max_overflow`** du moteur SQLAlchemy (10 + 30 = 40) : chaque thread peut tenir une connexion DB, un pool de threads plus grand ne fait qu'ajouter de l'attente sur le pool de connexions (et des `TimeoutError` SQLAlchemy).
+- **Délais Kubernetes** : tous les appels REST reçoivent un délai par défaut `(K8S_REQUEST_TIMEOUT_CONNECT, K8S_REQUEST_TIMEOUT_READ)` = `(5, 30)` s (`backend/k8s_timeouts.py`, installé par `Settings.init_kubernetes`). Un `_request_timeout` explicite reste prioritaire, les flux (`_preload_content=False` : watch, logs suivis) n'ont pas de délai de lecture et le chemin websocket (`stream()` : exec, terminal, fichiers) n'est pas concerné. Attention : le client ignore silencieusement un `_request_timeout` de type `float` — utiliser un `int` ou un tuple `(connect, read)`.
+
+---
+
 ## Health check
 
 `GET /api/v1/health` retourne :
