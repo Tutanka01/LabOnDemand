@@ -160,6 +160,9 @@ class Settings:
     # À garder <= pool_size + max_overflow du moteur SQLAlchemy : chaque thread
     # peut tenir une connexion, au-delà les requêtes attendent le pool DB.
     API_THREADPOOL_SIZE = max(1, int(os.getenv("API_THREADPOOL_SIZE", "40")))
+    # Déploiements simultanés (threads dédiés) lors d'un déploiement en masse
+    # d'un devoir sur une classe, par requête.
+    BULK_SPAWN_CONCURRENCY = max(1, int(os.getenv("BULK_SPAWN_CONCURRENCY", "5")))
 
     @staticmethod
     def configure_threadpool() -> int:

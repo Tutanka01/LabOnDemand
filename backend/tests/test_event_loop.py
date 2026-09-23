@@ -5,13 +5,17 @@ Sections :
   - délais par défaut du client REST Kubernetes (backend/k8s_timeouts.py) ;
   - dimensionnement du pool de threads AnyIO ;
   - services K8s synchrones (exécutés hors boucle par les appelants) ;
-  - garde statique : endpoints/dépendances async limités à une liste blanche.
+  - garde statique : endpoints/dépendances async limités à une liste blanche ;
+  - déploiement en masse : concurrence bornée, sessions par thread, échecs partiels.
 """
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
+import threading
+import time
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
@@ -299,3 +303,192 @@ def test_request_dependencies_are_sync():
             if module.startswith("backend.") and inspect.iscoroutinefunction(call):
                 offenders.add(f"{module}.{getattr(call, '__qualname__', call)}")
     assert offenders == set(), f"dépendances async (bloquantes ?) : {sorted(offenders)}"
+
+
+# ============================================================
+# Outils : la boucle reste réactive pendant un appel lent
+# ============================================================
+
+
+async def _timed(awaitable, delay: float = 0.0):
+    """Attend `delay`, exécute l'awaitable et renvoie (résultat, durée)."""
+    if delay:
+        await asyncio.sleep(delay)
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    result = await awaitable
+    return result, loop.time() - start
+
+
+async def _assert_loop_responsive(client, slow_awaitable, slow_min: float = 0.4):
+    """Lance une requête lente et, en parallèle, /api/v1/status qui doit finir vite."""
+    (slow_resp, slow_elapsed), (fast_resp, fast_elapsed) = await asyncio.gather(
+        _timed(slow_awaitable),
+        _timed(client.get("/api/v1/status"), delay=0.05),
+    )
+    assert fast_resp.status_code == 200
+    assert slow_elapsed >= slow_min, f"appel lent trop rapide ({slow_elapsed:.2f}s)"
+    assert fast_elapsed < 0.25, f"/status bloqué {fast_elapsed:.2f}s derrière un appel lent"
+    return slow_resp
+
+
+# ============================================================
+# Déploiement en masse
+# ============================================================
+
+
+@pytest.fixture()
+def bulk_class(db, teacher_user):
+    from backend.models import Assignment, Classroom, Enrollment, User, UserRole
+    from backend.security import get_password_hash
+
+    classroom = Classroom(name="Classe bulk", owner_id=teacher_user.id)
+    db.add(classroom)
+    db.commit()
+    hashed = get_password_hash("BulkPass@1234!")
+    students = []
+    for index in range(6):
+        user = User(
+            username=f"bulk{index}",
+            email=f"bulk{index}@test.lab",
+            hashed_password=hashed,
+            role=UserRole.student,
+            is_active=True,
+            auth_provider="local",
+        )
+        db.add(user)
+        db.commit()
+        db.add(Enrollment(classroom_id=classroom.id, user_id=user.id))
+        students.append(user)
+    assignment = Assignment(
+        classroom_id=classroom.id,
+        title="TP Réseau",
+        cpu_preset="low",
+        ram_preset="low",
+        status="active",
+    )
+    db.add(assignment)
+    db.commit()
+    return classroom.id, assignment.id, [(u.id, u.username) for u in students]
+
+
+async def test_bulk_spawn_bounded_threads_and_partial_failures(
+    teacher_client, db, bulk_class, monkeypatch
+):
+    from sqlalchemy import inspect as sa_inspect
+
+    from backend.config import Settings
+    from backend.models import AssignmentDeployment, Deployment
+    from backend.routers import classrooms as classrooms_mod
+
+    cid, aid, students = bulk_class
+    monkeypatch.setattr(Settings, "BULK_SPAWN_CONCURRENCY", 2)
+
+    # Étudiant 0 : lab déjà actif → skipped. Étudiant 2 : échec K8s.
+    skipped_id, failing_id = students[0][0], students[2][0]
+    db.add(
+        Deployment(
+            user_id=skipped_id,
+            name=f"tp-r-seau-u{skipped_id}",
+            deployment_type="custom",
+            namespace="labondemand-user-x",
+            status="active",
+        )
+    )
+    db.commit()
+
+    lock = threading.Lock()
+    state = {"active": 0, "max": 0}
+    spawn_threads = set()
+    users_detached = []
+    loop_thread = threading.get_ident()
+
+    def fake_create_deployment(**kwargs):
+        user = kwargs["current_user"]
+        users_detached.append(sa_inspect(user).detached)
+        with lock:
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+            spawn_threads.add(threading.get_ident())
+        try:
+            time.sleep(0.2)
+            if user.id == failing_id:
+                raise RuntimeError("Quota Kubernetes dépassé")
+            return {"message": "ok"}
+        finally:
+            with lock:
+                state["active"] -= 1
+
+    real_factory = classrooms_mod.SessionLocal
+    sessions = []
+    # SQLite de test (StaticPool) : une seule connexion partagée, non utilisable
+    # en parallèle. On sérialise donc la durée de vie des sessions des workers
+    # (en production, chaque session a sa propre connexion du pool). Effet de
+    # bord utile : si une session restait ouverte pendant l'appel K8s, la
+    # concurrence observée tomberait à 1.
+    db_lock = threading.Lock()
+
+    def tracking_session_local():
+        db_lock.acquire()
+        session = real_factory()
+        sessions.append((threading.get_ident(), session))
+        original_close = session.close
+        released = False
+
+        def close() -> None:
+            nonlocal released
+            try:
+                original_close()
+            finally:
+                if not released:
+                    released = True
+                    db_lock.release()
+
+        session.close = close
+        return session
+
+    monkeypatch.setattr(
+        classrooms_mod.deployment_service, "create_deployment", fake_create_deployment
+    )
+    monkeypatch.setattr(classrooms_mod, "SessionLocal", tracking_session_local)
+
+    resp = await _assert_loop_responsive(
+        teacher_client,
+        teacher_client.post(f"/api/v1/classrooms/{cid}/assignments/{aid}/deploy-all"),
+    )
+    assert resp.status_code == 200, resp.text
+    report = resp.json()
+
+    # Forme du rapport et échecs partiels conservés, dans l'ordre des étudiants.
+    assert (report["total"], report["ok"], report["skipped"], report["errors"]) == (6, 4, 1, 1)
+    assert [r["user_id"] for r in report["results"]] == [sid for sid, _ in students]
+    by_user = {r["user_id"]: r for r in report["results"]}
+    assert by_user[skipped_id]["status"] == "skipped"
+    assert by_user[failing_id]["status"] == "error"
+    assert "Quota" in by_user[failing_id]["error"]
+
+    # Concurrence bornée par BULK_SPAWN_CONCURRENCY, hors de la boucle.
+    assert state["max"] == 2
+    assert loop_thread not in spawn_threads
+    # Sessions propres à chaque unité de travail, jamais ouvertes dans la boucle.
+    assert sessions and all(tid != loop_thread for tid, _ in sessions)
+    assert len({id(s) for _, s in sessions}) == len(sessions)
+    # L'utilisateur transmis vient de la session du thread (détachée), pas de la requête.
+    assert users_detached and all(users_detached)
+
+    records = db.query(AssignmentDeployment).filter(AssignmentDeployment.assignment_id == aid).all()
+    statuses = sorted(r.spawn_status for r in records)
+    assert statuses == ["error", "ok", "ok", "ok", "ok"]
+    error_record = next(r for r in records if r.spawn_status == "error")
+    assert error_record.user_id == failing_id
+    assert "Quota" in error_record.spawn_error
+
+
+async def test_bulk_spawn_rejects_archived_assignment(teacher_client, db, bulk_class):
+    from backend.models import Assignment
+
+    cid, aid, _ = bulk_class
+    db.query(Assignment).filter(Assignment.id == aid).update({"status": "archived"})
+    db.commit()
+    resp = await teacher_client.post(f"/api/v1/classrooms/{cid}/assignments/{aid}/deploy-all")
+    assert resp.status_code == 400
