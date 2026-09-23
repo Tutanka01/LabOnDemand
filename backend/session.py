@@ -1,5 +1,4 @@
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from datetime import datetime, timedelta
 import logging
 import os
@@ -15,8 +14,11 @@ logger = logging.getLogger("labondemand.session")
 # Exécution périodique du nettoyage des sessions expirées
 def setup_session_handler(app: FastAPI):
     """
-    Configure les middleware pour la gestion des sessions côté serveur
-    et planifie le nettoyage périodique des sessions expirées
+    Planifie le nettoyage périodique des sessions expirées.
+
+    Le cookie de session est posé explicitement par les routes
+    d'authentification (login, callback SSO) ; aucun middleware ne recopie
+    plus le jeton depuis un en-tête de réponse.
     """
     from .session_store import session_store
     
@@ -44,52 +46,3 @@ def setup_session_handler(app: FastAPI):
         
         # Démarrer la tâche de nettoyage en arrière-plan
         asyncio.create_task(cleanup_expired_sessions())
-    @app.middleware("http")
-    async def session_middleware(request: Request, call_next):
-        logger.debug(
-            "session_middleware_request",
-            extra={
-                "extra_fields": {
-                    "method": request.method,
-                    "path": request.url.path,
-                }
-            },
-        )
-        
-        response = await call_next(request)
-        
-        # Si la réponse est un JSONResponse et qu'elle contient un session_id dans les headers
-        if isinstance(response, JSONResponse) and "session_id" in response.headers:
-            session_id = response.headers.pop("session_id")
-            logger.info(
-                "session_header_found",
-                extra={
-                    "extra_fields": {
-                        "session_id": session_id[:10] + "...",
-                        "path": request.url.path,
-                    }
-                },
-            )
-            
-            # Créer un cookie pour la session
-            response.set_cookie(
-                key="session_id",
-                value=session_id,
-                httponly=True,  # Toujours true pour la sécurité
-                secure=SECURE_COOKIES,
-                samesite=SESSION_SAMESITE.lower(),
-                max_age=SESSION_EXPIRY_HOURS * 3600,  # En secondes
-                path="/",
-                domain=COOKIE_DOMAIN or None
-            )
-            logger.debug(
-                "session_cookie_set",
-                extra={
-                    "extra_fields": {
-                        "path": request.url.path,
-                        "expiry_hours": SESSION_EXPIRY_HOURS,
-                    }
-                },
-            )
-        
-        return response

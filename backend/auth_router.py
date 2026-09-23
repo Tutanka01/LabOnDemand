@@ -85,16 +85,10 @@ def login(
     request.state.session_id = session_id
     request.state.user = user
     
-    # Créer la réponse
-    resp = LoginResponse(
-        user=UserResponse.model_validate(user),
-        session_id=session_id
-    )
-    
-    # Ajouter l'ID de session aux headers pour que le middleware puisse créer le cookie
-    response.headers["session_id"] = session_id
-    
-    # Ajouter le cookie directement (en plus du middleware)
+    # Créer la réponse : le jeton n'apparaît ni dans le corps ni dans un
+    # en-tête, seulement dans le cookie HttpOnly ci-dessous.
+    resp = LoginResponse(user=UserResponse.model_validate(user))
+
     response.set_cookie(
         key="session_id",
         value=session_id,

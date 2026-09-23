@@ -95,7 +95,7 @@ _db_mod.SessionLocal = _TestSession
 from backend.database import Base, get_db  # noqa: E402
 from backend.main import app  # noqa: E402  ← triggers init_kubernetes() + create_all()
 from backend.models import User, UserRole, Template, RuntimeConfig  # noqa: E402
-from backend.security import get_password_hash, create_session  # noqa: E402
+from backend.security import get_password_hash, create_session, limiter  # noqa: E402
 
 # Ensure schema exists (idempotent)
 Base.metadata.create_all(bind=_test_engine)
@@ -117,11 +117,14 @@ STUDENT_PASSWORD = "StudPass@9012!"
 
 @pytest.fixture(autouse=True)
 def _isolate():
-    """Truncate every table and clear the session store before each test."""
+    """Truncate every table, clear the session store and the rate limiter."""
     with _test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     flush_fake_redis()
+    # Compteurs du limiteur : sans remise à zéro, les connexions des tests
+    # précédents déclenchent des 429 dans les suivants (ordre-dépendant).
+    limiter.reset()
 
 
 # ---------- Database session ----------

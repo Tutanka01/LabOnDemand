@@ -14,7 +14,9 @@ async def test_login_success(client, admin_user):
     body = r.json()
     assert body["user"]["username"] == "testadmin"
     assert body["user"]["role"] == "admin"
-    assert "session_id" in body
+    # Le jeton ne transite que par le cookie HttpOnly, jamais dans le corps.
+    assert "session_id" not in body
+    assert "session_id" not in r.headers
     assert "session_id" in r.cookies
 
 
