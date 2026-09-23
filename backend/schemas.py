@@ -67,10 +67,12 @@ class SessionData(BaseModel):
     username: str
     role: UserRoleEnum
 
-# Schéma pour la réponse de connexion
+# Schéma pour la réponse de connexion.
+# Le jeton de session n'est volontairement PAS exposé ici : il est transmis
+# uniquement via le cookie HttpOnly ``session_id`` afin qu'aucun script
+# (XSS, extension, lab étudiant) ne puisse le lire.
 class LoginResponse(BaseModel):
     user: UserResponse
-    session_id: str
 
 
 # ====== Templates ======

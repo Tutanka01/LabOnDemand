@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, ReactNode, type FormEvent } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { changePassword, getCurrentUser, logout, pingK8s, updateProfile } from "../lib/api";
+import { changePassword, CSRF_HEADERS, getCurrentUser, logout, pingK8s, updateProfile } from "../lib/api";
 import { displayName, initials, roleLabel } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { RuntimeIcon } from "../lib/icons";
@@ -60,7 +60,7 @@ export function AppShellLayout({
     queryKey: ["status-api"],
     queryFn: async () => {
       try {
-        const res = await fetch("/api/v1/status");
+        const res = await fetch("/api/v1/status", { headers: CSRF_HEADERS });
         return res.ok;
       } catch {
         return false;

@@ -22,7 +22,8 @@ from .logging_config import (
     shorten_token,
 )
 from .database import get_db, SessionLocal
-from .session import setup_session_handler
+from .session import setup_session_handler, validate_cookie_settings
+from .csrf import CSRFMiddleware
 from .error_handlers import global_exception_handler
 from . import (
     models,
@@ -30,7 +31,7 @@ from . import (
 from .security import limiter
 from .db_migrate import upgrade_schema
 from .seed import seed_admin, seed_templates, seed_runtime_configs
-from slowapi import _rate_limit_exceeded_handler
+from .rate_limit import rate_limit_exceeded_handler, validate_rate_limit_settings
 from slowapi.errors import RateLimitExceeded
 
 setup_logging()
@@ -70,9 +71,10 @@ app = FastAPI(
     debug=settings.DEBUG_MODE,
 )
 
-# Configuration du rate limiting
+# Configuration du rate limiting (429 traduit avec en-tête Retry-After)
+validate_rate_limit_settings()
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 @app.middleware("http")
@@ -154,6 +156,12 @@ async def log_requests(request: Request, call_next):
 # Ajouter le gestionnaire d'erreurs global
 app.add_exception_handler(Exception, global_exception_handler)
 
+# Protection CSRF : en-tête X-Requested-With obligatoire + Origin/Referer de
+# confiance sur toute requête mutante /api/ (voir backend/csrf.py).
+# Enregistrée AVANT CORS, donc exécutée APRÈS lui (Starlette empile en sens
+# inverse) : les refus 403 portent les en-têtes CORS des origines autorisées.
+app.add_middleware(CSRFMiddleware)
+
 # Configuration CORS
 app.add_middleware(
     CORSMiddleware,
@@ -163,7 +171,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration du middleware de session
+# Garde-fous des cookies de session : refuse de démarrer sur une configuration
+# dangereuse (ex. COOKIE_DOMAIN englobant le domaine des labs étudiants).
+validate_cookie_settings()
+
+# Nettoyage périodique des sessions expirées
 setup_session_handler(app)
 
 def run_seeds() -> None:

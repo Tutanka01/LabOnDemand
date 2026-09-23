@@ -127,6 +127,7 @@ file: <fichier.csv>
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/users/import \
   -H "Cookie: session_id=<token>" \
+  -H "X-Requested-With: XMLHttpRequest" \
   -F "file=@etudiants.csv"
 ```
 
@@ -184,7 +185,8 @@ de plus de CPU pendant 2 semaines.
 
 ```bash
 curl -X PUT "http://localhost:8000/api/v1/auth/users/42/quota-override?max_apps=10&max_cpu_m=4000&expires_at=2026-03-15T00:00:00" \
-  -H "Cookie: session_id=<token_admin>"
+  -H "Cookie: session_id=<token_admin>" \
+  -H "X-Requested-With: XMLHttpRequest"
 ```
 
 ### Supprimer une dérogation
@@ -399,7 +401,7 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 |----------|----------|
 | Healthcheck API | `curl http://localhost:8000/api/v1/health` |
 | Lister les utilisateurs | `curl -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users` |
-| Importer un CSV | `curl -X POST -F "file=@users.csv" -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users/import` |
+| Importer un CSV | `curl -X POST -F "file=@users.csv" -H "Cookie: session_id=<tok>" -H "X-Requested-With: XMLHttpRequest" http://localhost:8000/api/v1/auth/users/import` |
 | Voir la dérogation quota | `curl -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users/42/quota-override` |
 | Logs d'audit (UI) | `http://<host>/admin.html#audit` |
 | Logs d'audit (CLI) | `tail -f logs/audit.log \| python3 -m json.tool` |

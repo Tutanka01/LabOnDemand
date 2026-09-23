@@ -98,6 +98,7 @@ from backend.main import app  # noqa: E402  ← triggers init_kubernetes()
 from backend.models import User, UserRole, Template, RuntimeConfig  # noqa: E402
 from backend.security import get_password_hash, create_session  # noqa: E402
 from backend.db_migrate import upgrade_schema  # noqa: E402
+from backend.rate_limit import reset_rate_limit_state  # noqa: E402
 
 # Schéma créé par les migrations Alembic (httpx ASGITransport ne déclenche pas
 # le lifespan : le bootstrap de main.py ne tourne pas pendant les tests).
@@ -120,11 +121,15 @@ STUDENT_PASSWORD = "StudPass@9012!"
 
 @pytest.fixture(autouse=True)
 def _isolate():
-    """Truncate every table and clear the session store before each test."""
+    """Truncate every table, clear the session store and the rate limiter."""
     with _test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     flush_fake_redis()
+    # Compteurs de limitation (Redis, replis mémoire, état « Redis en panne ») :
+    # sans remise à zéro, les connexions des tests précédents déclenchent des
+    # 429 dans les suivants (ordre-dépendant).
+    reset_rate_limit_state()
 
 
 # ---------- Database session ----------
@@ -212,6 +217,12 @@ def student_token(student_user) -> str:
 
 # ---------- HTTP client helpers ----------
 
+# En-tête anti-CSRF envoyé par le frontend sur chaque requête (voir
+# backend/csrf.py). Les clients de test l'envoient par défaut ; les tests
+# CSRF le retirent explicitement pour vérifier le refus.
+CSRF_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
 def _db_override(session):
     """Return a FastAPI dependency override that yields the given session."""
     def _override() -> Generator:
@@ -224,7 +235,7 @@ async def client(db) -> AsyncClient:
     """Unauthenticated HTTP client backed by the test DB."""
     app.dependency_overrides[get_db] = _db_override(db)
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://test", headers=CSRF_HEADERS
     ) as c:
         yield c
     app.dependency_overrides.clear()
@@ -237,6 +248,7 @@ async def admin_client(db, admin_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": admin_token},
     ) as c:
         yield c
@@ -250,6 +262,7 @@ async def teacher_client(db, teacher_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": teacher_token},
     ) as c:
         yield c
@@ -263,6 +276,7 @@ async def student_client(db, student_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": student_token},
     ) as c:
         yield c

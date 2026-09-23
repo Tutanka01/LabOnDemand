@@ -155,7 +155,12 @@ async def isolated_client(db):
 
     app.dependency_overrides[get_db] = _override_db
     transport = ASGITransport(app=app, client=("198.51.100.72", 40072))
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    # En-tête anti-CSRF exigé sur les requêtes non sûres (voir backend/csrf.py)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    ) as c:
         yield c
     app.dependency_overrides.clear()
 
