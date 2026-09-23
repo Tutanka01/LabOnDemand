@@ -8,13 +8,15 @@ from pathlib import Path
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
-# Ajout du répertoire parent au path
-sys.path.insert(0, str(Path(__file__).parent))
+# Racine du projet dans le path : le script fonctionne lancé depuis backend/
+# (python init_db.py) comme depuis la racine (python -m backend.init_db).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 try:
-    from database import engine, Base
-    from models import User, UserRole
-    from security import get_password_hash
+    from backend.database import engine
+    from backend.db_migrate import upgrade_schema
+    from backend.models import User, UserRole
+    from backend.security import get_password_hash
 except ImportError as e:
     print(f"Erreur d'import: {e}")
     print("Assurez-vous d'être dans le bon répertoire et que les modules existent")
@@ -32,11 +34,11 @@ def check_database_connection():
         return False
 
 def create_tables():
-    """Crée toutes les tables"""
+    """Crée ou met à jour le schéma via les migrations Alembic (comme au démarrage de l'API)"""
     try:
-        print("🔨 Création des tables...")
-        Base.metadata.create_all(bind=engine)
-        print("✅ Tables créées avec succès")
+        print("🔨 Migration du schéma...")
+        revision = upgrade_schema()
+        print(f"✅ Schéma à jour (révision {revision})")
         return True
     except Exception as e:
         print(f"❌ Erreur lors de la création des tables: {e}")

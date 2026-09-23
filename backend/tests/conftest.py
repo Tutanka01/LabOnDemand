@@ -3,8 +3,9 @@ Test configuration for LabOnDemand.
 
 All external patches (Redis, Kubernetes, database) are applied at MODULE LEVEL,
 before any backend package is imported, so the backends's own module-level code
-(settings.init_kubernetes(), Base.metadata.create_all(), session_store creation)
-uses our test doubles.
+(settings.init_kubernetes(), session_store creation) uses our test doubles.
+The schema is built by the Alembic migrations (upgrade_schema), exactly as
+at application startup.
 
 Import order matters:
   1. Env vars
@@ -93,12 +94,14 @@ _db_mod.SessionLocal = _TestSession
 # 5. Import backend — all patches are in place
 # ============================================================
 from backend.database import Base, get_db  # noqa: E402
-from backend.main import app  # noqa: E402  ← triggers init_kubernetes() + create_all()
+from backend.main import app  # noqa: E402  ← triggers init_kubernetes()
 from backend.models import User, UserRole, Template, RuntimeConfig  # noqa: E402
 from backend.security import get_password_hash, create_session  # noqa: E402
+from backend.db_migrate import upgrade_schema  # noqa: E402
 
-# Ensure schema exists (idempotent)
-Base.metadata.create_all(bind=_test_engine)
+# Schéma créé par les migrations Alembic (httpx ASGITransport ne déclenche pas
+# le lifespan : le bootstrap de main.py ne tourne pas pendant les tests).
+upgrade_schema(_test_engine)
 
 # ============================================================
 # 6. pytest fixtures

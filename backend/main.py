@@ -21,14 +21,14 @@ from .logging_config import (
     reset_request_id,
     shorten_token,
 )
-from .database import Base, engine, get_db, SessionLocal
+from .database import get_db, SessionLocal
 from .session import setup_session_handler
 from .error_handlers import global_exception_handler
 from . import (
     models,
-)  # Importer les modèles pour enregistrer les tables avant create_all
+)  # Importer les modèles pour enregistrer les tables dans Base.metadata
 from .security import limiter
-from .migrations import apply_legacy_migrations
+from .db_migrate import upgrade_schema
 from .seed import seed_admin, seed_templates, seed_runtime_configs
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -166,26 +166,61 @@ app.add_middleware(
 # Configuration du middleware de session
 setup_session_handler(app)
 
-# Création des tables de base de données (nécessite l'import de models ci-dessus)
-Base.metadata.create_all(bind=engine)
+def run_seeds() -> None:
+    """Peuple les données par défaut (admin, templates, runtimes).
+
+    Non fatal : chaque seed est idempotent, s'exécute dans sa propre session
+    et un échec est journalisé en ERROR sans empêcher les suivants ni le
+    démarrage. Le schéma étant à jour, l'application reste cohérente ; refuser
+    de démarrer priverait les utilisateurs existants de service pour une
+    donnée par défaut, qui sera retentée au prochain démarrage.
+    """
+    for seed in (seed_admin, seed_templates, seed_runtime_configs):
+        with SessionLocal() as db:
+            try:
+                seed(db)
+            except Exception as exc:
+                db.rollback()
+                logger.exception(
+                    "seed_failed",
+                    extra={
+                        "extra_fields": {
+                            "action": "bootstrap",
+                            "seed": seed.__name__,
+                            "error": str(exc),
+                        }
+                    },
+                )
 
 
 @app.on_event("startup")
-async def bootstrap():
-    """Initialise la base de données, applique les migrations, peuple les données par défaut
-    et démarre la tâche de fond de nettoyage des labs expirés."""
+async def bootstrap() -> None:
+    """Met le schéma à jour (Alembic), peuple les données par défaut
+    et démarre la tâche de fond de nettoyage des labs expirés.
+
+    Un échec de migration est FATAL : l'exception interrompt le démarrage
+    (uvicorn s'arrête avec un code non nul) plutôt que de servir des requêtes
+    sur un schéma incomplet ou incertain.
+    """
     try:
-        with engine.connect() as connection:
-            apply_legacy_migrations(connection)
-        with SessionLocal() as db:
-            seed_admin(db)
-            seed_templates(db)
-            seed_runtime_configs(db)
+        # Synchrone et exécuté avant toute requête : bloquer la boucle est voulu.
+        upgrade_schema()
     except Exception as exc:
-        logger.exception(
-            "Bootstrap failed",
-            extra={"extra_fields": {"action": "bootstrap", "error": str(exc)}},
+        logger.critical(
+            "schema_upgrade_failed",
+            exc_info=True,
+            extra={
+                "extra_fields": {
+                    "action": "bootstrap",
+                    "error": str(exc),
+                    "hint": "Démarrage interrompu. Corrigez la base (voir "
+                    "documentation/database-migrations.md) puis relancez.",
+                }
+            },
         )
+        raise
+
+    run_seeds()
 
     # Démarrer la tâche de nettoyage des labs expirés en arrière-plan
     try:
