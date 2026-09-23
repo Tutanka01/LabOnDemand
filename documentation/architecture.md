@@ -23,7 +23,7 @@ En plus des labs individuels, la plateforme propose un **système pédagogique c
 ┌─────────────────────────────────────────────────────────────────┐
 │  Navigateur                                                      │
 │  ├── React/Vite SPA (Nginx)  frontend-app/                       │
-│  └── REST API (FastAPI 0.115) backend/                           │
+│  └── REST API (FastAPI 0.141) backend/                           │
 │         │                                                        │
 │         ├── Auth + sessions  security.py  ◄──► Redis             │
 │         ├── Auth OIDC/SSO    sso.py + auth_router.py             │
@@ -36,9 +36,11 @@ En plus des labs individuels, la plateforme propose un **système pédagogique c
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Technologies** : Python 3.13, FastAPI 0.115, SQLAlchemy 2, MariaDB, Redis, kubernetes-client 32, Nginx, React 18, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
+**Technologies** : Python 3.13, FastAPI 0.141 (Starlette 1.x), SQLAlchemy 2, MariaDB (PyMySQL), Redis, kubernetes-client 36, Nginx 1.30, React 19, TypeScript, Vite, Tailwind CSS, Radix UI, Docker Compose.
 
 Redis est utilisé comme store de sessions authentifié et reste sur le réseau interne. Les origines CORS sont autorisées explicitement côté application ; le proxy Nginx ne reflète pas dynamiquement l'en-tête `Origin` reçu.
+
+Le proxy Nginx (`nginx/nginx.conf`) garde des connexions keepalive vers l'API, transmet `Host` (port public compris), `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For` et `X-Real-IP`, et sert une location dédiée au terminal WebSocket (`/api/v1/k8s/terminal/`, délais de 3600 s, sans mise en mémoire tampon). Les erreurs 500/502/503/504 générées par Nginx affichent la page autonome `frontend-app/public/50x.html`. La directive `server api:8000 resolve` exige Nginx ≥ 1.27.3 : l'image `frontend` épingle `nginx:1.30.5-alpine`.
 
 ---
 
@@ -47,13 +49,15 @@ Redis est utilisé comme store de sessions authentifié et reste sur le réseau 
 ```
 LabOnDemand/
 ├── backend/
-│   ├── main.py                     # Point d'entrée FastAPI, bootstrap, tâche de nettoyage
+│   ├── main.py                     # Point d'entrée FastAPI, bootstrap (migrations, seeds), tâche de nettoyage
 │   ├── config.py                   # Tous les paramètres (env vars, valeurs par défaut)
 │   ├── models.py                   # ORM SQLAlchemy (voir section Modèle de données)
 │   ├── schemas.py                  # Pydantic schemas (validation entrée/sortie)
 │   ├── database.py                 # Moteur SQLAlchemy + SessionLocal
 │   ├── security.py                 # Sessions, hachage bcrypt, dépendances FastAPI
-│   ├── migrations.py               # Migrations SQL idempotentes (18 migrations)
+│   ├── db_migrate.py               # Migrations Alembic au démarrage (verrou GET_LOCK) + CLI
+│   ├── alembic/                    # env.py + versions/ : révisions du schéma (voir database-migrations.md)
+│   ├── migrations.py               # Mise à niveau des bases antérieures à Alembic (figé)
 │   ├── seed.py                     # Données initiales (admin, templates, runtime configs)
 │   ├── k8s_utils.py                # Labels, namespaces, quotas (get_role_limits + UserQuotaOverride)
 │   ├── templates.py                # DeploymentConfig : lecture templates depuis la BDD
@@ -98,7 +102,7 @@ LabOnDemand/
 │   │   │   ├── fr.json             # Français
 │   │   │   └── en.json             # Anglais
 │   │   └── styles/main.css         # Tailwind + variables CSS
-│   ├── Dockerfile                  # Build Node.js 20 → runtime Nginx:alpine
+│   ├── Dockerfile                  # Build Node.js 24 (LTS) → runtime nginx:1.30.5-alpine
 │   └── package.json
 ├── frontend/                       # Ancien frontend HTML/Vanilla JS (legacy, non utilisé)
 ├── documentation/                  # Documentation détaillée (ce dossier)
@@ -109,7 +113,7 @@ LabOnDemand/
 └── compose.yaml                    # Docker Compose (dev/local)
 ```
 
-> `*` = endpoint rate-limité (10 créations / 5 min par IP)
+> `*` = endpoint rate-limité (`RATE_LIMIT_DEPLOY`, 10 créations / 5 min par utilisateur)
 
 ---
 
@@ -120,8 +124,10 @@ LabOnDemand/
                   body: { name, deployment_type, image, cpu_request, … }
 
 2. FastAPI middleware
+                  • CORS, puis CSRF (X-Requested-With + Origin, backend/csrf.py)
                   • Logging structuré + request_id
-                  • Rate limiting (slowapi) ← @limiter.limit("10/5minute")
+                  • Rate limiting (slowapi, compteurs Redis) ← RATE_LIMIT_DEPLOY,
+                    clé = utilisateur authentifié (backend/rate_limit.py)
 
 3. k8s_deployments.create_deployment()
                   • get_current_user() → session Redis → User ORM
@@ -171,6 +177,11 @@ Teacher  POST /api/v1/classrooms/{cid}/assignments/{aid}/run-tests-all        �
 ---
 
 ## Modèle de données
+
+Le schéma est versionné par Alembic : toute modification de `backend/models.py`
+qui touche le schéma s'accompagne d'une révision dans `backend/alembic/versions/`,
+appliquée automatiquement au démarrage de l'API. Voir
+[`database-migrations.md`](database-migrations.md).
 
 ### Utilisateurs et accès
 
@@ -322,6 +333,21 @@ Les étapes 1 et 2 sont non-bloquantes : une erreur K8s ou Redis n'empêche pas 
 
 ---
 
+## Concurrence et boucle d'événements
+
+L'API tourne dans une seule boucle asyncio (uvicorn). Tout appel bloquant (SQLAlchemy, Redis, client Kubernetes, lecture de fichiers) exécuté directement dans la boucle gèle **toutes** les requêtes en cours. Règles :
+
+- **Endpoints `def` par défaut** : FastAPI exécute les endpoints et dépendances synchrones dans le pool de threads AnyIO. Un endpoint ne reste `async def` que s'il doit réellement attendre (WebSocket, orchestration concurrente, planification d'une tâche de fond) et il déporte alors chaque partie bloquante via `run_in_threadpool` / `anyio.to_thread.run_sync`.
+- **Pool de threads** : dimensionné au démarrage par `API_THREADPOOL_SIZE` (défaut 40). Il doit rester **≤ (`pool_size` + `max_overflow`) / 2** du moteur SQLAlchemy (défauts 10 + 70 = 80) : un thread peut tenir deux connexions DB à la fois (session de la requête via `get_db` + session courte ouverte par un service), un pool de threads plus grand ne fait qu'ajouter de l'attente sur le pool de connexions (et des `TimeoutError` SQLAlchemy). Le démarrage journalise `db_pool_undersized` si ce ratio n'est pas respecté.
+- **Délais Kubernetes** : tous les appels REST reçoivent un délai par défaut `(K8S_REQUEST_TIMEOUT_CONNECT, K8S_REQUEST_TIMEOUT_READ)` = `(5, 30)` s (`backend/k8s_timeouts.py`, installé par `Settings.init_kubernetes`). Un `_request_timeout` explicite reste prioritaire, les flux (`_preload_content=False` : watch, logs suivis) n'ont pas de délai de lecture et le chemin websocket (`stream()` : exec, terminal, fichiers) n'est pas concerné. Attention : kubernetes 32.x ignore silencieusement un `_request_timeout` de type `float` (36.x l'accepte) — utiliser un `int` ou un tuple `(connect, read)`, valables dans toutes les versions.
+- **Opérations en masse** : le déploiement d'un devoir sur une classe (`POST /classrooms/{cid}/assignments/{aid}/deploy-all`) lance un déploiement par étudiant dans des threads de travail (groupe de tâches AnyIO + `CapacityLimiter` de `BULK_SPAWN_CONCURRENCY`, défaut 5, par requête). Chaque unité de travail ne reçoit que des identifiants/valeurs simples et ouvre ses propres `SessionLocal()` : jamais de `Session` ni d'objet ORM partagé entre threads, et aucune session tenue pendant les appels Kubernetes. Un échec reste local à l'étudiant (rapport `ok/skipped/errors` inchangé).
+- **Grading Runs** : lancés en tâches de fond référencées (`grader_service.schedule_grading` / `schedule_grading_batch`, sinon la boucle peut collecter une tâche en vol). Chaque phase DB ou Kubernetes de `run_grading` s'exécute dans un thread avec sa propre session ; aucune session n'est tenue pendant l'attente du Job. « Lancer les tests sur toute la classe » exécute au plus `BULK_GRADING_CONCURRENCY` runs à la fois (défaut 5, par lot).
+- **Tâches de fond** : le cycle de nettoyage (`backend/tasks/cleanup.py`) s'exécute dans un thread et un seul processus l'exécute grâce au verrou Redis de leader `backend/redis_lock.py` (voir `documentation/lifecycle.md`, TTL `CLEANUP_LOCK_TTL_SECONDS`). Le nettoyage des sessions Redis (`backend/session.py`) passe aussi par `asyncio.to_thread`.
+- **Terminal WebSocket** (`backend/routers/k8s_terminal.py`) : l'authentification et l'ouverture du flux exec passent par le pool de threads ; un thread lecteur dédié par session (hors pool AnyIO) attend la sortie du pod avec `update(timeout)`, sans attente active, et la relaie via la boucle, tandis que la saisie et le redimensionnement (canal exec 4) sont écrits depuis le pool. Flux et thread sont libérés quand le navigateur ferme, quand le processus du pod se termine ou après `TERMINAL_IDLE_TIMEOUT_SECONDS` sans échange (défaut 1800, code 4408). Voir `documentation/terminal.md`.
+- **Health check** (`backend/health.py`) : les sondes DB, Redis et Kubernetes s'exécutent en parallèle dans des threads dédiés, chacune bornée par `HEALTH_CHECK_TIMEOUT_SECONDS` (défaut 3) ; une dépendance figée fait échouer sa sonde sans bloquer la boucle ni la réponse. Une sonde abandonnée garde sa place jusqu'à la vraie fin de son thread : au plus 6 sondes tournent à la fois, même si `/health` est appelé en boucle pendant une panne ; au-delà, la sonde répond `"error: busy ..."` sans lancer de nouvel appel.
+
+---
+
 ## Health check
 
 `GET /api/v1/health` retourne :
@@ -335,6 +361,8 @@ Les étapes 1 et 2 sont non-bloquantes : une erreur K8s ou Redis n'empêche pas 
   "timestamp": "2026-01-01T00:00:00"
 }
 ```
+
+La réponse est toujours `200`. Chaque composant vaut `"ok"` ou `"error: ..."` (`"error: timeout after 3s"` si la sonde dépasse `HEALTH_CHECK_TIMEOUT_SECONDS`, `"error: busy (previous probes still running)"` si des sondes précédentes sont encore figées) ; `status` passe à `"degraded"` dès qu'un composant est en erreur. Les trois sondes tournent en parallèle : la réponse arrive en au plus ~`HEALTH_CHECK_TIMEOUT_SECONDS` secondes.
 
 Utilisé par Docker Compose (`healthcheck`), le monitoring externe, et les outils de déploiement CI/CD.
 
@@ -354,7 +382,7 @@ Compatible Traefik et Nginx Ingress Controller. TLS via `INGRESS_TLS_SECRET`. Le
 
 ## Frontend (frontend-app/)
 
-L'interface est une SPA React 18 / TypeScript / Vite compilée dans une image Nginx. Elle n'est **jamais servie directement par Node.js en production** — uniquement via le conteneur `frontend`.
+L'interface est une SPA React 19 / TypeScript / Vite compilée dans une image Nginx. Elle n'est **jamais servie directement par Node.js en production** — uniquement via le conteneur `frontend`.
 
 Bibliothèques clés :
 - **Radix UI** : composants accessibles (dialog, dropdown, tabs, tooltip…)

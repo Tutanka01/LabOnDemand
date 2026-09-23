@@ -270,7 +270,7 @@ def _filter_entries(
 
 
 @audit_router.get("/stats", dependencies=[Depends(is_admin)])
-async def get_audit_stats():
+def get_audit_stats():
     """
     Retourne les statistiques globales des logs d'audit :
       - total d'entrées
@@ -353,7 +353,7 @@ async def get_audit_stats():
 
 
 @audit_router.get("", dependencies=[Depends(is_admin)])
-async def list_audit_logs(
+def list_audit_logs(
     # Pagination
     page: int = Query(1, ge=1, description="Page (commence à 1)"),
     page_size: int = Query(50, ge=1, le=500, description="Entrées par page"),

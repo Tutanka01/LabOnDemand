@@ -8,7 +8,8 @@ Group overview:
 - **CORS**: allowed origins (comma-separated ``CORS_ORIGINS`` env var).
 - **Kubernetes**: cluster external IP, NodePort mode, user namespace prefix.
 - **Ingress**: toggle, base domain, IngressClass, TLS secret, per-type opt-in/out.
-- **Sessions**: Redis URL, expiry, cookie flags (SameSite, Secure, Domain).
+- **Sessions**: Redis URL, expiry, cookie flags (SameSite, Secure, Domain),
+  rate limiting (storage, login / deployment limits).
 - **SSO / OIDC**: issuer, client credentials, redirect URI, role-claim mapping.
 - **Admin**: default admin password seeded on first boot.
 
@@ -125,6 +126,13 @@ class Settings:
     @staticmethod
     def init_kubernetes():
         """Initialise la configuration Kubernetes"""
+        # Délais REST par défaut (voir backend/k8s_timeouts.py), installés
+        # avant tout appel au cluster.
+        from .k8s_timeouts import install_default_request_timeout
+
+        install_default_request_timeout(
+            Settings.K8S_REQUEST_TIMEOUT_CONNECT, Settings.K8S_REQUEST_TIMEOUT_READ
+        )
         config.load_kube_config()
         # urllib3 (appels REST) ignore les proxies d'environnement, mais
         # websocket-client (exec, port-forward) les route via HTTPS_PROXY :
@@ -141,6 +149,52 @@ class Settings:
                     if host not in entries:
                         entries.append(host)
                     os.environ[var] = ",".join(entries)
+
+    # ===================== Concurrence & client Kubernetes =====================
+    # Délais par défaut (secondes) des appels REST Kubernetes : connexion puis
+    # lecture. Un _request_timeout explicite reste prioritaire ; 0 désactive.
+    # Les flux (watch, logs suivis) ne reçoivent jamais de délai de lecture.
+    K8S_REQUEST_TIMEOUT_CONNECT = float(os.getenv("K8S_REQUEST_TIMEOUT_CONNECT", "5"))
+    K8S_REQUEST_TIMEOUT_READ = float(os.getenv("K8S_REQUEST_TIMEOUT_READ", "30"))
+    # Taille du pool de threads AnyIO qui exécute les endpoints `def`, les
+    # dépendances synchrones et les appels déportés (run_in_threadpool).
+    # À garder <= (pool_size + max_overflow) / 2 du moteur SQLAlchemy : un
+    # thread peut tenir deux connexions (session de requête + session de
+    # service) ; au-delà les requêtes attendent le pool DB (voir database.py).
+    API_THREADPOOL_SIZE = max(1, int(os.getenv("API_THREADPOOL_SIZE", "40")))
+    # Déploiements simultanés (threads dédiés) lors d'un déploiement en masse
+    # d'un devoir sur une classe, par requête.
+    BULK_SPAWN_CONCURRENCY = max(1, int(os.getenv("BULK_SPAWN_CONCURRENCY", "5")))
+    # Grading Runs simultanés lors d'un « lancer les tests sur toute la classe »
+    # (par lot ; les runs suivants attendent leur tour en arrière-plan).
+    BULK_GRADING_CONCURRENCY = max(1, int(os.getenv("BULK_GRADING_CONCURRENCY", "5")))
+    # TTL (s) du verrou Redis de leader de la tâche de nettoyage. Doit dépasser
+    # une itération (intervalle + durée d'un cycle). 0 = auto : 2 x intervalle
+    # (CLEANUP_INTERVAL_MINUTES), minimum 120 s.
+    CLEANUP_LOCK_TTL_SECONDS = max(0, int(os.getenv("CLEANUP_LOCK_TTL_SECONDS", "0")))
+    # Fermeture (code 4408) d'un terminal WebSocket sans aucun échange, dans un
+    # sens ou dans l'autre, pendant ce délai (s). 0 = jamais.
+    TERMINAL_IDLE_TIMEOUT_SECONDS = max(
+        0, int(os.getenv("TERMINAL_IDLE_TIMEOUT_SECONDS", "1800"))
+    )
+    # Délai (s, entier) de chaque sonde de GET /api/v1/health (DB, Redis, K8s).
+    HEALTH_CHECK_TIMEOUT_SECONDS = max(
+        1, int(os.getenv("HEALTH_CHECK_TIMEOUT_SECONDS", "3"))
+    )
+
+    @staticmethod
+    def configure_threadpool() -> int:
+        """Applique API_THREADPOOL_SIZE au limiteur de threads AnyIO par défaut.
+
+        Le limiteur est propre à la boucle d'événements : appeler depuis un
+        événement de démarrage de l'application. Retourne la taille appliquée.
+        """
+        import anyio.to_thread
+
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        limiter.total_tokens = Settings.API_THREADPOOL_SIZE
+        return int(limiter.total_tokens)
+    # ===================== Fin concurrence & client Kubernetes =====================
 
     # Grader Pod (MVP-2) — exécution isolée des tests boîte noire
     # Image du grader (publiée sur le registre du cluster). Voir dockerfiles/grader/.
@@ -164,11 +218,41 @@ class Settings:
     }
 
     # Sessions (Redis)
+    # Source unique de vérité pour les cookies de session : session.py et
+    # auth_router.py lisent ces valeurs, aucune autre lecture d'environnement.
     REDIS_URL = os.getenv("REDIS_URL", None)
     SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
-    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Strict")
+    # Lax par défaut (valeur effective historique) : Strict supprime le cookie
+    # lors du retour de l'IdP OIDC et des liens entrants, sans gain réel
+    # puisque les requêtes mutantes sont protégées par backend/csrf.py.
+    # Normalisé en minuscules ; validé au démarrage (lax, strict, none).
+    SESSION_SAMESITE = os.getenv("SESSION_SAMESITE", "Lax").strip().lower() or "lax"
     SECURE_COOKIES = os.getenv("SECURE_COOKIES", "True").lower() in ["true", "1", "yes"]
-    COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
+    # Laisser vide (cookie limité à l'hôte) sauf besoin explicite. Ne doit
+    # jamais englober INGRESS_BASE_DOMAIN : contrôle bloquant au démarrage.
+    COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", "").strip() or None
+    # Limitation de débit (backend/rate_limit.py). Syntaxe « limits » :
+    # « 30/minute », « 10/5minute », plusieurs limites séparées par « ; ».
+    # Compteurs dans Redis (partagés entre workers) ; RATE_LIMIT_STORAGE_URI
+    # permet un stockage dédié (« memory:// » = compteurs par processus).
+    RATE_LIMIT_STORAGE_URI = (
+        os.getenv("RATE_LIMIT_STORAGE_URI", "").strip() or REDIS_URL or "memory://"
+    )
+    # Connexion, par IP cliente, toutes tentatives : garde-fou contre
+    # l'inondation, assez large pour une salle derrière un NAT.
+    RATE_LIMIT_LOGIN = os.getenv("RATE_LIMIT_LOGIN", "").strip() or "60/minute"
+    # Échecs de connexion par couple (compte, IP) ; remis à zéro par une
+    # connexion réussie. Ne bloque pas le titulaire depuis une autre IP.
+    RATE_LIMIT_LOGIN_FAILURES = (
+        os.getenv("RATE_LIMIT_LOGIN_FAILURES", "").strip() or "10/15minute"
+    )
+    # Échecs de connexion par compte, toutes IP confondues (attaques
+    # distribuées) ; une IP déjà bloquée ci-dessus n'y contribue plus.
+    RATE_LIMIT_LOGIN_FAILURES_ACCOUNT = (
+        os.getenv("RATE_LIMIT_LOGIN_FAILURES_ACCOUNT", "").strip() or "50/15minute"
+    )
+    # Création de déploiements, par utilisateur authentifié (IP à défaut).
+    RATE_LIMIT_DEPLOY = os.getenv("RATE_LIMIT_DEPLOY", "").strip() or "10/5minute"
 
     # SSO (OpenID Connect — OIDC)
     SSO_ENABLED = os.getenv("SSO_ENABLED", "False").lower() in ["true", "1", "yes"]

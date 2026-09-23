@@ -14,7 +14,7 @@ from ..k8s_utils import create_labondemand_labels, clamp_resources_for_role
 class WordPressDeployMixin:
     """Fournit _create_wordpress_stack() pour DeploymentService."""
 
-    async def _create_wordpress_stack(
+    def _create_wordpress_stack(
         self,
         name: str,
         effective_namespace: str,

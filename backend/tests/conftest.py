@@ -3,8 +3,9 @@ Test configuration for LabOnDemand.
 
 All external patches (Redis, Kubernetes, database) are applied at MODULE LEVEL,
 before any backend package is imported, so the backends's own module-level code
-(settings.init_kubernetes(), Base.metadata.create_all(), session_store creation)
-uses our test doubles.
+(settings.init_kubernetes(), session_store creation) uses our test doubles.
+The schema is built by the Alembic migrations (upgrade_schema), exactly as
+at application startup.
 
 Import order matters:
   1. Env vars
@@ -15,7 +16,11 @@ Import order matters:
   6. pytest fixtures defined
 """
 import os
-from typing import Dict, Generator, Optional
+from typing import Generator
+
+# test_ui.py pilote un vrai navigateur (Selenium) contre un serveur démarré :
+# hors suite automatisée. `collect_ignore` n'est reconnu que dans conftest.py.
+collect_ignore = ["test_ui.py"]
 
 # ============================================================
 # 1. Environment variables — read by config.py at import time
@@ -29,30 +34,31 @@ os.environ.setdefault("SSO_ENABLED", "false")
 
 # ============================================================
 # 2. Mock Redis — session_store.py calls redis.from_url() at module level
+#    fakeredis implémente toute la sémantique Redis (TTL, SET NX/PX, INCR,
+#    scripts Lua…) : les verrous, compteurs et limiteurs se testent pour de vrai.
+#    Un seul FakeServer partagé : tous les clients voient les mêmes données.
 # ============================================================
-_test_sessions: Dict[str, str] = {}
-
-
-class _FakeRedis:
-    """In-memory Redis substitute — same interface as redis.Redis."""
-
-    def ping(self) -> bool:
-        return True
-
-    def setex(self, key: str, ttl: int, value: str) -> None:
-        _test_sessions[key] = value
-
-    def get(self, key: str) -> Optional[str]:
-        return _test_sessions.get(key)
-
-    def delete(self, key: str) -> int:
-        existed = key in _test_sessions
-        _test_sessions.pop(key, None)
-        return 1 if existed else 0
-
-
+import fakeredis  # noqa: E402
 import redis as _redis_mod  # noqa: E402 (must come after os.environ setup)
-_redis_mod.from_url = lambda url, **kw: _FakeRedis()
+
+_fake_redis_server = fakeredis.FakeServer()
+
+
+def _fake_redis_from_url(url, **kw):
+    return fakeredis.FakeRedis(
+        server=_fake_redis_server,
+        decode_responses=kw.get("decode_responses", False),
+    )
+
+
+_redis_mod.from_url = _fake_redis_from_url
+_redis_mod.Redis.from_url = staticmethod(_fake_redis_from_url)
+
+
+def flush_fake_redis() -> None:
+    """Vide le Redis de test (sessions, verrous, compteurs de rate limiting)."""
+    fakeredis.FakeRedis(server=_fake_redis_server).flushall()
+
 
 # ============================================================
 # 3. Mock Kubernetes config — main.py calls settings.init_kubernetes()
@@ -88,12 +94,15 @@ _db_mod.SessionLocal = _TestSession
 # 5. Import backend — all patches are in place
 # ============================================================
 from backend.database import Base, get_db  # noqa: E402
-from backend.main import app  # noqa: E402  ← triggers init_kubernetes() + create_all()
+from backend.main import app  # noqa: E402  ← triggers init_kubernetes()
 from backend.models import User, UserRole, Template, RuntimeConfig  # noqa: E402
 from backend.security import get_password_hash, create_session  # noqa: E402
+from backend.db_migrate import upgrade_schema  # noqa: E402
+from backend.rate_limit import reset_rate_limit_state  # noqa: E402
 
-# Ensure schema exists (idempotent)
-Base.metadata.create_all(bind=_test_engine)
+# Schéma créé par les migrations Alembic (httpx ASGITransport ne déclenche pas
+# le lifespan : le bootstrap de main.py ne tourne pas pendant les tests).
+upgrade_schema(_test_engine)
 
 # ============================================================
 # 6. pytest fixtures
@@ -112,11 +121,15 @@ STUDENT_PASSWORD = "StudPass@9012!"
 
 @pytest.fixture(autouse=True)
 def _isolate():
-    """Truncate every table and clear the session store before each test."""
+    """Truncate every table, clear the session store and the rate limiter."""
     with _test_engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
-    _test_sessions.clear()
+    flush_fake_redis()
+    # Compteurs de limitation (Redis, replis mémoire, état « Redis en panne ») :
+    # sans remise à zéro, les connexions des tests précédents déclenchent des
+    # 429 dans les suivants (ordre-dépendant).
+    reset_rate_limit_state()
 
 
 # ---------- Database session ----------
@@ -204,6 +217,12 @@ def student_token(student_user) -> str:
 
 # ---------- HTTP client helpers ----------
 
+# En-tête anti-CSRF envoyé par le frontend sur chaque requête (voir
+# backend/csrf.py). Les clients de test l'envoient par défaut ; les tests
+# CSRF le retirent explicitement pour vérifier le refus.
+CSRF_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
 def _db_override(session):
     """Return a FastAPI dependency override that yields the given session."""
     def _override() -> Generator:
@@ -216,7 +235,7 @@ async def client(db) -> AsyncClient:
     """Unauthenticated HTTP client backed by the test DB."""
     app.dependency_overrides[get_db] = _db_override(db)
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://test", headers=CSRF_HEADERS
     ) as c:
         yield c
     app.dependency_overrides.clear()
@@ -229,6 +248,7 @@ async def admin_client(db, admin_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": admin_token},
     ) as c:
         yield c
@@ -242,6 +262,7 @@ async def teacher_client(db, teacher_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": teacher_token},
     ) as c:
         yield c
@@ -255,6 +276,7 @@ async def student_client(db, student_token) -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
+        headers=CSRF_HEADERS,
         cookies={"session_id": student_token},
     ) as c:
         yield c

@@ -5,9 +5,12 @@ Principe KISS : fonctions simples et focalisées
 
 import re
 import datetime
+import logging
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
 from kubernetes import client
+
+logger = logging.getLogger("labondemand.k8s")
 
 # Types légers pour éviter des imports circulaires coûteux
 try:
@@ -377,9 +380,11 @@ def get_role_limits(role: str, user_id: Optional[int] = None) -> Dict[str, Any]:
     return base
 
 
-async def ensure_namespace_exists(namespace_name: str) -> bool:
+def ensure_namespace_exists(namespace_name: str) -> bool:
     """
-    Vérifie qu'un namespace existe et le crée si nécessaire
+    Vérifie qu'un namespace existe et le crée si nécessaire.
+
+    Synchrone (appels K8s bloquants) : à exécuter hors de la boucle asyncio.
     """
     try:
         v1 = client.CoreV1Api()
@@ -400,13 +405,24 @@ async def ensure_namespace_exists(namespace_name: str) -> bool:
                         },
                     },
                 }
-                v1.create_namespace(namespace_manifest)
-                print(f"Namespace {namespace_name} créé avec succès")
+                try:
+                    v1.create_namespace(namespace_manifest)
+                except client.exceptions.ApiException as create_exc:
+                    # 409 : créé entre-temps par une requête concurrente.
+                    if create_exc.status != 409:
+                        raise
+                logger.info(
+                    "namespace_created",
+                    extra={"extra_fields": {"namespace": namespace_name}},
+                )
                 return True
             else:
                 raise e
     except Exception as e:
-        print(f"Erreur lors de la gestion du namespace {namespace_name}: {e}")
+        logger.exception(
+            "namespace_ensure_failed",
+            extra={"extra_fields": {"namespace": namespace_name, "error": str(e)}},
+        )
         return False
 
 

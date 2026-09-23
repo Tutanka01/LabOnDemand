@@ -1,4 +1,5 @@
 """Tests for deployment lifecycle endpoints (K8s mocked)."""
+import datetime
 import pytest
 from unittest.mock import MagicMock
 import base64
@@ -28,6 +29,8 @@ async def test_list_deployments_with_items(student_client, mock_k8s, student_use
         "user-id": str(student_user.id),
         "app-type": "custom",
     }
+    dep.metadata.annotations = {}
+    dep.metadata.creation_timestamp = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
     dep.spec.replicas = 1
     dep.spec.template.spec.containers = [MagicMock(image="nginx:latest")]
     dep.status.ready_replicas = 1

@@ -190,7 +190,8 @@ Puis mettre à jour `ensure_namespace_baseline()` pour aligner le ResourceQuota 
 
 ```bash
 curl -X PUT "http://localhost:8000/api/v1/auth/users/42/quota-override?max_apps=8&expires_at=2026-06-01T00:00:00" \
-  -H "Cookie: session_id=<token_admin>"
+  -H "Cookie: session_id=<token_admin>" \
+  -H "X-Requested-With: XMLHttpRequest"
 ```
 
 ### Supprimer une dérogation expirée

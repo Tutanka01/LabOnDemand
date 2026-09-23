@@ -1,5 +1,4 @@
 import logging
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import APIKeyCookie
 from sqlalchemy.orm import Session
@@ -8,11 +7,6 @@ import secrets
 import os
 import json
 import base64
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-# Limiteur de débit pour l'API
-limiter = Limiter(key_func=get_remote_address)
 
 # Gestion des importations pour fonctionner à la fois comme module et comme script
 try:
@@ -22,6 +16,9 @@ try:
     from .schemas import SessionData
     from .session_store import session_store
     from .logging_config import shorten_token
+    # Limiteur de débit : défini dans rate_limit.py, réexporté ici pour les
+    # imports existants (``from .security import limiter``).
+    from .rate_limit import limiter  # noqa: F401
 except ImportError:
     # Pour l'utilisation comme script direct
     from database import get_db
@@ -29,22 +26,27 @@ except ImportError:
     from schemas import SessionData
     from session_store import session_store
     from logging_config import shorten_token
+    from rate_limit import limiter  # noqa: F401
 
-# Configuration du contexte de hachage de mot de passe
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Hachage des mots de passe : bcrypt direct, compatible avec les hachages
+# produits par passlib (voir password_hashing.py)
+try:
+    from .password_hashing import hash_password, verify_password as _verify_password_hash
+except ImportError:
+    from password_hashing import hash_password, verify_password as _verify_password_hash
 
 # Clé API pour la sécurité basée sur les cookies
 cookie_security = APIKeyCookie(name="session_id", auto_error=False)
 
 logger = logging.getLogger("labondemand.security")
 
-# Vérification des mots de passe
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+# Vérification des mots de passe (un hachage vide ou invalide renvoie False)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return _verify_password_hash(plain_password, hashed_password)
 
-# Génération de hachage de mot de passe
-def get_password_hash(password):
-    return pwd_context.hash(password)
+# Génération de hachage de mot de passe (bcrypt $2b$, coût 12)
+def get_password_hash(password: str) -> str:
+    return hash_password(password)
 
 # Validation de la force du mot de passe
 def validate_password_strength(password: str) -> bool:
@@ -233,6 +235,22 @@ def delete_user_sessions(user_id: int) -> int:
     )
     return deleted_count
 
+# Empreinte bcrypt constante d'un mot de passe aléatoire jamais conservé :
+# aucune saisie ne peut la valider. Coût 12, identique aux empreintes réelles
+# (vérifié par test_rate_limiting.py) : à régénérer si ce coût change.
+_DUMMY_PASSWORD_HASH = "$2b$12$Nhlh8YP12962NELT6UCtQOCvPX6OI9d.JT6xAOvMSOsEWqtgWpmFC"
+
+
+def _equalize_password_check_timing(password: str) -> None:
+    """Consomme le coût d'une vérification bcrypt sans résultat exploitable.
+
+    Sans cela, un nom inconnu (ou un compte SSO) répond sans calcul bcrypt,
+    donc nettement plus vite qu'un mauvais mot de passe : la durée de la
+    réponse révélerait quels comptes locaux existent (énumération).
+    """
+    verify_password(password, _DUMMY_PASSWORD_HASH)
+
+
 # Authentification utilisateur
 def authenticate_user(db: Session, username: str, password: str):
     logger.debug(
@@ -242,6 +260,7 @@ def authenticate_user(db: Session, username: str, password: str):
 
     user = db.query(User).filter(User.username == username).first()
     if not user:
+        _equalize_password_check_timing(password)
         logger.warning(
             "authenticate_user_failed",
             extra={"extra_fields": {"username": username, "reason": "user_not_found"}},
@@ -249,6 +268,7 @@ def authenticate_user(db: Session, username: str, password: str):
         return False
     
     if getattr(user, "auth_provider", "local") != "local":
+        _equalize_password_check_timing(password)
         logger.warning(
             "authenticate_user_failed",
             extra={"extra_fields": {"username": username, "reason": "non_local_auth"}},

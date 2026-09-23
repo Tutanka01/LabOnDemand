@@ -6,9 +6,8 @@ Ce script crée ou met à jour l'utilisateur admin avec des identifiants connus
 import os
 import sys
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from passlib.context import CryptContext
 
 # Configuration de la base de données
 DB_USER = os.getenv("DB_USER", "labondemand")
@@ -17,28 +16,37 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME", "labondemand")
 
-# Construction de l'URL de connexion
-SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Construction de l'URL de connexion (URL.create échappe les caractères
+# spéciaux du mot de passe : @, /, :, #…)
+SQLALCHEMY_DATABASE_URL = URL.create(
+    drivername="mysql+pymysql",
+    username=DB_USER,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=int(DB_PORT),
+    database=DB_NAME,
+)
 
 # Création du moteur de base de données et de la session
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Configuration du contexte de hachage de mot de passe
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 def get_password_hash(password):
-    """Crée un hash du mot de passe"""
-    return pwd_context.hash(password)
+    """Crée un hash du mot de passe (même implémentation bcrypt que l'API)"""
+    # Import tardif : /app n'est ajouté à sys.path que dans __main__
+    from backend.password_hashing import hash_password
+    return hash_password(password)
 
 def reset_admin_account():
     """
     Réinitialise le compte administrateur avec des identifiants connus
     """
-    from backend.models import User, UserRole, Base
+    from backend.models import User, UserRole
+    from backend.db_migrate import upgrade_schema
     
-    # S'assurer que les tables existent
-    Base.metadata.create_all(bind=engine)
+    # Amener le schéma à la révision Alembic attendue (comme au démarrage de
+    # l'API) : create_all créerait des tables sans version Alembic.
+    upgrade_schema(engine)
     
     # Créer une session
     db = SessionLocal()

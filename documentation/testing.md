@@ -13,31 +13,26 @@ read_when: |
 
 La suite pytest tourne entièrement en mémoire — aucune dépendance externe (MariaDB, Redis, Kubernetes) n'est requise.
 
+La suite s'exécute dans un conteneur dédié, décrit par `compose.test.yaml` (cible `test` du `Dockerfile`). Ce conteneur ne monte que `./backend` : ni `.env`, ni `kubeconfig.yaml`, ni MariaDB/Redis réels — impossible de toucher au cluster ou aux données locales depuis un test.
+
 ```bash
-# Depuis un conteneur déjà démarré (recommandé)
-docker compose exec api python -m pytest backend/tests/ -q
+# Suite complète (reconstruit l'image si requirements*.txt ou le Dockerfile ont changé)
+docker compose -f compose.test.yaml run --rm --build tests
 
 # Avec affichage des logs (utile pour déboguer)
-docker compose exec api python -m pytest backend/tests/ -q -s
+docker compose -f compose.test.yaml run --rm tests python -m pytest backend/tests/ -q -s
 
 # Un seul fichier
-docker compose exec api python -m pytest backend/tests/test_classrooms.py -q
+docker compose -f compose.test.yaml run --rm tests python -m pytest backend/tests/test_classrooms.py -q
 
 # Un seul test
-docker compose exec api python -m pytest backend/tests/test_auth.py::test_login_success -v
+docker compose -f compose.test.yaml run --rm tests python -m pytest backend/tests/test_auth.py::test_login_success -v
 
 # Stopper au premier échec
-docker compose exec api python -m pytest backend/tests/ -x -q
-
-# Relancer uniquement les tests en échec
-docker compose exec api python -m pytest backend/tests/ --lf -q
+docker compose -f compose.test.yaml run --rm tests python -m pytest backend/tests/ -x -q
 ```
 
-> **Alternative hors Docker** (si tu as un virtualenv configuré) :
-> ```bash
-> PYTHONPATH=. pytest backend/tests/ -q
-> ```
-> Voir `documentation/development-setup.md` pour les prérequis.
+`backend/tests/test_ui.py` (Selenium + serveur démarré) est exclu de la collecte via `collect_ignore` dans `conftest.py`.
 
 ---
 
@@ -58,8 +53,25 @@ docker compose exec api python -m pytest backend/tests/ --lf -q
 | `test_security.py` | Validation des mots de passe, hachage, RBAC HTTP, sessions |
 | `test_classrooms.py` | Classrooms CRUD, inscriptions, devoirs, déploiement en masse |
 | `test_submissions.py` | Soumissions étudiants, notation manuelle, statut de correction |
-| `test_migrations.py` | Idempotence des 18 migrations SQL |
+| `test_migrations.py` | Mise à niveau legacy (pré-Alembic) : seules les erreurs « déjà appliqué » sont ignorées, idempotence, 4 variantes de bases historiques |
+| `test_alembic_migrations.py` | Alembic : base vierge → head sans écart avec les modèles (toute modification de modèle exige une révision), baseline identique à `create_all`, bases legacy stampées, erreurs propagées, démarrage fatal, CLI |
+| `test_alembic_mariadb.py` | Mêmes scénarios sur un vrai MariaDB + démarrages concurrents sérialisés par `GET_LOCK` (opt-in, voir ci-dessous) |
 | `test_seed.py` | Idempotence du seeding (admin, templates, runtime configs) |
+
+### Migrations sur un vrai MariaDB (opt-in)
+
+`test_alembic_mariadb.py` est ignoré par défaut. Le profil `mariadb` de
+`compose.test.yaml` démarre un MariaDB 11.8 jetable (stockage en tmpfs, aucun
+port publié, aucun volume nommé) et lance les tests de migration avec
+`TEST_MARIADB=1` :
+
+```bash
+docker compose -f compose.test.yaml --profile mariadb run --rm --build tests-mariadb
+docker compose -f compose.test.yaml --profile mariadb down -v   # supprime le serveur jetable
+```
+
+À lancer pour toute nouvelle révision Alembic (voir
+[`database-migrations.md`](database-migrations.md)).
 
 ---
 

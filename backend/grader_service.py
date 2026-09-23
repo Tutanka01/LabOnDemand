@@ -21,9 +21,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Awaitable, Callable, Coroutine, List, Optional
 
+import anyio
+import anyio.to_thread
 from kubernetes import client
 
 from .config import settings
@@ -304,28 +307,44 @@ def summarize(results: list) -> dict:
 # ── Watcher : crée le Job, surveille, récupère les résultats ─────────────────
 
 
-async def run_grading(run_id: int) -> None:
-    """Tâche de fond : provisionne le Job grader, attend sa fin, enregistre le verdict.
+@dataclass(frozen=True)
+class _GradingPlan:
+    """Ce dont le watcher a besoin après la phase DB (valeurs simples)."""
 
-    Toutes les API K8s sont synchrones : on les exécute dans un executor pour ne pas
-    bloquer la boucle asyncio. La fonction possède sa propre session DB (elle survit à
-    la requête HTTP qui l'a déclenchée)."""
-    loop = asyncio.get_event_loop()
-    db = SessionLocal()
-    job_name = job_name_for_run(run_id)
-    try:
+    manifest: dict
+    timeout: int
+
+
+def _prepare_run(run_id: int) -> Optional[_GradingPlan]:
+    """Phase DB initiale (thread de travail, session dédiée).
+
+    Réclame le run (``queued`` → ``running``) par un UPDATE conditionnel
+    atomique, puis résout la cible et construit le manifeste. Retourne None si
+    le run est absent, n'est plus ``queued`` (déjà réclamé, ou clos par la
+    réconciliation pendant son attente) ou vient d'être clos en erreur.
+    """
+    with SessionLocal() as db:
+        claimed = (
+            db.query(GradingRun)
+            .filter(GradingRun.id == run_id, GradingRun.status == "queued")
+            .update({"status": "running", "started_at": _now()}, synchronize_session=False)
+        )
+        db.commit()
+        if not claimed:
+            logger.info("grading_run_not_claimed", extra={"extra_fields": {"run_id": run_id}})
+            return None
         run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
         if not run:
-            return
+            return None
         spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == run.assignment_id).first()
         if not spec:
             _finish_error(db, run, "Aucune batterie de tests définie pour ce devoir")
-            return
+            return None
 
         target = resolve_target(run, db)
         if target is None:
             _finish_error(db, run, "Lab introuvable : impossible de lancer les tests")
-            return
+            return None
 
         probes = _load_probes(spec)
         spec_json = json.dumps({"checks": probes})
@@ -340,29 +359,23 @@ async def run_grading(run_id: int) -> None:
             target=target,
             custom_script=spec.custom_script,
         )
+        return _GradingPlan(manifest=manifest, timeout=timeout)
 
-        run.status = "running"
-        run.started_at = _now()
-        db.commit()
 
-        # Provisionner l'infra puis créer le Job (appels K8s bloquants → executor).
-        await loop.run_in_executor(None, ensure_grader_infra)
-        await loop.run_in_executor(
-            None,
-            lambda: _create_job(manifest),
-        )
+def _finish_run_error(run_id: int, message: str) -> None:
+    """Clôt un run en erreur s'il ne l'est pas déjà (thread de travail)."""
+    with SessionLocal() as db:
+        run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
+        if run and run.status not in ("done", "error"):
+            _finish_error(db, run, message)
 
-        logs = await _watch_job(loop, job_name, timeout)
 
-        if logs is None:
-            _finish_error(db, run, f"Timeout : le grader n'a pas répondu en {timeout}s")
+def _finish_run_done(run_id: int, results: list) -> None:
+    """Enregistre le verdict d'un run (thread de travail)."""
+    with SessionLocal() as db:
+        run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
+        if not run:
             return
-
-        results = parse_results_from_logs(logs)
-        if results is None:
-            _finish_error(db, run, "Verdict illisible : le grader n'a pas produit de résultat JSON")
-            return
-
         summary = summarize(results)
         run.status = "done"
         run.results = json.dumps(results, ensure_ascii=False)
@@ -371,25 +384,110 @@ async def run_grading(run_id: int) -> None:
         run.score_suggestion = summary["score_suggestion"]
         run.finished_at = _now()
         db.commit()
-        logger.info(
-            "grading_run_done",
-            extra={"extra_fields": {"run_id": run.id, "passed": summary["passed"], "total": summary["total"]}},
-        )
+    logger.info(
+        "grading_run_done",
+        extra={"extra_fields": {"run_id": run_id, "passed": summary["passed"], "total": summary["total"]}},
+    )
+
+
+async def run_grading(run_id: int) -> None:
+    """Tâche de fond : provisionne le Job grader, attend sa fin, enregistre le verdict.
+
+    Les accès DB et les API K8s sont synchrones : chaque phase s'exécute dans un
+    thread de travail (``anyio.to_thread``) pour ne jamais bloquer la boucle
+    asyncio. Chaque phase DB ouvre sa propre session (la tâche survit à la
+    requête HTTP qui l'a déclenchée) et aucune session n'est tenue pendant
+    l'attente du Job."""
+    job_name = job_name_for_run(run_id)
+    try:
+        plan = await anyio.to_thread.run_sync(_prepare_run, run_id)
+        if plan is None:
+            return
+
+        # Provisionner l'infra puis créer le Job (appels K8s bloquants → thread).
+        await anyio.to_thread.run_sync(ensure_grader_infra)
+        await anyio.to_thread.run_sync(_create_job, plan.manifest)
+
+        logs = await _watch_job(job_name, plan.timeout)
+
+        if logs is None:
+            await anyio.to_thread.run_sync(
+                _finish_run_error, run_id, f"Timeout : le grader n'a pas répondu en {plan.timeout}s"
+            )
+            return
+
+        results = parse_results_from_logs(logs)
+        if results is None:
+            await anyio.to_thread.run_sync(
+                _finish_run_error, run_id, "Verdict illisible : le grader n'a pas produit de résultat JSON"
+            )
+            return
+
+        await anyio.to_thread.run_sync(_finish_run_done, run_id, results)
     except Exception as exc:  # garde-fou : un run ne doit jamais rester bloqué
         logger.exception("grading_run_failed", extra={"extra_fields": {"run_id": run_id, "error": str(exc)}})
         try:
-            run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
-            if run and run.status not in ("done", "error"):
-                _finish_error(db, run, f"Erreur interne du grader : {exc}")
+            await anyio.to_thread.run_sync(_finish_run_error, run_id, f"Erreur interne du grader : {exc}")
         except Exception:
-            db.rollback()
+            logger.exception("grading_run_finalize_failed", extra={"extra_fields": {"run_id": run_id}})
     finally:
         # Nettoyage best-effort du Job (le TTL est le filet de sécurité).
         try:
-            await loop.run_in_executor(None, lambda: _delete_job(job_name))
-        except Exception:
-            pass
-        db.close()
+            await anyio.to_thread.run_sync(_delete_job, job_name)
+        except Exception as exc:
+            logger.warning(
+                "grading_job_cleanup_failed",
+                extra={"extra_fields": {"run_id": run_id, "job_name": job_name, "error": str(exc)}},
+            )
+
+
+# ── Planification des runs (tâches de fond) ───────────────────────────────────
+
+# Références fortes vers les tâches en cours : la boucle asyncio ne garde que
+# des références faibles, une tâche non référencée peut être collectée en
+# plein vol.
+_background_tasks: "set[asyncio.Task[None]]" = set()
+
+
+def _track(coro: Coroutine[Any, Any, None]) -> "asyncio.Task[None]":
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+def schedule_grading(run_id: int) -> "asyncio.Task[None]":
+    """Lance ``run_grading`` en tâche de fond (à appeler depuis la boucle)."""
+    return _track(run_grading(run_id))
+
+
+async def _run_grading_batch(
+    runner: Callable[[int], Awaitable[None]], run_ids: List[int], concurrency: int
+) -> None:
+    limiter = anyio.CapacityLimiter(max(1, concurrency))
+
+    async def _one(run_id: int) -> None:
+        async with limiter:
+            try:
+                await runner(run_id)
+            except Exception:
+                # run_grading ne lève pas ; garde-fou pour ne pas annuler le lot.
+                logger.exception("grading_run_failed", extra={"extra_fields": {"run_id": run_id}})
+
+    async with anyio.create_task_group() as tg:
+        for run_id in run_ids:
+            tg.start_soon(_one, run_id)
+
+
+def schedule_grading_batch(run_ids: List[int], concurrency: int) -> Optional["asyncio.Task[None]"]:
+    """Lance un lot de runs en tâche de fond, au plus ``concurrency`` à la fois.
+
+    À appeler depuis la boucle. Retourne None si le lot est vide.
+    """
+    if not run_ids:
+        return None
+    # run_grading est résolu maintenant (et non au démarrage de la tâche).
+    return _track(_run_grading_batch(run_grading, list(run_ids), concurrency))
 
 
 def _load_probes(spec: GradingSpec) -> list:
@@ -420,7 +518,7 @@ def _delete_job(job_name: str) -> None:
             raise
 
 
-async def _watch_job(loop, job_name: str, timeout: int) -> Optional[str]:
+async def _watch_job(job_name: str, timeout: int) -> Optional[str]:
     """Poll le statut du Job jusqu'à complétion, puis renvoie les logs du pod.
 
     Retourne ``None`` en cas de timeout global."""
@@ -432,13 +530,13 @@ async def _watch_job(loop, job_name: str, timeout: int) -> Optional[str]:
     while elapsed < deadline:
         await asyncio.sleep(poll)
         elapsed += poll
-        status = await loop.run_in_executor(None, lambda: _read_job_status(job_name, ns))
+        status = await anyio.to_thread.run_sync(_read_job_status, job_name, ns)
         if status is None:
             continue
         succeeded = getattr(status, "succeeded", None) or 0
         failed = getattr(status, "failed", None) or 0
         if succeeded or failed:
-            return await loop.run_in_executor(None, lambda: _read_job_logs(job_name, ns))
+            return await anyio.to_thread.run_sync(_read_job_logs, job_name, ns)
     return None
 
 

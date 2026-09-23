@@ -13,7 +13,7 @@ from ..k8s_utils import create_labondemand_labels, clamp_resources_for_role
 class MySQLDeployMixin:
     """Fournit _create_mysql_pma_stack() pour DeploymentService."""
 
-    async def _create_mysql_pma_stack(
+    def _create_mysql_pma_stack(
         self,
         name: str,
         effective_namespace: str,

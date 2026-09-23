@@ -34,7 +34,7 @@ LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
 
 ### Mode local
 
-1. Formulaire login (`POST /api/v1/auth/login`) → session Redis → cookie `session_id`.
+1. Formulaire login (`POST /api/v1/auth/login`, en-tête `X-Requested-With: XMLHttpRequest`) → session Redis → cookie `session_id`. Le jeton n'apparaît ni dans le corps de la réponse ni dans un en-tête lisible par JavaScript.
 2. Les comptes sont créés par un admin via `POST /api/v1/auth/register` ou l'interface admin.
 
 > En mode SSO, la création de comptes locaux et le changement de mot de passe sont désactivés.
@@ -43,11 +43,12 @@ LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
 
 - **Session store** : Redis authentifié (service `redis` dans `compose.yaml`),
   TTL configurable (`SESSION_EXPIRY_HOURS`), accès limité au réseau interne.
-- **Cookies** : HttpOnly, SameSite configurable (`SESSION_SAMESITE`), `SECURE_COOKIES=True` en production.
+- **Cookies** : HttpOnly, `SameSite=Lax` par défaut (`SESSION_SAMESITE`), `SECURE_COOKIES=True` en production, `COOKIE_DOMAIN` vide recommandé (voir ci-dessous).
 - **Modèles** : `backend/models.py` — champ `auth_provider` (`"local"` ou `"oidc"`) et `external_id` (claim `sub` de l'IdP, contraint `UNIQUE` en base).
 - **SSO** : `backend/sso.py` — découverte automatique de l'IdP via `/.well-known/openid-configuration`.
 - **Sécurité** : `backend/security.py` pour le hachage bcrypt et la vérification des mots de passe.
-- **Middleware** : `backend/session.py` accroche la session au scope FastAPI.
+- **Cookie de session** : `backend/session.py` pose et supprime le cookie, et valide sa configuration au démarrage.
+- **CSRF** : `backend/csrf.py` (middleware) ; **limitation de débit** : `backend/rate_limit.py`.
 - **API** : `backend/auth_router.py` expose les endpoints listés ci-dessous.
 
 ## Diagramme de séquence — SSO (OIDC)
@@ -211,13 +212,41 @@ des namespaces orphelins (voir `documentation/lifecycle.md`).
 
 ## Fonctionnalités de sécurité
 
-1. **Anti-CSRF** : un `state` aléatoire (`secrets.token_urlsafe(32)`) est généré au démarrage du flow OIDC, stocké dans un cookie HttpOnly de 10 minutes, et vérifié au retour du callback.
-2. **Hachage bcrypt** des mots de passe pour les comptes locaux.
-3. **Cookies sécurisés** : HttpOnly, SameSite, `Secure` selon l'environnement.
-4. **TTL de session** : configurable via `SESSION_EXPIRY_HOURS`, purge immédiate au logout.
-5. **Validation des entrées** : via Pydantic (schémas dans `backend/schemas.py`).
-6. **Rate limiting** : `POST /api/v1/auth/login` limité à 5 tentatives/minute (via `slowapi`).
-7. **Audit** : `logs/audit.log` — événements `login_success`, `login_failed`, `logout`, `user_registered`, etc.
+1. **Anti-CSRF (API)** : toute requête mutante sous `/api/` (connexion comprise) doit porter `X-Requested-With: XMLHttpRequest` et, si le navigateur envoie `Origin` (ou à défaut `Referer`), venir d'une origine de confiance. Sinon : `403` avec `"error": "csrf_failed"`. Le terminal WebSocket exige lui aussi une origine de confiance (fermeture `4403` sinon).
+2. **Anti-CSRF (OIDC)** : un `state` aléatoire (`secrets.token_urlsafe(32)`) est généré au démarrage du flow OIDC, stocké dans un cookie HttpOnly de 10 minutes, et vérifié au retour du callback.
+3. **Hachage bcrypt** des mots de passe pour les comptes locaux ; un nom inconnu ou un compte SSO subit la même vérification bcrypt qu'un mauvais mot de passe (pas d'énumération par le temps de réponse).
+4. **Cookies sécurisés** : HttpOnly, SameSite, `Secure` selon l'environnement ; configuration dangereuse refusée au démarrage.
+5. **TTL de session** : configurable via `SESSION_EXPIRY_HOURS`, purge immédiate au logout.
+6. **Validation des entrées** : via Pydantic (schémas dans `backend/schemas.py`).
+7. **Limitation de débit** : 30 connexions/minute par IP (tolérant au NAT d'une salle de TP), 10 échecs / 15 minutes par nom d'utilisateur toutes IP confondues (remis à zéro par une connexion réussie), créations de labs limitées par utilisateur. Dépassement : `429` + `Retry-After`.
+8. **Audit** : `logs/audit.log` — événements `login_success`, `login_failed`, `login_throttled`, `rate_limit_exceeded`, `csrf_rejected`, `logout`, `user_registered`, etc.
+
+### Origines de confiance (CSRF)
+
+- les entrées de `CORS_ORIGINS` (`*` refuse le démarrage de l'API : le CORS autorise les cookies) ;
+- l'origine de `FRONTEND_BASE_URL` ;
+- l'hôte de la requête elle-même (en-tête `Host` transmis par nginx et schéma `X-Forwarded-Proto` d'un proxy de confiance).
+
+L'interface servie par nginx fonctionne sans réglage. Un frontend servi depuis une autre origine (autre hôte ou port) doit être ajouté à `CORS_ORIGINS` ; un domaine de labs ne doit jamais y figurer. Les scripts et `curl` doivent ajouter `-H "X-Requested-With: XMLHttpRequest"` à toute requête POST, PUT, PATCH ou DELETE.
+
+### Limitation de débit des connexions
+
+| Variable | Défaut | Clé |
+| --- | --- | --- |
+| `RATE_LIMIT_LOGIN` | `60/minute` | IP cliente (toutes tentatives) |
+| `RATE_LIMIT_LOGIN_FAILURES` | `10/15minute` | compte + IP cliente (IPv6 par /64) |
+| `RATE_LIMIT_LOGIN_FAILURES_ACCOUNT` | `50/15minute` | compte, toutes IP |
+| `RATE_LIMIT_DEPLOY` | `10/5minute` | utilisateur authentifié (IP à défaut) |
+| `RATE_LIMIT_STORAGE_URI` | `REDIS_URL` | stockage des compteurs |
+
+Au-delà d'un seuil d'échecs, la connexion est refusée **avant** la vérification du mot de passe, même correct, jusqu'à la fin de la fenêtre ; les noms inconnus sont comptés aussi. Le seuil compte + IP ne bloque que la source fautive : le titulaire se connecte toujours depuis une autre IP. Seul le seuil par compte, qu'une IP déjà bloquée n'alimente plus, peut bloquer le titulaire : il faut pour cela plusieurs sources distinctes (5 avec les valeurs par défaut). Les compteurs sont dans Redis (partagés entre workers) ; si Redis tombe, ils passent en mémoire par processus. L'IP cliente n'est lue dans `X-Forwarded-For` que pour les proxys listés dans `FORWARDED_ALLOW_IPS` (par défaut l'IP fixe de nginx, jamais `*`). Une valeur invalide empêche l'API de démarrer. Détails : [`security.md`](security.md#limitation-de-débit).
+
+### Domaine du cookie et domaine des labs
+
+Les labs (`<app>-<id>-u<user>.<INGRESS_BASE_DOMAIN>`) exécutent du contenu contrôlé par l'étudiant.
+
+- `COOKIE_DOMAIN` ne doit **jamais** englober `INGRESS_BASE_DOMAIN` (même domaine ou domaine parent), sinon chaque lab recevrait le cookie de session de ses visiteurs : l'API refuse de démarrer dans ce cas. Laisser `COOKIE_DOMAIN` vide limite le cookie à l'hôte de l'application.
+- Servir les labs sur un **domaine enregistrable distinct** de l'application (ex. `labondemand.univ.fr` et `univ-labs.fr`, plutôt que `labs.univ.fr`) : un sous-domaine frère reste « same-site » et peut poser des cookies sur le domaine parent (« cookie tossing »).
 
 ## Comptes par défaut
 
@@ -235,6 +264,10 @@ des namespaces orphelins (voir `documentation/lifecycle.md`).
 | Utilisateur créé sans email | L'IdP ne fournit pas de claim `email` — ajuster `OIDC_EMAIL_FALLBACK_DOMAIN` |
 | Tous les utilisateurs SSO sont `student` | Vérifier `OIDC_ROLE_CLAIM` et les valeurs dans `OIDC_TEACHER_VALUES` |
 | Sessions expirées trop tôt | Vérifier `SESSION_EXPIRY_HOURS` et l'horloge Redis |
+| `403` avec `"error": "csrf_failed"` | Ajouter `X-Requested-With: XMLHttpRequest` (scripts, `curl`) ; pour un frontend servi depuis une autre origine, l'ajouter à `CORS_ORIGINS` |
+| `429` à la connexion | Lire `Retry-After` ; toute une salle derrière un NAT → relever `RATE_LIMIT_LOGIN` ; un seul compte → seuil d'échecs atteint (`scope` de l'événement d'audit `login_throttled`), attendre la fin de la fenêtre |
+| Tous les utilisateurs partagent la même limite par IP | uvicorn ne fait pas confiance au proxy : vérifier `FORWARDED_ALLOW_IPS` (IP de nginx, `FRONTEND_IPV4_ADDRESS`) |
+| L'API refuse de démarrer (`COOKIE_DOMAIN … englobe INGRESS_BASE_DOMAIN`) | Vider `COOKIE_DOMAIN` ou servir les labs sur un autre domaine |
 | Cookie non envoyé | Confirmer `COOKIE_DOMAIN` et `SECURE_COOKIES` en fonction du protocole (HTTP vs HTTPS) |
 | Impossible d'ouvrir l'UI admin | Contrôler le rôle renvoyé par `GET /api/v1/auth/me` |
 

@@ -154,7 +154,8 @@ masquée. Le prof voit tout, sans filtre.
 | `GRADER_JOB_TTL_SECONDS` | `180` | `ttlSecondsAfterFinished` du Job (auto-suppression). |
 | `GRADER_POLL_INTERVAL_SECONDS` | `3` | Intervalle de polling du statut du Job. |
 | `GRADER_WATCH_GRACE_SECONDS` | `30` | Marge ajoutée au timeout avant de déclarer un run en erreur. |
-| `GRADING_RUN_STUCK_MINUTES` | `15` | (cleanup) délai au-delà duquel un run `queued`/`running` est réconcilié en `error`. |
+| `GRADING_RUN_STUCK_MINUTES` | `15` | (cleanup) délai, depuis son démarrage, au-delà duquel un run `running` est réconcilié en `error`. |
+| `GRADING_RUN_QUEUED_STUCK_MINUTES` | `120` | (cleanup) délai, depuis sa création, au-delà duquel un run `queued` est réconcilié en `error` (tâche perdue au redémarrage de l'API). Plus long que le précédent : un lancement sur toute la classe met les runs en file (`BULK_GRADING_CONCURRENCY`). |
 
 ---
 
@@ -188,13 +189,18 @@ docker run --rm \
 ```
 queued ──(watcher)──► running ──(logs OK)──► done
    │                     │
-   │                     └──(timeout / logs illisibles)──► error
-   └──(run bloqué > GRADING_RUN_STUCK_MINUTES, réconciliation cleanup)──► error
+   │                     ├──(timeout / logs illisibles)──► error
+   │                     └──(running > GRADING_RUN_STUCK_MINUTES, réconciliation cleanup)──► error
+   └──(queued > GRADING_RUN_QUEUED_STUCK_MINUTES, réconciliation cleanup)──► error
 ```
+
+Le watcher réclame le run par un `UPDATE` conditionnel (`queued` → `running`) : un run
+déjà réclamé ou clos par la réconciliation pendant son attente n'est jamais relancé.
 
 La réconciliation (dans `backend/tasks/cleanup.py`) repasse en `error` les runs restés
 bloqués (Job disparu, API redémarrée pendant un run) et supprime le Job grader résiduel —
-filet de sécurité en plus du `ttlSecondsAfterFinished`.
+filet de sécurité en plus du `ttlSecondsAfterFinished`. Elle clôt chaque run par un `UPDATE`
+conditionnel sur le statut lu : un run réclamé entre-temps par son watcher n'est pas écrasé.
 
 ---
 

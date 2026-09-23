@@ -14,7 +14,9 @@ async def test_login_success(client, admin_user):
     body = r.json()
     assert body["user"]["username"] == "testadmin"
     assert body["user"]["role"] == "admin"
-    assert "session_id" in body
+    # Le jeton ne transite que par le cookie HttpOnly, jamais dans le corps.
+    assert "session_id" not in body
+    assert "session_id" not in r.headers
     assert "session_id" in r.cookies
 
 
@@ -31,6 +33,35 @@ async def test_login_unknown_user(client):
 async def test_login_inactive_user(client, inactive_user):
     r = await client.post(f"{BASE}/login", json={"username": "inactive", "password": "StudPass@9012!"})
     assert r.status_code == 401
+
+
+async def test_login_rejects_oversized_username(client):
+    # Refus par la validation, avant toute normalisation Unicode (DoS mémoire).
+    r = await client.post(f"{BASE}/login", json={"username": "\u00e9" * 151, "password": "x"})
+    assert r.status_code == 422
+    r = await client.post(f"{BASE}/login", json={"username": "\u00e9" * 150, "password": "x"})
+    assert r.status_code == 401
+
+
+async def test_login_rejects_oversized_password(client, admin_user):
+    r = await client.post(f"{BASE}/login", json={"username": "testadmin", "password": "a" * 1025})
+    assert r.status_code == 422
+    r = await client.post(f"{BASE}/login", json={"username": "testadmin", "password": "a" * 1024})
+    assert r.status_code == 401
+
+
+async def test_register_rejects_nul_in_password(admin_client):
+    r = await admin_client.post(
+        f"{BASE}/register",
+        json={
+            "username": "nulpassword",
+            "email": "nul@example.org",
+            "password": "Strong@Pass1234\x00",
+            "role": "student",
+        },
+    )
+    # 422 (validation) et non 500 (bcrypt refuse NUL).
+    assert r.status_code == 422
 
 
 async def test_login_oidc_user_cannot_use_local_login(client, oidc_user):
@@ -162,6 +193,14 @@ async def test_change_password_weak_new(admin_client):
         json={"old_password": "TestAdmin@1234!", "new_password": "weak"},
     )
     assert r.status_code in (400, 422)
+
+
+async def test_change_password_rejects_nul_in_new_password(admin_client):
+    r = await admin_client.post(
+        f"{BASE}/change-password",
+        json={"old_password": "TestAdmin@1234!", "new_password": "NewAdmin@5678!\x00"},
+    )
+    assert r.status_code == 422
 
 
 async def test_change_password_unauthenticated(client):

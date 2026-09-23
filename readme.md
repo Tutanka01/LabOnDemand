@@ -62,7 +62,7 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 | Composant | Technologie |
 |---|---|
 | Backend API | FastAPI (Python 3.13) + SQLAlchemy 2 |
-| Frontend | React 18 / TypeScript / Vite / Tailwind CSS / Radix UI |
+| Frontend | React 19 / TypeScript / Vite / Tailwind CSS / Radix UI |
 | Base de données | MariaDB + PyMySQL |
 | Sessions | Redis (store côté serveur, cookie HttpOnly) |
 | Orchestration | Kubernetes via client Python officiel |

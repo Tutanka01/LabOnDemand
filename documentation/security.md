@@ -1,6 +1,6 @@
 ---
 title: Sécurité LabOnDemand
-summary: Modèle de sécurité complet — sessions serveur, CSRF, isolation Kubernetes par namespace, headers HTTP, RBAC et recommandations pour la production.
+summary: Modèle de sécurité complet — sessions serveur, CSRF, limitation de débit, isolation Kubernetes par namespace, headers HTTP, RBAC et recommandations pour la production.
 read_when: |
   - Tu audites ou renforces la sécurité de la plateforme
   - Tu travailles sur l'authentification, les sessions Redis ou la protection CSRF
@@ -17,12 +17,17 @@ est opaque pour le client et ne contient aucune donnée sensible.
 ### Flux de connexion locale
 
 ```
-1. POST /api/v1/auth/login  {username, password}
-2. Backend vérifie le hash bcrypt
-3. Crée une session Redis (token 32 octets URL-safe, TTL = SESSION_EXPIRY_HOURS)
-4. Set-Cookie: session_id=<token>; HttpOnly; SameSite=Strict; [Secure]
-5. Toutes les requêtes API suivantes portent ce cookie automatiquement
+1. POST /api/v1/auth/login  {username, password}  + X-Requested-With (voir CSRF)
+2. Limitation de débit : par IP, puis seuils d'échecs par (compte, IP) et
+   par compte (429 + Retry-After, sans vérifier le mot de passe)
+3. Backend vérifie le hash bcrypt (même coût si le nom est inconnu)
+4. Crée une session Redis (token 32 octets URL-safe, TTL = SESSION_EXPIRY_HOURS)
+5. Set-Cookie: session_id=<token>; HttpOnly; SameSite=Lax; Path=/; [Secure]
+6. Toutes les requêtes API suivantes portent ce cookie automatiquement
 ```
+
+Le jeton n'est renvoyé ni dans le corps de la réponse ni dans un en-tête :
+seul le cookie HttpOnly le transporte, hors de portée de JavaScript.
 
 ### Flux SSO / OIDC
 
@@ -50,8 +55,36 @@ en fallback plutôt que de bloquer toutes les connexions.
 |------------------------|----------|-----------------------------------------|
 | `SESSION_EXPIRY_HOURS` | 24       | Durée de vie de la session              |
 | `SECURE_COOKIES`       | true     | Cookie `Secure` (HTTPS requis si true)  |
-| `SESSION_SAMESITE`     | Strict   | Protection CSRF                         |
-| `COOKIE_DOMAIN`        | (vide)   | Restreindre le cookie à un domaine      |
+| `SESSION_SAMESITE`     | Lax      | `Lax`, `Strict` ou `None` (voir ci-dessous) |
+| `COOKIE_DOMAIN`        | (vide)   | Vide = cookie limité à l'hôte (recommandé) |
+
+L'API refuse de démarrer si la configuration des cookies est dangereuse
+(`validate_cookie_settings()` dans `backend/session.py`) : valeur inconnue de
+`SESSION_SAMESITE`, `SameSite=None` sans `SECURE_COOKIES=True`, ou
+`COOKIE_DOMAIN` qui englobe `INGRESS_BASE_DOMAIN`. `Lax` est le défaut :
+`Strict` fait perdre la session au retour de l'IdP SSO et sur les liens
+entrants, sans gain réel puisque les requêtes mutantes sont protégées par le
+middleware CSRF.
+
+### Cookie de session et domaine des labs
+
+Les labs sont servis sur `<app>-<id>-u<user>.<INGRESS_BASE_DOMAIN>` et leur
+contenu est contrôlé par l'étudiant (JavaScript arbitraire). Deux règles :
+
+- **`COOKIE_DOMAIN` ne doit jamais englober `INGRESS_BASE_DOMAIN`** (même
+  domaine ou domaine parent) : le navigateur enverrait le cookie de session de
+  chaque visiteur au lab, et son propriétaire pourrait le lire. Exemple refusé
+  au démarrage : `COOKIE_DOMAIN=univ.fr` avec `INGRESS_BASE_DOMAIN=labs.univ.fr`.
+  Laisser `COOKIE_DOMAIN` vide limite le cookie à l'hôte exact de l'application.
+- **Servir les labs sur un domaine enregistrable distinct** (recommandé), par
+  exemple `labondemand.univ.fr` pour l'application et `univ-labs.fr` pour les
+  labs, plutôt que sur un domaine frère comme `labs.univ.fr`. Entre
+  sous-domaines d'un même domaine enregistrable, un lab reste « same-site » :
+  `SameSite` ne le filtre pas, et il peut poser des cookies sur le domaine
+  parent (« cookie tossing »), par exemple imposer son propre `session_id`
+  pour connecter la victime à un compte qu'il contrôle. Seul un domaine
+  enregistrable distinct supprime ces vecteurs. La protection CSRF de l'API
+  (ci-dessous) ne dépend pas de `SameSite` et reste active dans tous les cas.
 
 Redis reste sur un réseau interne Docker/Kubernetes. Dans `compose.yaml`, le
 service Redis n'est pas publié sur l'hôte et utilise `REDIS_PASSWORD` via une
@@ -115,20 +148,89 @@ Enforcement dans `security.py:validate_password_strength()`. Appliqué à :
 - La modification de mot de passe (`PUT /users/{id}`, `POST /change-password`, `PUT /me`)
 - L'import CSV (`POST /users/import`)
 
+### Stockage des mots de passe
+
+Hachage **bcrypt** (`$2b$`, coût 12) via la bibliothèque `bcrypt` utilisée
+directement (`backend/password_hashing.py`, exposé par `security.py`) ; passlib,
+non maintenu, a été retiré. Les hachages existants (`$2b$`, `$2a$`, `$2y$`)
+restent valides sans migration.
+
+bcrypt n'utilise que les **72 premiers octets** (UTF-8) du mot de passe. Comme
+passlib auparavant, l'application tronque explicitement à 72 octets, au hachage
+comme à la vérification : les comptes créés avec un mot de passe plus long
+continuent de se connecter avec le même mot de passe. Un mot de passe contenant
+un caractère NUL est refusé ; un hachage vide (comptes SSO) ou invalide ne
+vérifie jamais.
+
 ---
 
-## Rate limiting
+## Limitation de débit
 
-`slowapi` applique des limites par IP :
+Implémentation : `backend/rate_limit.py` (slowapi + limits).
 
-| Endpoint | Limite |
-|----------|--------|
-| `POST /api/v1/auth/login` | 5 / minute |
-| `POST /api/v1/auth/register` | 5 / minute |
-| `POST /api/v1/k8s/deployments` | 10 / 5 minutes |
-| `POST /api/v1/k8s/pods` | 10 / 5 minutes |
+| Protection | Clé | Défaut | Variable |
+|------------|-----|--------|----------|
+| `POST /api/v1/auth/login` (toutes tentatives) | IP cliente | 60 / minute | `RATE_LIMIT_LOGIN` |
+| Échecs de connexion | compte + IP cliente | 10 / 15 minutes | `RATE_LIMIT_LOGIN_FAILURES` |
+| Échecs de connexion | compte, toutes IP | 50 / 15 minutes | `RATE_LIMIT_LOGIN_FAILURES_ACCOUNT` |
+| `POST /api/v1/k8s/deployments`, `POST /api/v1/k8s/pods` | utilisateur (IP à défaut) | 10 / 5 minutes | `RATE_LIMIT_DEPLOY` |
 
-En cas de dépassement, l'API retourne `429 Too Many Requests`.
+- **Réponse** : `429 Too Many Requests` avec l'en-tête `Retry-After`
+  (secondes) et un message traduit ; événements d'audit `rate_limit_exceeded`
+  et `login_throttled`.
+- **Par IP, volontairement large** : simple garde-fou contre l'inondation,
+  qui compte aussi les connexions réussies ; toute une salle de TP peut
+  sortir par la même IP (NAT). Prévoir au moins deux fois l'effectif qui se
+  connecte dans la même minute derrière un même NAT.
+- **Par compte + IP** : freine la force brute depuis une source. Une fois le
+  seuil atteint, la tentative venant de cette IP est refusée **avant** toute
+  vérification du mot de passe, même correct, jusqu'à la fin de la fenêtre
+  (ouverte à la première tentative) ; le titulaire du compte, connecté depuis
+  une autre IP, n'est pas bloqué. Les IPv6 sont regroupées par préfixe /64.
+- **Par compte, toutes IP** : plafonne les attaques distribuées sur un compte
+  (« password spraying »). Une IP déjà bloquée au niveau précédent n'alimente
+  plus ce compteur : avec les valeurs par défaut, bloquer un compte exige au
+  moins 5 sources distinctes.
+- **Comptage atomique** : chaque tentative incrémente les compteurs avant la
+  vérification bcrypt, puis une connexion réussie les remet à zéro ; des
+  requêtes parallèles ne peuvent donc pas dépasser les seuils.
+- **Identification du compte** : le nom saisi est d'abord recherché en base
+  (collation MariaDB) ; s'il désigne un compte, c'est le nom enregistré qui
+  sert de clé, sinon le nom saisi. Il est ensuite normalisé (casse, accents,
+  espaces, caractères invisibles) et seule son empreinte SHA-256 (avec l'IP
+  pour le compteur compte + IP) est stockée. Les noms inconnus sont comptés
+  comme les autres et subissent la même vérification bcrypt qu'un mauvais
+  mot de passe : ni la réponse ni sa durée ne révèlent l'existence d'un
+  compte.
+- **Compromis assumé** : un attaquant disposant de nombreuses IP peut encore
+  bloquer les connexions locales d'un compte pendant la fenêtre (le blocage
+  cesse seul). Garder `RATE_LIMIT_LOGIN_FAILURES_ACCOUNT` nettement au-dessus
+  de `RATE_LIMIT_LOGIN_FAILURES` ; l'événement d'audit `login_throttled`
+  indique le niveau atteint (`scope` : `account_ip` ou `account`).
+- **Stockage** : Redis (`REDIS_URL`, ou `RATE_LIMIT_STORAGE_URI` pour un
+  stockage dédié) : compteurs partagés entre workers et conservés au
+  redémarrage de l'API. Si Redis est injoignable, les compteurs passent en
+  mémoire, par processus (limites toujours appliquées), et Redis est re-testé
+  périodiquement ; si même ce repli échoue, la requête passe plutôt que de
+  renvoyer une erreur 500. Les sessions dépendant aussi de Redis, une panne
+  Redis bloque de toute façon les connexions.
+- **Syntaxe** : `30/minute`, `10/5minute`, plusieurs limites séparées par `;`
+  (`30/minute;200/hour`). Une valeur invalide empêche l'API de démarrer
+  (slowapi ignorerait sinon la limite sans le signaler).
+
+### IP cliente derrière nginx
+
+uvicorn (`--proxy-headers`) remplace l'IP du socket par celle de
+`X-Forwarded-For` **uniquement** si la connexion vient d'une adresse listée
+dans `FORWARDED_ALLOW_IPS`. Dans `compose.yaml`, c'est par défaut l'IP fixe
+de nginx (`FRONTEND_IPV4_ADDRESS`, sur le sous-réseau `LOD_NETWORK_SUBNET`).
+Derrière un répartiteur de charge supplémentaire, ajouter son IP (liste
+séparée par des virgules). **Jamais `*`** : uvicorn retiendrait alors
+l'entrée de `X-Forwarded-For` choisie par le client, ce qui contourne toute
+limite par IP. Le port de l'API n'est publié que sur `127.0.0.1`
+(`API_BIND_ADDRESS`) : le trafic passe par nginx. Celui de MariaDB aussi
+(`DB_BIND_ADDRESS`) : l'API joint la base par le réseau Compose, et un port
+publié par Docker contourne le pare-feu de l'hôte (ufw, firewalld).
 
 ---
 
@@ -199,27 +301,84 @@ minimaux.
 
 ---
 
-## CORS et proxy HTTP
+## Protection CSRF
 
-Les origines autorisées sont configurées côté FastAPI via `CORS_ORIGINS`.
-Le proxy Nginx relaie les requêtes API sans refléter arbitrairement l'en-tête
-`Origin` avec des cookies. Toute nouvelle origine frontend doit être ajoutée
-explicitement à la configuration applicative.
+Le navigateur joint le cookie de session à toute requête, y compris quand un
+autre site la déclenche. Le middleware `backend/csrf.py` (enregistré dans
+`main.py`, entre CORS et la journalisation) impose donc deux contrôles
+cumulatifs à **toute requête mutante** (méthode autre que GET, HEAD, OPTIONS,
+TRACE) sous `/api/`, connexion comprise (contre le « login CSRF ») :
 
----
+1. **En-tête `X-Requested-With: XMLHttpRequest`** obligatoire. Un formulaire
+   HTML ou un `fetch` « simple » ne peut pas le poser ; un `fetch` inter-origines
+   qui le pose déclenche un preflight CORS, refusé pour toute origine non
+   listée. Le frontend l'ajoute à chaque appel (`frontend-app/src/lib/api.ts`).
+2. **Origine de confiance** : si `Origin` est présent, il doit être de
+   confiance (`null` est refusé) ; sinon, l'origine du `Referer` est vérifiée.
+   En l'absence des deux (client non navigateur), l'en-tête suffit.
 
-## Protection anti-CSRF (OIDC)
+Refus : `403` avec `"error": "csrf_failed"` et événement d'audit
+`csrf_rejected`. Scripts et `curl` doivent donc envoyer l'en-tête :
+
+```bash
+curl -X POST -H "X-Requested-With: XMLHttpRequest" -H "Cookie: session_id=<tok>" …
+```
+
+Le « double submit cookie » est écarté : un lab servi sur un sous-domaine
+pourrait écraser ce cookie. Les routes GET n'ont pas d'effet de bord
+exploitable ; seule `GET /api/v1/k8s/deployments/labondemand` écrit en base
+(elle recrée, de façon idempotente, les enregistrements manquants des labs de
+l'appelant).
+
+### Origines de confiance
+
+- chaque entrée de `CORS_ORIGINS`. `*` refuse le démarrage de l'API : le
+  CORS autorisant les cookies, Starlette renverrait l'origine de tout site
+  appelant, qui pourrait alors lire les réponses authentifiées ;
+- l'origine de `FRONTEND_BASE_URL`, si elle est définie ;
+- l'origine de la requête elle-même : schéma (`X-Forwarded-Proto`, lu
+  uniquement depuis un proxy de confiance) et en-tête `Host` transmis par
+  nginx, port compris. `X-Forwarded-Host` n'est jamais utilisé ;
+- la variante `https://` de ce même `Host` (jamais la variante `http://`).
+
+L'interface servie par nginx (même hôte que `/api/`) fonctionne donc sans
+configuration, y compris derrière un terminateur TLS (reverse proxy, load
+balancer) placé devant nginx : nginx transmet alors `X-Forwarded-Proto: http`
+mais le navigateur annonce `Origin: https://…`, d'où la variante https.
+
+**En production, définissez `FRONTEND_BASE_URL`** (URL publique de
+l'interface, p. ex. `https://labondemand.example.fr`) : c'est l'origine de
+confiance explicite, indépendante des en-têtes transmis par les proxys, et la
+cible de redirection après connexion SSO. Toute autre origine frontend (autre
+hôte ou port, serveur de développement) doit être ajoutée à `CORS_ORIGINS`.
+N'y ajoutez jamais un domaine de labs.
+
+### Terminal WebSocket
+
+La poignée de main de `/api/v1/k8s/terminal/{namespace}/{pod}` exige un en-tête
+`Origin` de confiance (même liste) ; sinon la connexion est fermée avec le code
+`4403` et l'événement `websocket_origin_rejected` est journalisé. Sans ce
+contrôle, une page tierce ouverte par un utilisateur connecté pourrait piloter
+un shell dans ses labs (les WebSocket ne sont pas soumises à CORS).
+
+### State OIDC
 
 Un `state` aléatoire (`secrets.token_urlsafe(32)`) est généré au démarrage du
 flow OIDC, stocké dans un cookie HttpOnly (TTL 10 min), et vérifié au retour
-du callback. Toute non-concordance retourne `400 Bad Request`.
+du callback. Toute non-concordance retourne `400 Bad Request`. Les routes
+`GET /sso/login` et `GET /sso/callback` modifient l'état (cookie, compte,
+session) par nécessité du protocole ; ce `state` les protège.
 
 ---
 
-## Endpoint de diagnostic
+## Mode debug
 
-`POST /api/v1/diagnostic/test-auth` n'est accessible que si `DEBUG_MODE=True`.
-**Ne jamais activer `DEBUG_MODE` en production.**
+`DEBUG_MODE=True` active le mode debug de FastAPI et est signalé par
+`GET /api/v1/status`. **Ne jamais l'activer en production.** L'ancien endpoint
+de diagnostic `POST /api/v1/diagnostic/test-auth` (actif en mode debug) a été
+supprimé : il vérifiait un mot de passe sans aucune limitation de débit et
+renvoyait le détail du compte. Pour tester des identifiants, utiliser
+`POST /api/v1/auth/login`.
 
 ---
 
@@ -276,6 +435,10 @@ Toutes les actions sensibles sont tracées dans `logs/audit.log` :
 |-----------|--------|
 | `login_success` | user_id, username, role, session_id, client_ip |
 | `login_failed` | username, reason, client_ip |
+| `login_throttled` | username, client_ip, retry_after |
+| `rate_limit_exceeded` | method, path, limit, client_ip, user_id, retry_after |
+| `csrf_rejected` | method, path, reason, origin, referer_origin, host, client_ip |
+| `websocket_origin_rejected` | path, reason, origin, host, client_ip |
 | `logout` | user_id, username, session_id |
 | `user_registered` | user_id, username, role |
 | `user_updated` | user_id, username, role, updated_by |
@@ -308,11 +471,15 @@ Toutes les actions sensibles sont tracées dans `logs/audit.log` :
 ## Checklist sécurité production
 
 - [ ] `SECURE_COOKIES=True` (HTTPS uniquement)
-- [ ] `SESSION_SAMESITE=Strict`
+- [ ] `SESSION_SAMESITE=Lax` (défaut ; `Strict` casse le retour SSO)
+- [ ] `COOKIE_DOMAIN` vide, labs servis sur un domaine enregistrable distinct
 - [ ] `DEBUG_MODE=False`
 - [ ] `ADMIN_DEFAULT_PASSWORD` changé dès le premier démarrage
 - [ ] Redis non accessible publiquement et protégé par `REDIS_PASSWORD`
-- [ ] `CORS_ORIGINS` limité aux domaines frontend attendus
+- [ ] MariaDB publié sur `127.0.0.1` uniquement (`DB_BIND_ADDRESS`), `DB_ROOT_PASSWORD` et `DB_PASSWORD` forts
+- [ ] `CORS_ORIGINS` limité aux origines frontend attendues (ni `*`, ni domaine de labs)
+- [ ] `FORWARDED_ALLOW_IPS` limité aux proxys (jamais `*`), port API publié sur `127.0.0.1`
+- [ ] `RATE_LIMIT_*` adaptés à la taille des salles derrière un même NAT
 - [ ] `kubeconfig.yaml` local non versionné, droits restreints, rotation effectuée si exposé
 - [ ] `OIDC_CLIENT_SECRET` dans un secret K8s ou fichier `.env` non versionné
 - [ ] Logs montés sur un volume persistant et monitorés

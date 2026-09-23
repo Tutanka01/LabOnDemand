@@ -17,7 +17,9 @@ from .security import (
     get_current_user, delete_session, delete_user_sessions,
     is_admin, is_teacher_or_admin, limiter, validate_password_strength
 )
-from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
+from .session import set_session_cookie, clear_session_cookie
+from .rate_limit import client_ip, ip_key, login_failure_throttle, login_ip_limit
+from .i18n import get_locale, t
 from .session_store import session_store
 from .config import settings
 from .sso import (
@@ -33,8 +35,24 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 logger = logging.getLogger("labondemand.auth")
 audit_logger = logging.getLogger("labondemand.audit")
 
+
+def _login_account_name(db: Session, username: str) -> str:
+    """Nom du compte visé tel qu'enregistré en base, sinon le nom saisi.
+
+    La recherche passe par la collation MariaDB (insensible à la casse et
+    aux accents) : toutes les graphies qu'elle confond avec un compte
+    partagent ses compteurs d'échecs, y compris celles que la normalisation
+    Unicode ne rapproche pas (đ, ł, ø…). Une graphie qu'elle ne confond pas
+    ne peut de toute façon pas ouvrir ce compte.
+    """
+    row = db.query(User.username).filter(User.username == username).first()
+    return row[0] if row else username
+
+
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")
+# Par IP (large : NAT des salles de TP) ; les seuils d'échecs par compte et
+# par (compte, IP) sont appliqués dans le corps (backend/rate_limit.py).
+@limiter.limit(login_ip_limit, key_func=ip_key)
 def login(
     user_credentials: UserLogin,
     response: Response,
@@ -55,7 +73,31 @@ def login(
             }
         },
     )
-    
+
+    # Tentative comptée AVANT la vérification (incrément atomique : des
+    # requêtes parallèles ne peuvent pas dépasser le seuil) ; au-delà, refus
+    # immédiat sans bcrypt, même si le mot de passe est bon.
+    account = _login_account_name(db, user_credentials.username)
+    client_host = client_ip(request)
+    block = login_failure_throttle.register_attempt(account, client_host)
+    if block:
+        audit_logger.warning(
+            "login_throttled",
+            extra={
+                "extra_fields": {
+                    "username": user_credentials.username,
+                    "client_ip": client_host,
+                    "scope": block.scope,
+                    "retry_after": block.retry_after,
+                }
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=t("error.login_throttled", get_locale(request), seconds=block.retry_after),
+            headers={"Retry-After": str(block.retry_after)},
+        )
+
     user = authenticate_user(db, user_credentials.username, user_credentials.password)
     if user and settings.SSO_ENABLED and user.auth_provider != "local":
         raise HTTPException(
@@ -63,6 +105,7 @@ def login(
             detail="Connexion locale désactivée pour les comptes SSO",
         )
     if not user:
+        # La tentative reste comptée : c'est un échec.
         audit_logger.warning(
             "login_failed",
             extra={
@@ -78,33 +121,19 @@ def login(
             detail="Nom d'utilisateur ou mot de passe incorrect",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    login_failure_throttle.clear(account, client_host)
+
     # Créer une session pour l'utilisateur
     session_id = create_session(user.id, user.username, user.role)
     session_preview = shorten_token(session_id)
     request.state.session_id = session_id
     request.state.user = user
     
-    # Créer la réponse
-    resp = LoginResponse(
-        user=UserResponse.model_validate(user),
-        session_id=session_id
-    )
-    
-    # Ajouter l'ID de session aux headers pour que le middleware puisse créer le cookie
-    response.headers["session_id"] = session_id
-    
-    # Ajouter le cookie directement (en plus du middleware)
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite=SESSION_SAMESITE.lower(),
-        max_age=SESSION_EXPIRY_HOURS * 3600,
-        path="/",
-        domain=COOKIE_DOMAIN or None
-    )
+    # Créer la réponse : le jeton n'apparaît ni dans le corps ni dans un
+    # en-tête, seulement dans le cookie HttpOnly ci-dessous.
+    resp = LoginResponse(user=UserResponse.model_validate(user))
+    set_session_cookie(response, session_id)
 
     audit_logger.info(
         "login_success",
@@ -158,7 +187,7 @@ def sso_login(request: Request, response: Response):
         key="oidc_state",
         value=state,
         httponly=True,
-        secure=SECURE_COOKIES,
+        secure=settings.SECURE_COOKIES,
         samesite="lax",
         max_age=600,  # 10 minutes
         path="/",
@@ -311,16 +340,7 @@ def sso_callback(request: Request, db: Session = Depends(get_db)):
     response = RedirectResponse(url=redirect_to)
     # Supprime le cookie de state OIDC
     response.delete_cookie(key="oidc_state", path="/")
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        secure=SECURE_COOKIES,
-        samesite=SESSION_SAMESITE.lower(),
-        max_age=SESSION_EXPIRY_HOURS * 3600,
-        path="/",
-        domain=COOKIE_DOMAIN or None,
-    )
+    set_session_cookie(response, session_id)
     return response
 
 @router.post("/logout")
@@ -340,14 +360,7 @@ def logout(response: Response, request: Request):
     if session_id:
         delete_session(session_id)
 
-    response.delete_cookie(
-        key="session_id",
-        path="/",
-        domain=COOKIE_DOMAIN or None,
-        secure=SECURE_COOKIES,
-        httponly=True,
-        samesite=SESSION_SAMESITE.lower(),
-    )
+    clear_session_cookie(response)
 
     audit_logger.info(
         "logout",
@@ -842,7 +855,7 @@ from fastapi import UploadFile, File
 
 
 @router.post("/users/import", dependencies=[Depends(is_admin)], status_code=status.HTTP_200_OK)
-async def import_users_csv(
+def import_users_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -860,7 +873,7 @@ async def import_users_csv(
             detail="Le fichier doit être au format CSV (.csv)",
         )
 
-    content = await file.read()
+    content = file.file.read()
     try:
         text_content = content.decode("utf-8-sig")  # gère le BOM UTF-8
     except UnicodeDecodeError:

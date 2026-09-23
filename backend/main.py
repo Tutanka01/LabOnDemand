@@ -8,11 +8,8 @@ import logging
 import time
 import uuid
 import uvicorn
-from datetime import datetime
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from sqlalchemy import text
 
 from .config import settings
 from .logging_config import (
@@ -21,16 +18,17 @@ from .logging_config import (
     reset_request_id,
     shorten_token,
 )
-from .database import Base, engine, get_db, SessionLocal
-from .session import setup_session_handler
+from .database import ENGINE_OPTIONS, SessionLocal, pool_capacity, pool_shortfall
+from .session import setup_session_handler, validate_cookie_settings
+from .csrf import CSRFMiddleware, validate_cors_origins
 from .error_handlers import global_exception_handler
 from . import (
     models,
-)  # Importer les modèles pour enregistrer les tables avant create_all
+)  # Importer les modèles pour enregistrer les tables dans Base.metadata
 from .security import limiter
-from .migrations import run_migrations
+from .db_migrate import upgrade_schema
 from .seed import seed_admin, seed_templates, seed_runtime_configs
-from slowapi import _rate_limit_exceeded_handler
+from .rate_limit import rate_limit_exceeded_handler, validate_rate_limit_settings
 from slowapi.errors import RateLimitExceeded
 
 setup_logging()
@@ -70,9 +68,10 @@ app = FastAPI(
     debug=settings.DEBUG_MODE,
 )
 
-# Configuration du rate limiting
+# Configuration du rate limiting (429 traduit avec en-tête Retry-After)
+validate_rate_limit_settings()
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 
 @app.middleware("http")
@@ -154,7 +153,14 @@ async def log_requests(request: Request, call_next):
 # Ajouter le gestionnaire d'erreurs global
 app.add_exception_handler(Exception, global_exception_handler)
 
-# Configuration CORS
+# Protection CSRF : en-tête X-Requested-With obligatoire + Origin/Referer de
+# confiance sur toute requête mutante /api/ (voir backend/csrf.py).
+# Enregistrée AVANT CORS, donc exécutée APRÈS lui (Starlette empile en sens
+# inverse) : les refus 403 portent les en-têtes CORS des origines autorisées.
+app.add_middleware(CSRFMiddleware)
+
+# Configuration CORS (cookies autorisés : CORS_ORIGINS=* refuse le démarrage)
+validate_cors_origins(settings.CORS_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -163,29 +169,68 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configuration du middleware de session
+# Garde-fous des cookies de session : refuse de démarrer sur une configuration
+# dangereuse (ex. COOKIE_DOMAIN englobant le domaine des labs étudiants).
+validate_cookie_settings()
+
+# Nettoyage périodique des sessions expirées
 setup_session_handler(app)
 
-# Création des tables de base de données (nécessite l'import de models ci-dessus)
-Base.metadata.create_all(bind=engine)
+def run_seeds() -> None:
+    """Peuple les données par défaut (admin, templates, runtimes).
+
+    Non fatal : chaque seed est idempotent, s'exécute dans sa propre session
+    et un échec est journalisé en ERROR sans empêcher les suivants ni le
+    démarrage. Le schéma étant à jour, l'application reste cohérente ; refuser
+    de démarrer priverait les utilisateurs existants de service pour une
+    donnée par défaut, qui sera retentée au prochain démarrage.
+    """
+    for seed in (seed_admin, seed_templates, seed_runtime_configs):
+        with SessionLocal() as db:
+            try:
+                seed(db)
+            except Exception as exc:
+                db.rollback()
+                logger.exception(
+                    "seed_failed",
+                    extra={
+                        "extra_fields": {
+                            "action": "bootstrap",
+                            "seed": seed.__name__,
+                            "error": str(exc),
+                        }
+                    },
+                )
 
 
 @app.on_event("startup")
-async def bootstrap():
-    """Initialise la base de données, applique les migrations, peuple les données par défaut
-    et démarre la tâche de fond de nettoyage des labs expirés."""
+async def bootstrap() -> None:
+    """Met le schéma à jour (Alembic), peuple les données par défaut
+    et démarre la tâche de fond de nettoyage des labs expirés.
+
+    Un échec de migration est FATAL : l'exception interrompt le démarrage
+    (uvicorn s'arrête avec un code non nul) plutôt que de servir des requêtes
+    sur un schéma incomplet ou incertain.
+    """
     try:
-        with SessionLocal() as db:
-            Base.metadata.create_all(bind=engine)
-            run_migrations(db)
-            seed_admin(db)
-            seed_templates(db)
-            seed_runtime_configs(db)
+        # Synchrone et exécuté avant toute requête : bloquer la boucle est voulu.
+        upgrade_schema()
     except Exception as exc:
-        logger.exception(
-            "Bootstrap failed",
-            extra={"extra_fields": {"action": "bootstrap", "error": str(exc)}},
+        logger.critical(
+            "schema_upgrade_failed",
+            exc_info=True,
+            extra={
+                "extra_fields": {
+                    "action": "bootstrap",
+                    "error": str(exc),
+                    "hint": "Démarrage interrompu. Corrigez la base (voir "
+                    "documentation/database-migrations.md) puis relancez.",
+                }
+            },
         )
+        raise
+
+    run_seeds()
 
     # Démarrer la tâche de nettoyage des labs expirés en arrière-plan
     try:
@@ -250,99 +295,43 @@ async def get_status():
     }
 
 
+@app.on_event("startup")
+async def configure_threadpool() -> None:
+    """Dimensionne le pool de threads AnyIO (voir API_THREADPOOL_SIZE).
+
+    Avertit si le pool de connexions SQLAlchemy ne couvre pas deux connexions
+    par thread (session de requête + session de service) : en pic, les
+    requêtes attendraient DB_POOL_TIMEOUT puis échoueraient.
+    """
+    size = settings.configure_threadpool()
+    logger.info("threadpool_configured", extra={"extra_fields": {"size": size}})
+    missing = pool_shortfall(size, ENGINE_OPTIONS)
+    if missing:
+        logger.warning(
+            "db_pool_undersized",
+            extra={
+                "extra_fields": {
+                    "threads": size,
+                    "pool_capacity": pool_capacity(ENGINE_OPTIONS),
+                    "missing_connections": missing,
+                    "hint": "augmenter DB_MAX_OVERFLOW ou réduire API_THREADPOOL_SIZE",
+                }
+            },
+        )
+
+
 @app.get("/api/v1/health")
-async def health_check(db: Session = Depends(get_db)):
-    """Vérification de santé : DB, Redis et Kubernetes."""
-    result = {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "db": "ok",
-        "redis": "ok",
-        "k8s": "ok",
-    }
-    healthy = True
+async def health_check() -> dict:
+    """Vérification de santé : DB, Redis et Kubernetes.
 
-    # --- Base de données ---
-    try:
-        db.execute(text("SELECT 1"))
-    except Exception as e:
-        result["db"] = f"error: {e}"
-        healthy = False
+    Sondes en parallèle hors de la boucle, avec un délai court
+    (HEALTH_CHECK_TIMEOUT_SECONDS) ; toujours 200, status "healthy" ou
+    "degraded" (voir backend/health.py).
+    """
+    from .health import run_health_checks
 
-    # --- Redis ---
-    try:
-        from .session_store import session_store
+    return await run_health_checks()
 
-        session_store._r.ping()
-    except Exception as e:
-        result["redis"] = f"error: {e}"
-        healthy = False
-
-    # --- Kubernetes ---
-    try:
-        from kubernetes import client as k8s_client
-
-        k8s_client.CoreV1Api().list_namespace(limit=1)
-    except Exception as e:
-        result["k8s"] = f"error: {e}"
-        healthy = False
-
-    result["status"] = "healthy" if healthy else "degraded"
-    return result
-
-
-# ============= ENDPOINT DE DIAGNOSTIC =============
-
-if settings.DEBUG_MODE:
-
-    @app.post("/api/v1/diagnostic/test-auth")
-    async def test_auth(request: Request, db: Session = Depends(get_db)):
-        """
-        Endpoint de diagnostic pour tester l'authentification.
-        Disponible uniquement en mode DEBUG.
-        """
-        try:
-            body = await request.json()
-            username = body.get("username")
-            password = body.get("password")
-
-            if not username or not password:
-                return {
-                    "success": False,
-                    "message": "Le nom d'utilisateur et le mot de passe sont requis",
-                    "details": None,
-                }
-
-            from .security import authenticate_user
-
-            user = authenticate_user(db, username, password)
-
-            if user:
-                return {
-                    "success": True,
-                    "message": "Authentification réussie",
-                    "details": {
-                        "user_id": user.id,
-                        "username": user.username,
-                        "email": user.email,
-                        "role": user.role.value,
-                        "is_active": user.is_active,
-                    },
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": "Échec de l'authentification",
-                    "details": None,
-                }
-        except Exception as e:
-            import traceback
-
-            return {
-                "success": False,
-                "message": f"Erreur lors de l'authentification: {str(e)}",
-                "details": traceback.format_exc(),
-            }
 
 # ============= POINT D'ENTRÉE =============
 

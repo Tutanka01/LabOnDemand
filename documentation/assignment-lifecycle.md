@@ -288,4 +288,4 @@ via le champ `grade` de la soumission (pré-rempli avec la suggestion, modifiabl
 - Le `deploy-all` (rapport `BulkSpawnReport`) ignore les étudiants ayant déjà un lab pour ce devoir (`spawn_status = "skipped"`).
 - Les `GradingRun` sont archivés en base, ce qui permet d'observer l'évolution de la correction si l'étudiant rerend.
 - En MVP-2 le verdict est récupéré en **lisant les logs du Job** (modèle *pull*). Les champs `result_token_hash` + `token_used_at` sur `GradingRun` sont **réservés à un futur mode push** (callback HTTP token à usage unique) et ne sont pas utilisés aujourd'hui. Voir [`grader-pod.md`](grader-pod.md).
-- Un run resté bloqué (`queued`/`running`) au-delà de `GRADING_RUN_STUCK_MINUTES` est réconcilié en `error` par la tâche de nettoyage (`backend/tasks/cleanup.py`).
+- Un run resté bloqué est réconcilié en `error` par la tâche de nettoyage (`backend/tasks/cleanup.py`) : `running` au-delà de `GRADING_RUN_STUCK_MINUTES` (depuis son démarrage), `queued` au-delà de `GRADING_RUN_QUEUED_STUCK_MINUTES` (depuis sa création).

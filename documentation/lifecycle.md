@@ -57,8 +57,28 @@ La tâche est lancée automatiquement au démarrage de l'API par `main.bootstrap
 asyncio.create_task(run_cleanup_loop())
 ```
 
-Elle tourne dans une boucle asyncio infinie, sans dépendance externe (pas
-d'APScheduler, pas de CronJob K8s).
+Elle tourne dans une boucle asyncio infinie, sans ordonnanceur externe (pas
+d'APScheduler, pas de CronJob K8s). Chaque cycle s'exécute dans un thread
+(`asyncio.to_thread`) : ses accès DB et Kubernetes, synchrones, ne bloquent pas
+la boucle de l'API.
+
+### Un seul processus exécute le nettoyage (verrou Redis)
+
+Avec plusieurs workers uvicorn ou réplicas de l'API, chaque processus lance sa
+boucle, mais un seul — le **leader** — exécute les cycles. Il détient le verrou
+Redis `labondemand:lock:cleanup` (`backend/redis_lock.py` : `SET NX PX` avec un
+jeton unique, libération/prolongation par scripts Lua compare-and-delete) :
+
+- à chaque itération, le leader prolonge son verrou ; les autres tentent de le
+  prendre et sautent l'itération s'il est déjà détenu ;
+- pendant un cycle, le verrou est prolongé tous les tiers de TTL (un cycle long
+  ne le perd pas) ;
+- TTL : `CLEANUP_LOCK_TTL_SECONDS`, par défaut `2 × CLEANUP_INTERVAL_MINUTES`
+  (minimum 120 s). Il doit dépasser une itération complète (intervalle + cycle) ;
+- à l'arrêt propre, le verrou est relâché (un autre processus reprend à sa
+  prochaine itération) ; si le leader meurt, le verrou expire après son TTL ;
+- Redis injoignable → l'itération est sautée avec l'avertissement
+  `cleanup_skipped_redis_unavailable`.
 
 ### Fréquence
 

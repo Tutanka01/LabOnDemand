@@ -5,7 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: labondemand-api
     ports:
-      - "${API_PORT:-8000}:8000"
+      # Boucle locale par défaut : le trafic normal passe par nginx (frontend).
+      # API_BIND_ADDRESS=0.0.0.0 pour exposer l'API directement (déconseillé).
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - ./backend:/app/backend
       - ./.env:/app/.env  # Monter le fichier .env comme un volume pour qu'il soit accessible
@@ -20,6 +22,13 @@ services:
       # Construit depuis REDIS_PASSWORD : évite toute REDIS_URL obsolète (sans mot de passe) dans .env
       - REDIS_URL=redis://:${REDIS_PASSWORD:-change-me}@redis:6379/0
       - SECURE_COOKIES=${SECURE_COOKIES:-False}
+      # IP cliente réelle (limitation de débit, journaux) : uvicorn ne lit
+      # X-Forwarded-For que sur les connexions venant de ces adresses, par
+      # défaut l'IP fixe de nginx. Ajouter un éventuel répartiteur amont
+      # (liste séparée par des virgules) ; jamais « * » (en-tête falsifiable).
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-${FRONTEND_IPV4_ADDRESS:-172.28.100.10}}
+    networks:
+      - labondemand
     restart: unless-stopped
     # Si vous souhaitez que l'API démarre uniquement après un autre service 
     # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
@@ -28,7 +37,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend"]
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--reload", "--reload-dir", "backend"]
 
   frontend:
     build:
@@ -39,6 +48,11 @@ services:
       - "${FRONTEND_PORT:-80}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      labondemand:
+        # IP fixe : seule source dont l'API accepte X-Forwarded-For
+        # (FORWARDED_ALLOW_IPS du service api).
+        ipv4_address: ${FRONTEND_IPV4_ADDRESS:-172.28.100.10}
     restart: unless-stopped
     depends_on:
       api:
@@ -55,9 +69,14 @@ services:
       - MYSQL_PASSWORD=${DB_PASSWORD:-labondemand}
       - MYSQL_DATABASE=${DB_NAME:-labondemand}
     ports:
-      - "${DB_PORT:-3306}:3306"
+      # Boucle locale par défaut : l'API joint MariaDB par le réseau Compose.
+      # Un port publié contourne le pare-feu de l'hôte (ufw, firewalld) ;
+      # DB_BIND_ADDRESS=0.0.0.0 pour l'exposer au réseau (déconseillé).
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${DB_PORT:-3306}:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
+    networks:
+      - labondemand
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
@@ -72,6 +91,8 @@ services:
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-change-me}
     command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
+    networks:
+      - labondemand
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD:-change-me}\" ping | grep PONG"]
@@ -82,3 +103,16 @@ services:
 
 volumes:
   mariadb_data:
+
+networks:
+  # Sous-réseau fixe pour que l'IP de nginx soit connue de l'API.
+  # En cas de chevauchement avec un réseau existant (« Pool overlaps »),
+  # changer LOD_NETWORK_SUBNET, LOD_NETWORK_IP_RANGE et FRONTEND_IPV4_ADDRESS.
+  labondemand:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${LOD_NETWORK_SUBNET:-172.28.100.0/24}
+          # Adresses dynamiques (api, db, redis) : plage distincte de l'IP
+          # fixe de nginx, pour éviter toute collision au démarrage.
+          ip_range: ${LOD_NETWORK_IP_RANGE:-172.28.100.128/25}

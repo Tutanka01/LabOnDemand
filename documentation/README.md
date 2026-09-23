@@ -59,6 +59,7 @@ les guides spécialisés selon votre profil.
 | [`platform-setup.md`](platform-setup.md) | k3s, ingress-nginx, MetalLB, DNS, TLS |
 | [`ingress-labs.md`](ingress-labs.md) | Accès aux labs en ports 80/443 via Traefik (sans MetalLB/ServiceLB), DNS sslip.io, dépannage |
 | [`development-setup.md`](development-setup.md) | Variables d'environnement, exécution locale, migrations, logs |
+| [`database-migrations.md`](database-migrations.md) | Schéma versionné (Alembic) : créer une révision, mise à niveau d'une installation existante, sauvegarde, retour arrière |
 | [`troubleshooting.md`](troubleshooting.md) | Problèmes courants et solutions |
 
 ### Architecture & fonctionnement

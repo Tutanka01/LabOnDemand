@@ -1,4 +1,5 @@
 """Endpoints templates et resource-presets."""
+import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,10 +12,11 @@ from ..templates import get_deployment_templates, get_resource_presets_for_role
 from .. import schemas
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
+logger = logging.getLogger("labondemand.k8s")
 
 
 @router.get("/templates")
-async def get_deployment_templates_endpoint(
+def get_deployment_templates_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -22,7 +24,16 @@ async def get_deployment_templates_endpoint(
     try:
         templates = db.query(Template).filter(Template.active == True).all()
         runtime_configs = db.query(RuntimeConfig).filter(RuntimeConfig.active == True).all()
-    except Exception:
+    except Exception as exc:
+        logger.exception(
+            "templates_query_failed",
+            extra={
+                "extra_fields": {
+                    "user_id": getattr(current_user, "id", None),
+                    "error": str(exc),
+                }
+            },
+        )
         templates = []
         runtime_configs = []
 
@@ -75,7 +86,7 @@ async def get_deployment_templates_endpoint(
 
 
 @router.post("/templates", response_model=schemas.TemplateResponse)
-async def create_template(
+def create_template(
     payload: schemas.TemplateCreate,
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
@@ -103,7 +114,7 @@ async def create_template(
 
 
 @router.get("/templates/all", response_model=List[schemas.TemplateResponse])
-async def list_all_templates(
+def list_all_templates(
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
     db: Session = Depends(get_db)
@@ -114,7 +125,7 @@ async def list_all_templates(
 
 
 @router.put("/templates/{template_id}", response_model=schemas.TemplateResponse)
-async def update_template(
+def update_template(
     template_id: int,
     payload: schemas.TemplateUpdate,
     current_user: User = Depends(get_current_user),
@@ -135,7 +146,7 @@ async def update_template(
 
 
 @router.delete("/templates/{template_id}")
-async def delete_template(
+def delete_template(
     template_id: int,
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
@@ -150,7 +161,7 @@ async def delete_template(
 
 
 @router.get("/resource-presets")
-async def get_resource_presets(current_user: User = Depends(get_current_user)):
+def get_resource_presets(current_user: User = Depends(get_current_user)):
     """Récupérer les presets de ressources selon le rôle."""
     return get_resource_presets_for_role(current_user.role)
 

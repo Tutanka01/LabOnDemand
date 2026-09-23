@@ -11,6 +11,15 @@ Grace period avant suppression définitive :
 
 La tâche tourne toutes les CLEANUP_INTERVAL_MINUTES minutes (défaut : 60).
 
+Exécution :
+  - chaque cycle tourne dans un thread (``asyncio.to_thread``) : les accès DB et
+    Kubernetes sont synchrones et ne doivent pas bloquer la boucle de l'API ;
+  - un seul processus (worker/réplica) exécute les cycles : il détient un verrou
+    Redis de leader (``backend.redis_lock``), prolongé à chaque itération et
+    pendant le cycle. Les autres processus sautent leur itération ; si le leader
+    disparaît, le verrou expire (CLEANUP_LOCK_TTL_SECONDS) et un autre le reprend.
+    Redis injoignable → l'itération est sautée avec un avertissement.
+
 Atomicité :
   - La création de l'enregistrement DB suit la création K8s dans deployment_service.
     Si la DB est indisponible à ce moment, _track_deployment_in_db() attrape l'erreur
@@ -24,6 +33,12 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+
+import redis
+
+from ..config import settings
+from ..redis_lock import RedisLock
 
 logger = logging.getLogger("labondemand.cleanup")
 
@@ -34,8 +49,13 @@ LAB_GRACE_PERIOD_DAYS = int(
     os.getenv("LAB_GRACE_PERIOD_DAYS", "3")
 )  # délai avant suppression après pause
 CLEANUP_INTERVAL_MINUTES = int(os.getenv("CLEANUP_INTERVAL_MINUTES", "60"))
-# Délai au-delà duquel un Grading Run encore queued/running est considéré bloqué.
+# Délai (depuis son démarrage) au-delà duquel un Grading Run encore running est
+# considéré bloqué (Job disparu, watcher mort avec l'API).
 GRADING_RUN_STUCK_MINUTES = int(os.getenv("GRADING_RUN_STUCK_MINUTES", "15"))
+# Délai (depuis sa création) au-delà duquel un Grading Run encore queued est
+# considéré perdu. Plus long : un lancement sur toute la classe met les runs en
+# file (BULK_GRADING_CONCURRENCY) et les derniers attendent leur tour.
+GRADING_RUN_QUEUED_STUCK_MINUTES = int(os.getenv("GRADING_RUN_QUEUED_STUCK_MINUTES", "120"))
 
 _ROLE_TTL_DAYS = {
     "student": LAB_TTL_STUDENT_DAYS,
@@ -57,8 +77,72 @@ def compute_expires_at(role: str) -> datetime | None:
     return datetime.now(timezone.utc) + timedelta(days=ttl)
 
 
-async def _run_cleanup_cycle() -> None:
-    """Exécute un cycle de nettoyage complet."""
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def reconcile_stuck_grading_runs(db, now: datetime) -> list[int]:
+    """Clôt en error les Grading Runs bloqués ; retourne leurs identifiants.
+
+    - ``running`` depuis plus de GRADING_RUN_STUCK_MINUTES (depuis started_at) ;
+    - ``queued`` depuis plus de GRADING_RUN_QUEUED_STUCK_MINUTES (depuis
+      created_at) : la tâche de fond a été perdue (redémarrage de l'API).
+
+    Chaque run est clos par un UPDATE conditionnel sur le statut lu : un run
+    réclamé entre-temps par son watcher (queued → running) n'est pas écrasé.
+    Le Job grader éventuel est supprimé (filet en plus du TTL K8s).
+    """
+    from ..models import GradingRun
+    from .. import grader_service
+
+    limits = {
+        "running": now - timedelta(minutes=GRADING_RUN_STUCK_MINUTES),
+        "queued": now - timedelta(minutes=GRADING_RUN_QUEUED_STUCK_MINUTES),
+    }
+    candidates = (
+        db.query(GradingRun.id, GradingRun.status, GradingRun.started_at, GradingRun.created_at)
+        .filter(GradingRun.status.in_(list(limits)))
+        .all()
+    )
+    reconciled: list[int] = []
+    for run_id, status, started_at, created_at in candidates:
+        reference = _as_utc(started_at if status == "running" else created_at) or _as_utc(created_at)
+        if reference is None or reference > limits[status]:
+            continue
+        updated = (
+            db.query(GradingRun)
+            .filter(GradingRun.id == run_id, GradingRun.status == status)
+            .update(
+                {
+                    "status": "error",
+                    "error": "Run interrompu (réconciliation automatique)",
+                    "finished_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        if not updated:
+            continue
+        reconciled.append(run_id)
+        logger.info(
+            "grading_run_reconciled_stuck",
+            extra={"extra_fields": {"run_id": run_id, "previous_status": status}},
+        )
+        try:
+            grader_service._delete_job(grader_service.job_name_for_run(run_id))
+        except Exception as exc:
+            logger.warning(
+                "grading_job_cleanup_failed",
+                extra={"extra_fields": {"run_id": run_id, "error": str(exc)}},
+            )
+    return reconciled
+
+
+def _run_cleanup_cycle() -> None:
+    """Exécute un cycle de nettoyage complet (synchrone : appelé dans un thread)."""
     from ..database import SessionLocal
     from ..models import Deployment, User
     from ..deployment_service import deployment_service
@@ -80,7 +164,7 @@ async def _run_cleanup_cycle() -> None:
             try:
                 user = db.query(User).filter(User.id == dep.user_id).first()
                 if user:
-                    await deployment_service.pause_application(
+                    deployment_service.pause_application(
                         dep.namespace, dep.name, user
                     )
                 dep.status = "paused"
@@ -157,37 +241,9 @@ async def _run_cleanup_cycle() -> None:
                 )
 
         # ── 1c. Réconciliation des Grading Runs bloqués ─────────────────────
-        #    Un run resté en queued/running au-delà d'un délai max (le Job a pu
-        #    disparaître, le watcher a pu mourir avec l'API) est marqué en error,
-        #    et son Job grader éventuel est supprimé (filet en plus du TTL K8s).
+        #    Voir reconcile_stuck_grading_runs (délais distincts queued/running).
         try:
-            from ..models import GradingRun
-            from .. import grader_service
-
-            stuck_limit = now - timedelta(minutes=GRADING_RUN_STUCK_MINUTES)
-            stuck_runs = (
-                db.query(GradingRun)
-                .filter(GradingRun.status.in_(["queued", "running"]))
-                .all()
-            )
-            for run in stuck_runs:
-                started = run.started_at or run.created_at
-                if started is not None and started.tzinfo is None:
-                    started = started.replace(tzinfo=timezone.utc)
-                if started is None or started > stuck_limit:
-                    continue
-                run.status = "error"
-                run.error = "Run interrompu (réconciliation automatique)"
-                run.finished_at = now
-                db.commit()
-                logger.info(
-                    "grading_run_reconciled_stuck",
-                    extra={"extra_fields": {"run_id": run.id}},
-                )
-                try:
-                    grader_service._delete_job(grader_service.job_name_for_run(run.id))
-                except Exception:
-                    pass
+            reconcile_stuck_grading_runs(db, now)
         except Exception as exc:
             db.rollback()
             logger.warning(
@@ -357,18 +413,141 @@ async def _run_cleanup_cycle() -> None:
         db.close()
 
 
-async def run_cleanup_loop() -> None:
-    """Boucle infinie : attend l'intervalle configuré entre chaque cycle."""
+# ── Boucle de fond et élection du leader ──────────────────────────────────────
+
+CLEANUP_LOCK_KEY = "labondemand:lock:cleanup"
+# Délais du client Redis dédié au verrou (un Redis figé ne bloque pas un thread).
+_REDIS_TIMEOUT_SECONDS = 5
+
+# Références fortes vers la boucle en cours : bootstrap() la crée sans garder
+# de référence, or la boucle asyncio ne tient que des références faibles.
+_loop_tasks: "set[asyncio.Task[Any]]" = set()
+
+
+def _lock_ttl_seconds(interval_seconds: int) -> float:
+    """TTL du verrou : doit dépasser une itération (intervalle + cycle)."""
+    configured = settings.CLEANUP_LOCK_TTL_SECONDS
+    if configured > 0:
+        return float(configured)
+    return max(120.0, 2.0 * interval_seconds)
+
+
+def _make_redis_client() -> redis.Redis:
+    return redis.from_url(
+        settings.REDIS_URL,
+        socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
+        socket_timeout=_REDIS_TIMEOUT_SECONDS,
+    )
+
+
+async def _hold_leadership(lock: RedisLock) -> bool:
+    """Prolonge le verrou s'il est détenu, sinon tente de le prendre.
+
+    Retourne True si ce processus est leader pour l'itération courante.
+    """
+    try:
+        if lock.owned and await asyncio.to_thread(lock.extend):
+            return True
+        return await asyncio.to_thread(lock.acquire)
+    except redis.RedisError as exc:
+        logger.warning(
+            "cleanup_skipped_redis_unavailable",
+            extra={"extra_fields": {"error": str(exc)}},
+        )
+        return False
+
+
+async def _run_cycle_with_heartbeat(lock: RedisLock) -> None:
+    """Exécute un cycle dans un thread en prolongeant le verrou tant qu'il tourne."""
+    cycle = asyncio.ensure_future(asyncio.to_thread(_run_cleanup_cycle))
+    period = lock.ttl_seconds / 3
+    lost = False
+    try:
+        while True:
+            done, _ = await asyncio.wait({cycle}, timeout=period)
+            if done:
+                cycle.result()  # propage une éventuelle exception du cycle
+                return
+            if lost:
+                continue
+            try:
+                still_owned = await asyncio.to_thread(lock.extend)
+            except redis.RedisError as exc:
+                logger.warning(
+                    "cleanup_lock_extend_failed",
+                    extra={"extra_fields": {"error": str(exc)}},
+                )
+                continue
+            if not still_owned:
+                # Impossible d'interrompre le thread : le cycle se termine,
+                # mais un autre processus a pu prendre la main.
+                lost = True
+                logger.warning(
+                    "cleanup_lock_lost",
+                    extra={"extra_fields": {"key": lock.key}},
+                )
+    except asyncio.CancelledError:
+        if not cycle.done():
+            # Le thread continue jusqu'à la fin du cycle : on ne relâche pas le
+            # verrou (il expirera seul) pour éviter un cycle concurrent ailleurs.
+            lock.abandon()
+            logger.warning(
+                "cleanup_cancelled_during_cycle",
+                extra={"extra_fields": {"key": lock.key}},
+            )
+        raise
+
+
+async def _cleanup_iteration(lock: RedisLock) -> bool:
+    """Une itération : leadership puis cycle. Retourne True si un cycle a tourné."""
+    if not await _hold_leadership(lock):
+        return False
+    await _run_cycle_with_heartbeat(lock)
+    return True
+
+
+async def _release_quietly(lock: RedisLock) -> None:
+    if not lock.owned:
+        return
+    try:
+        await asyncio.to_thread(lock.release)
+    except redis.RedisError as exc:
+        logger.warning(
+            "cleanup_lock_release_failed",
+            extra={"extra_fields": {"error": str(exc)}},
+        )
+
+
+async def run_cleanup_loop(lock: Optional[RedisLock] = None) -> None:
+    """Boucle infinie : attend l'intervalle configuré entre chaque itération."""
     interval_seconds = CLEANUP_INTERVAL_MINUTES * 60
+    task = asyncio.current_task()
+    if task is not None:
+        _loop_tasks.add(task)
+    if lock is None:
+        lock = RedisLock(
+            _make_redis_client(), CLEANUP_LOCK_KEY, _lock_ttl_seconds(interval_seconds)
+        )
     logger.info(
         "cleanup_task_started",
-        extra={"extra_fields": {"interval_minutes": CLEANUP_INTERVAL_MINUTES}},
+        extra={
+            "extra_fields": {
+                "interval_minutes": CLEANUP_INTERVAL_MINUTES,
+                "lock_ttl_seconds": lock.ttl_seconds,
+            }
+        },
     )
-    while True:
-        try:
-            await _run_cleanup_cycle()
-        except Exception as exc:
-            logger.exception(
-                "cleanup_cycle_error", extra={"extra_fields": {"error": str(exc)}}
-            )
-        await asyncio.sleep(interval_seconds)
+    try:
+        while True:
+            try:
+                await _cleanup_iteration(lock)
+            except Exception as exc:
+                logger.exception(
+                    "cleanup_cycle_error", extra={"extra_fields": {"error": str(exc)}}
+                )
+            await asyncio.sleep(interval_seconds)
+    finally:
+        if task is not None:
+            _loop_tasks.discard(task)
+        # Arrêt propre : rend la main tout de suite à un autre processus.
+        await _release_quietly(lock)
