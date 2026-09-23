@@ -28,7 +28,7 @@ from . import (
     models,
 )  # Importer les modèles pour enregistrer les tables avant create_all
 from .security import limiter
-from .migrations import run_migrations
+from .migrations import apply_legacy_migrations
 from .seed import seed_admin, seed_templates, seed_runtime_configs
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -175,9 +175,9 @@ async def bootstrap():
     """Initialise la base de données, applique les migrations, peuple les données par défaut
     et démarre la tâche de fond de nettoyage des labs expirés."""
     try:
+        with engine.connect() as connection:
+            apply_legacy_migrations(connection)
         with SessionLocal() as db:
-            Base.metadata.create_all(bind=engine)
-            run_migrations(db)
             seed_admin(db)
             seed_templates(db)
             seed_runtime_configs(db)

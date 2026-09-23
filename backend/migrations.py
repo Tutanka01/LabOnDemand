@@ -1,18 +1,58 @@
 """
-Migrations SQL souples pour LabOnDemand.
-Chaque migration est idempotente (ALTER/CREATE IF NOT EXISTS) et exécutée avec
-rollback propre en cas d'échec.
+Mise à niveau des bases « legacy » de LabOnDemand (antérieures à Alembic).
+
+Avant Alembic, le schéma était créé par ``Base.metadata.create_all`` puis complété
+à chaque démarrage par une liste de requêtes ALTER dont toutes les erreurs étaient
+ignorées. Ce module amène une telle base à l'état exact des modèles actuels :
+
+  1. ``create_all`` : crée uniquement les tables manquantes (jamais d'ALTER) ;
+  2. ``LEGACY_MIGRATIONS`` : ajoute les colonnes apparues après la création des
+     tables sur les anciennes installations ;
+  3. index de ``users.external_id`` : converge vers l'index unique du modèle.
+
+Seules les erreurs « objet déjà présent / déjà absent » sont ignorées : toute autre
+erreur (verrou, doublons bloquant un index UNIQUE, faute de frappe…) est propagée.
+
+Ne plus ajouter d'entrée ici : toute évolution du schéma passe par une révision
+Alembic (voir documentation/database-migrations.md).
 """
 
 import logging
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+import re
+
+from sqlalchemy import inspect, text
+from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
+
+from .database import Base
+from . import models  # noqa: F401  (enregistre les tables dans Base.metadata)
 
 logger = logging.getLogger("labondemand.migrations")
 
-# Liste ordonnée de migrations. Chaque entrée est un tuple (nom, requête SQL).
-# Les ALTER TABLE échouent silencieusement si la colonne existe déjà (MySQL/MariaDB).
-MIGRATIONS: list[tuple[str, str]] = [
+_MYSQL_DIALECTS = frozenset({"mysql", "mariadb"})
+
+# Codes MariaDB/MySQL signifiant « déjà appliqué » : seuls ceux-ci sont ignorés.
+_MYSQL_ALREADY_APPLIED_CODES = frozenset(
+    {
+        1050,  # ER_TABLE_EXISTS_ERROR : table déjà existante
+        1060,  # ER_DUP_FIELDNAME : colonne déjà existante
+        1061,  # ER_DUP_KEYNAME : index déjà existant
+        1091,  # ER_CANT_DROP_FIELD_OR_KEY : colonne/index déjà supprimé
+    }
+)
+
+# Équivalents SQLite (pas de code d'erreur : on filtre sur le message exact).
+_SQLITE_ALREADY_APPLIED_PATTERNS = (
+    re.compile(r"^duplicate column name: "),
+    re.compile(r"^(table|index) \S+ already exists$"),
+    re.compile(r"^no such index: "),
+)
+
+# Colonnes ajoutées aux modèles après la création des tables. Sur une base
+# récente, create_all les a déjà créées : l'ALTER échoue en « colonne déjà
+# existante », ce qui est attendu. Types et défauts identiques aux ALTER
+# historiquement exécutés en production (ne pas les modifier).
+LEGACY_MIGRATIONS: list[tuple[str, str]] = [
     (
         "add_templates_tags",
         "ALTER TABLE templates ADD COLUMN tags VARCHAR(255) NULL",
@@ -26,24 +66,6 @@ MIGRATIONS: list[tuple[str, str]] = [
         "ALTER TABLE users ADD COLUMN external_id VARCHAR(255) NULL",
     ),
     (
-        "create_runtime_configs",
-        "CREATE TABLE IF NOT EXISTS runtime_configs ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "key VARCHAR(50) UNIQUE NOT NULL,"
-        "default_image VARCHAR(200),"
-        "target_port INTEGER,"
-        "default_service_type VARCHAR(30) NOT NULL DEFAULT 'NodePort',"
-        "allowed_for_students BOOLEAN DEFAULT TRUE,"
-        "min_cpu_request VARCHAR(20),"
-        "min_memory_request VARCHAR(20),"
-        "min_cpu_limit VARCHAR(20),"
-        "min_memory_limit VARCHAR(20),"
-        "active BOOLEAN DEFAULT TRUE,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "updated_at DATETIME NULL"
-        ")",
-    ),
-    (
         "add_runtime_configs_allowed_for_students",
         "ALTER TABLE runtime_configs ADD COLUMN allowed_for_students BOOLEAN DEFAULT TRUE",
     ),
@@ -51,218 +73,142 @@ MIGRATIONS: list[tuple[str, str]] = [
         "add_users_role_override",
         "ALTER TABLE users ADD COLUMN role_override BOOLEAN NOT NULL DEFAULT FALSE",
     ),
-    # IMP-1 — table de suivi des déploiements
-    (
-        "create_deployments",
-        "CREATE TABLE IF NOT EXISTS deployments ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "user_id INTEGER NOT NULL,"
-        "name VARCHAR(100) NOT NULL,"
-        "deployment_type VARCHAR(50) NOT NULL DEFAULT 'custom',"
-        "namespace VARCHAR(100) NOT NULL,"
-        "stack_name VARCHAR(100) NULL,"
-        "status VARCHAR(30) NOT NULL DEFAULT 'active',"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "deleted_at DATETIME NULL,"
-        "last_seen_at DATETIME NULL,"
-        "expires_at DATETIME NULL,"
-        "cpu_requested VARCHAR(20) NULL,"
-        "mem_requested VARCHAR(20) NULL,"
-        "INDEX idx_dep_user (user_id),"
-        "INDEX idx_dep_status (status),"
-        "INDEX idx_dep_expires (expires_at),"
-        "CONSTRAINT fk_dep_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
-        ")",
-    ),
-    # Contrainte UNIQUE sur external_id pour empêcher les doublons SSO
-    # (idempotente : MySQL ignore silencieusement si la contrainte existe déjà)
-    (
-        "add_users_external_id_unique",
-        "ALTER TABLE users ADD UNIQUE INDEX idx_users_external_id_unique (external_id)",
-    ),
-    # Classroom system (P0)
-    (
-        "create_classrooms",
-        "CREATE TABLE IF NOT EXISTS classrooms ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "name VARCHAR(100) NOT NULL,"
-        "description VARCHAR(500) NULL,"
-        "owner_id INTEGER NOT NULL,"
-        "archived BOOLEAN NOT NULL DEFAULT FALSE,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "updated_at DATETIME NULL,"
-        "INDEX idx_cl_owner (owner_id),"
-        "INDEX idx_cl_archived (archived),"
-        "INDEX idx_cl_name (name),"
-        "CONSTRAINT fk_cl_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE"
-        ")",
-    ),
-    (
-        "create_enrollments",
-        "CREATE TABLE IF NOT EXISTS enrollments ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "classroom_id INTEGER NOT NULL,"
-        "user_id INTEGER NOT NULL,"
-        "enrolled_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "removed_at DATETIME NULL,"
-        "INDEX idx_enr_classroom (classroom_id),"
-        "INDEX idx_enr_user (user_id),"
-        "UNIQUE KEY uq_enrollment_classroom_user (classroom_id, user_id),"
-        "CONSTRAINT fk_enr_classroom FOREIGN KEY (classroom_id) REFERENCES classrooms(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_enr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
-        ")",
-    ),
-    (
-        "create_assignments",
-        "CREATE TABLE IF NOT EXISTS assignments ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "classroom_id INTEGER NOT NULL,"
-        "title VARCHAR(200) NOT NULL,"
-        "instructions TEXT NULL,"
-        "template_key VARCHAR(50) NULL,"
-        "cpu_preset VARCHAR(20) NULL,"
-        "ram_preset VARCHAR(20) NULL,"
-        "due_at DATETIME NULL,"
-        "status VARCHAR(20) NOT NULL DEFAULT 'active',"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "updated_at DATETIME NULL,"
-        "INDEX idx_asgn_classroom (classroom_id),"
-        "CONSTRAINT fk_asgn_classroom FOREIGN KEY (classroom_id) REFERENCES classrooms(id) ON DELETE CASCADE"
-        ")",
-    ),
-    (
-        "create_assignment_deployments",
-        "CREATE TABLE IF NOT EXISTS assignment_deployments ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "assignment_id INTEGER NOT NULL,"
-        "user_id INTEGER NOT NULL,"
-        "deployment_id INTEGER NULL,"
-        "spawn_status VARCHAR(20) NOT NULL,"
-        "spawn_error VARCHAR(500) NULL,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "INDEX idx_ad_assignment (assignment_id),"
-        "INDEX idx_ad_user (user_id),"
-        "INDEX idx_ad_deployment (deployment_id),"
-        "CONSTRAINT fk_ad_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_ad_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_ad_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
-        ")",
-    ),
-    # IMP-3 — dérogations de quota par utilisateur
-    (
-        "create_user_quota_overrides",
-        "CREATE TABLE IF NOT EXISTS user_quota_overrides ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "user_id INTEGER NOT NULL UNIQUE,"
-        "max_apps INTEGER NULL,"
-        "max_cpu_m INTEGER NULL,"
-        "max_mem_mi INTEGER NULL,"
-        "max_storage_gi INTEGER NULL,"
-        "expires_at DATETIME NULL,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "updated_at DATETIME NULL,"
-        "created_by INTEGER NULL,"
-        "INDEX idx_qo_user (user_id),"
-        "CONSTRAINT fk_qo_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
-        ")",
-    ),
     # MVP devoirs — énoncé "livrables attendus" sur les devoirs
     (
         "add_assignments_deliverables",
         "ALTER TABLE assignments ADD COLUMN deliverables TEXT NULL",
-    ),
-    # MVP devoirs — table des soumissions étudiantes
-    (
-        "create_assignment_submissions",
-        "CREATE TABLE IF NOT EXISTS assignment_submissions ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "assignment_id INTEGER NOT NULL,"
-        "user_id INTEGER NOT NULL,"
-        "attempt_no INTEGER NOT NULL DEFAULT 1,"
-        "status VARCHAR(20) NOT NULL DEFAULT 'submitted',"
-        "text TEXT NULL,"
-        "links TEXT NULL,"
-        "deployment_id INTEGER NULL,"
-        "lab_snapshot TEXT NULL,"
-        "submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "is_late BOOLEAN NOT NULL DEFAULT FALSE,"
-        "due_at_snapshot DATETIME NULL,"
-        "grade VARCHAR(20) NULL,"
-        "feedback TEXT NULL,"
-        "graded_by INTEGER NULL,"
-        "graded_at DATETIME NULL,"
-        "updated_at DATETIME NULL,"
-        "CONSTRAINT uq_submission_assignment_user UNIQUE (assignment_id, user_id),"
-        "INDEX idx_sub_assignment (assignment_id),"
-        "INDEX idx_sub_user (user_id),"
-        "INDEX idx_sub_deployment (deployment_id),"
-        "CONSTRAINT fk_sub_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_sub_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_sub_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
-        ")",
     ),
     # MVP-2 — grading_mode sur les devoirs (none|self_check|graded)
     (
         "add_assignments_grading_mode",
         "ALTER TABLE assignments ADD COLUMN grading_mode VARCHAR(20) NOT NULL DEFAULT 'none'",
     ),
-    # MVP-2 — batterie de tests (probes) d'un devoir
-    (
-        "create_grading_specs",
-        "CREATE TABLE IF NOT EXISTS grading_specs ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "assignment_id INTEGER NOT NULL UNIQUE,"
-        "grader_image VARCHAR(300) NULL,"
-        "timeout_seconds INTEGER NOT NULL DEFAULT 120,"
-        "checks TEXT NULL,"
-        "custom_script TEXT NULL,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "updated_at DATETIME NULL,"
-        "INDEX idx_gs_assignment (assignment_id),"
-        "CONSTRAINT fk_gs_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE"
-        ")",
-    ),
-    # MVP-2 — exécutions du Grader Pod
-    (
-        "create_grading_runs",
-        "CREATE TABLE IF NOT EXISTS grading_runs ("
-        "id INTEGER PRIMARY KEY AUTO_INCREMENT,"
-        "assignment_id INTEGER NOT NULL,"
-        "user_id INTEGER NOT NULL,"
-        "submission_id INTEGER NULL,"
-        "deployment_id INTEGER NULL,"
-        "trigger VARCHAR(20) NOT NULL,"
-        "status VARCHAR(20) NOT NULL DEFAULT 'queued',"
-        "started_at DATETIME NULL,"
-        "finished_at DATETIME NULL,"
-        "total_checks INTEGER NULL,"
-        "passed_checks INTEGER NULL,"
-        "score_suggestion VARCHAR(20) NULL,"
-        "results TEXT NULL,"
-        "error VARCHAR(500) NULL,"
-        "result_token_hash VARCHAR(64) NULL,"
-        "token_used_at DATETIME NULL,"
-        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP,"
-        "INDEX idx_gr_assignment (assignment_id),"
-        "INDEX idx_gr_user (user_id),"
-        "INDEX idx_gr_submission (submission_id),"
-        "INDEX idx_gr_status (status),"
-        "CONSTRAINT fk_gr_assignment FOREIGN KEY (assignment_id) REFERENCES assignments(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_gr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,"
-        "CONSTRAINT fk_gr_submission FOREIGN KEY (submission_id) REFERENCES assignment_submissions(id) ON DELETE SET NULL,"
-        "CONSTRAINT fk_gr_deployment FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE SET NULL"
-        ")",
-    ),
 ]
 
+# Index unique attendu par le modèle (User.external_id : unique=True, index=True).
+_EXTERNAL_ID_INDEX = "ix_users_external_id"
+# Doublon historique créé par l'ancienne migration add_users_external_id_unique.
+_LEGACY_EXTERNAL_ID_INDEX = "idx_users_external_id_unique"
 
-def run_migrations(db: Session) -> None:
-    """Exécute toutes les migrations de manière idempotente."""
-    for name, sql in MIGRATIONS:
-        try:
-            db.execute(text(sql))
-            db.commit()
-            logger.debug("Migration '%s' applied (or already present)", name)
-        except Exception:
-            db.rollback()
-            logger.debug("Migration '%s' skipped (already applied)", name)
+
+class LegacyMigrationError(RuntimeError):
+    """Échec d'une étape de mise à niveau legacy (erreur réelle, non ignorable)."""
+
+
+def is_already_applied_error(exc: DBAPIError, dialect_name: str) -> bool:
+    """Indique si l'erreur signifie seulement que l'étape est déjà appliquée."""
+    orig = getattr(exc, "orig", None)
+    if dialect_name in _MYSQL_DIALECTS:
+        args = getattr(orig, "args", ())
+        code = args[0] if args and isinstance(args[0], int) else None
+        return code in _MYSQL_ALREADY_APPLIED_CODES
+    if dialect_name == "sqlite":
+        message = str(orig) if orig is not None else ""
+        return any(p.match(message) for p in _SQLITE_ALREADY_APPLIED_PATTERNS)
+    return False
+
+
+def _execute_step(connection: Connection, name: str, sql: str) -> bool:
+    """Exécute une étape idempotente. Retourne False si elle était déjà appliquée."""
+    try:
+        connection.execute(text(sql))
+        connection.commit()
+    except DBAPIError as exc:
+        connection.rollback()
+        if is_already_applied_error(exc, connection.dialect.name):
+            logger.debug(
+                "legacy_migration_already_applied",
+                extra={"extra_fields": {"migration": name}},
+            )
+            return False
+        logger.error(
+            "legacy_migration_failed",
+            extra={"extra_fields": {"migration": name, "error": str(exc.orig)}},
+        )
+        raise LegacyMigrationError(
+            f"Migration legacy '{name}' en échec : {exc.orig}"
+        ) from exc
+    logger.info(
+        "legacy_migration_applied", extra={"extra_fields": {"migration": name}}
+    )
+    return True
+
+
+def _drop_index(connection: Connection, table: str, name: str) -> None:
+    quote = connection.dialect.identifier_preparer.quote
+    if connection.dialect.name in _MYSQL_DIALECTS:
+        sql = f"ALTER TABLE {quote(table)} DROP INDEX {quote(name)}"
+    else:
+        sql = f"DROP INDEX {quote(name)}"
+    _execute_step(connection, f"drop_index_{name}", sql)
+
+
+def _reconcile_users_external_id_index(connection: Connection) -> None:
+    """Amène l'indexation de ``users.external_id`` à l'état du modèle.
+
+    Selon la date de création de la table ``users``, une base legacy possède :
+      - l'index unique ``idx_users_external_id_unique`` seul (colonne ajoutée par
+        ALTER, donc sans l'index du modèle) ;
+      - ``ix_users_external_id`` NON unique (modèle de février 2026) + le précédent ;
+      - ``ix_users_external_id`` unique + le précédent, redondant.
+    Cible : ``ix_users_external_id`` unique, sans doublon d'index.
+    """
+    indexes = {ix["name"]: ix for ix in inspect(connection).get_indexes("users")}
+    current = indexes.get(_EXTERNAL_ID_INDEX)
+    is_model_index = (
+        current is not None
+        and bool(current.get("unique"))
+        and list(current.get("column_names") or []) == ["external_id"]
+    )
+
+    if not is_model_index:
+        # Contrôle préalable : un index unique ne peut pas être créé sur des
+        # doublons. On échoue avant de toucher au moindre index existant.
+        duplicates = connection.execute(
+            text(
+                "SELECT COUNT(*) FROM (SELECT external_id FROM users "
+                "WHERE external_id IS NOT NULL GROUP BY external_id "
+                "HAVING COUNT(*) > 1) AS dup"
+            )
+        ).scalar()
+        connection.commit()
+        if duplicates:
+            raise LegacyMigrationError(
+                f"{duplicates} valeur(s) de users.external_id sont partagées par "
+                "plusieurs comptes : impossible de créer l'index unique "
+                f"{_EXTERNAL_ID_INDEX}. Dédoublonnez ces comptes SSO (SELECT "
+                "external_id, COUNT(*) FROM users WHERE external_id IS NOT NULL "
+                "GROUP BY external_id HAVING COUNT(*) > 1) puis redémarrez."
+            )
+        if current is not None:
+            _drop_index(connection, "users", _EXTERNAL_ID_INDEX)
+        model_index = next(
+            ix
+            for ix in Base.metadata.tables["users"].indexes
+            if ix.name == _EXTERNAL_ID_INDEX
+        )
+        model_index.create(connection)
+        connection.commit()
+        logger.info(
+            "legacy_migration_applied",
+            extra={"extra_fields": {"migration": f"create_index_{_EXTERNAL_ID_INDEX}"}},
+        )
+
+    if _LEGACY_EXTERNAL_ID_INDEX in indexes:
+        # Redondant avec l'index unique du modèle, désormais garanti ci-dessus.
+        _drop_index(connection, "users", _LEGACY_EXTERNAL_ID_INDEX)
+
+
+def apply_legacy_migrations(connection: Connection) -> None:
+    """Amène une base legacy à l'état des modèles. Idempotent.
+
+    Toute erreur autre que « déjà appliqué » lève ``LegacyMigrationError``.
+    """
+    # 1. Tables manquantes (checkfirst : les tables existantes ne sont pas touchées)
+    Base.metadata.create_all(bind=connection)
+    connection.commit()
+    # 2. Colonnes ajoutées après coup
+    for name, sql in LEGACY_MIGRATIONS:
+        _execute_step(connection, name, sql)
+    # 3. Index de users.external_id
+    _reconcile_users_external_id_index(connection)
