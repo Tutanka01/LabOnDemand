@@ -125,6 +125,13 @@ class Settings:
     @staticmethod
     def init_kubernetes():
         """Initialise la configuration Kubernetes"""
+        # Délais REST par défaut (voir backend/k8s_timeouts.py), installés
+        # avant tout appel au cluster.
+        from .k8s_timeouts import install_default_request_timeout
+
+        install_default_request_timeout(
+            Settings.K8S_REQUEST_TIMEOUT_CONNECT, Settings.K8S_REQUEST_TIMEOUT_READ
+        )
         config.load_kube_config()
         # urllib3 (appels REST) ignore les proxies d'environnement, mais
         # websocket-client (exec, port-forward) les route via HTTPS_PROXY :
@@ -141,6 +148,14 @@ class Settings:
                     if host not in entries:
                         entries.append(host)
                     os.environ[var] = ",".join(entries)
+
+    # ===================== Concurrence & client Kubernetes =====================
+    # Délais par défaut (secondes) des appels REST Kubernetes : connexion puis
+    # lecture. Un _request_timeout explicite reste prioritaire ; 0 désactive.
+    # Les flux (watch, logs suivis) ne reçoivent jamais de délai de lecture.
+    K8S_REQUEST_TIMEOUT_CONNECT = float(os.getenv("K8S_REQUEST_TIMEOUT_CONNECT", "5"))
+    K8S_REQUEST_TIMEOUT_READ = float(os.getenv("K8S_REQUEST_TIMEOUT_READ", "30"))
+    # ===================== Fin concurrence & client Kubernetes =====================
 
     # Grader Pod (MVP-2) — exécution isolée des tests boîte noire
     # Image du grader (publiée sur le registre du cluster). Voir dockerfiles/grader/.
