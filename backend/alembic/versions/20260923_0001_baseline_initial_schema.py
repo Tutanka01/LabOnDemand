@@ -12,6 +12,10 @@ Autogénérée contre une base vide puis relue à la main :
     obtenir le même DDL que create_all sur MariaDB comme sur SQLite ;
   - index créés par op.create_index (noms ix_<table>_<colonne> de SQLAlchemy,
     donc identiques à ceux des bases existantes) ;
+  - clés étrangères dans l'ordre de déclaration des modèles (celui de
+    create_all, et non l'ordre alphabétique d'autogenerate) : MariaDB les nomme
+    <table>_ibfk_N selon cet ordre, les noms restent donc ceux des bases
+    existantes ;
   - pas de naming_convention : les noms des bases existantes sont conservés ;
   - downgrade refusé.
 
@@ -193,8 +197,8 @@ def upgrade() -> None:
     sa.Column('spawn_error', sa.String(length=500), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
     sa.ForeignKeyConstraint(['assignment_id'], ['assignments.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['deployment_id'], ['deployments.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['deployment_id'], ['deployments.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_assignment_deployments_assignment_id'), 'assignment_deployments', ['assignment_id'], unique=False)
@@ -221,9 +225,9 @@ def upgrade() -> None:
     sa.Column('graded_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
     sa.ForeignKeyConstraint(['assignment_id'], ['assignments.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['deployment_id'], ['deployments.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['graded_by'], ['users.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('assignment_id', 'user_id', name='uq_submission_assignment_user')
     )
@@ -266,9 +270,9 @@ def upgrade() -> None:
     sa.Column('token_used_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
     sa.ForeignKeyConstraint(['assignment_id'], ['assignments.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['deployment_id'], ['deployments.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['submission_id'], ['assignment_submissions.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['submission_id'], ['assignment_submissions.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['deployment_id'], ['deployments.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_grading_runs_assignment_id'), 'grading_runs', ['assignment_id'], unique=False)

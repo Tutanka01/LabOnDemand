@@ -194,7 +194,8 @@ def schema_snapshot(connection: Connection) -> dict:
 
     Sert à vérifier que la baseline Alembic produit exactement le même schéma
     que ``Base.metadata.create_all``. Les noms de clés étrangères sont ignorés
-    (générés par le serveur sur MariaDB), leur structure et ON DELETE non.
+    (générés par le serveur sur MariaDB), leur structure, ON DELETE et leur
+    ordre non : MariaDB nomme les clés <table>_ibfk_N dans l'ordre de création.
     """
     insp = inspect(connection)
     snapshot: dict = {}
@@ -221,7 +222,7 @@ def schema_snapshot(connection: Connection) -> dict:
                 (uc["name"], tuple(uc["column_names"]))
                 for uc in insp.get_unique_constraints(table)
             ),
-            "fks": sorted(
+            "fks": [
                 (
                     tuple(fk["constrained_columns"]),
                     fk["referred_table"],
@@ -229,7 +230,7 @@ def schema_snapshot(connection: Connection) -> dict:
                     (fk.get("options") or {}).get("ondelete"),
                 )
                 for fk in insp.get_foreign_keys(table)
-            ),
+            ],
         }
     if connection.in_transaction():
         connection.commit()
