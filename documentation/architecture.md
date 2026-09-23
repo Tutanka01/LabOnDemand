@@ -49,13 +49,15 @@ Le proxy Nginx (`nginx/nginx.conf`) garde des connexions keepalive vers l'API, t
 ```
 LabOnDemand/
 ├── backend/
-│   ├── main.py                     # Point d'entrée FastAPI, bootstrap, tâche de nettoyage
+│   ├── main.py                     # Point d'entrée FastAPI, bootstrap (migrations, seeds), tâche de nettoyage
 │   ├── config.py                   # Tous les paramètres (env vars, valeurs par défaut)
 │   ├── models.py                   # ORM SQLAlchemy (voir section Modèle de données)
 │   ├── schemas.py                  # Pydantic schemas (validation entrée/sortie)
 │   ├── database.py                 # Moteur SQLAlchemy + SessionLocal
 │   ├── security.py                 # Sessions, hachage bcrypt, dépendances FastAPI
-│   ├── migrations.py               # Migrations SQL idempotentes (18 migrations)
+│   ├── db_migrate.py               # Migrations Alembic au démarrage (verrou GET_LOCK) + CLI
+│   ├── alembic/                    # env.py + versions/ : révisions du schéma (voir database-migrations.md)
+│   ├── migrations.py               # Mise à niveau des bases antérieures à Alembic (figé)
 │   ├── seed.py                     # Données initiales (admin, templates, runtime configs)
 │   ├── k8s_utils.py                # Labels, namespaces, quotas (get_role_limits + UserQuotaOverride)
 │   ├── templates.py                # DeploymentConfig : lecture templates depuis la BDD
@@ -173,6 +175,11 @@ Teacher  POST /api/v1/classrooms/{cid}/assignments/{aid}/run-tests-all        �
 ---
 
 ## Modèle de données
+
+Le schéma est versionné par Alembic : toute modification de `backend/models.py`
+qui touche le schéma s'accompagne d'une révision dans `backend/alembic/versions/`,
+appliquée automatiquement au démarrage de l'API. Voir
+[`database-migrations.md`](database-migrations.md).
 
 ### Utilisateurs et accès
 
