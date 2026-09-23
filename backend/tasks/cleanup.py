@@ -80,7 +80,7 @@ async def _run_cleanup_cycle() -> None:
             try:
                 user = db.query(User).filter(User.id == dep.user_id).first()
                 if user:
-                    await deployment_service.pause_application(
+                    deployment_service.pause_application(
                         dep.namespace, dep.name, user
                     )
                 dep.status = "paused"

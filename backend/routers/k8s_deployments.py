@@ -958,7 +958,7 @@ async def create_deployment(
             }
         },
     )
-    return await deployment_service.create_deployment(
+    return deployment_service.create_deployment(
         name=name,
         image=image,
         replicas=replicas,
@@ -990,7 +990,7 @@ async def pause_deployment(
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.pause_application(namespace, name, current_user)
+        return deployment_service.pause_application(namespace, name, current_user)
     except HTTPException:
         raise
     except Exception as exc:
@@ -1006,7 +1006,7 @@ async def resume_deployment(
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.resume_application(
+        return deployment_service.resume_application(
             namespace, name, current_user
         )
     except HTTPException:

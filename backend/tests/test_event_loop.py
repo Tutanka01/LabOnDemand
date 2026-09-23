@@ -3,12 +3,14 @@ Tests de non-blocage de la boucle asyncio et de bornage des appels K8s.
 
 Sections :
   - délais par défaut du client REST Kubernetes (backend/k8s_timeouts.py) ;
-  - dimensionnement du pool de threads AnyIO.
+  - dimensionnement du pool de threads AnyIO ;
+  - services K8s synchrones (exécutés hors boucle par les appelants).
 """
 
 from __future__ import annotations
 
 import functools
+import inspect
 from typing import Any, Dict
 from unittest.mock import MagicMock
 
@@ -195,3 +197,42 @@ async def test_threadpool_startup_hook_is_registered():
     from backend.main import app, configure_threadpool
 
     assert configure_threadpool in app.router.on_startup
+
+
+# ============================================================
+# Services K8s synchrones
+# ============================================================
+
+
+def test_blocking_services_are_plain_functions():
+    from backend import k8s_utils
+    from backend.deployment_service import deployment_service
+
+    for func in (
+        deployment_service.create_deployment,
+        deployment_service.pause_application,
+        deployment_service.resume_application,
+        deployment_service._create_wordpress_stack,
+        deployment_service._create_mysql_pma_stack,
+        deployment_service._create_lamp_stack,
+        k8s_utils.ensure_namespace_exists,
+    ):
+        assert not inspect.iscoroutinefunction(func), func.__name__
+
+
+def test_ensure_namespace_exists_tolerates_concurrent_creation(mock_k8s):
+    from backend.k8s_utils import ensure_namespace_exists
+
+    mock_k8s["core"].create_namespace.side_effect = k8s_client.exceptions.ApiException(
+        status=409
+    )
+    assert ensure_namespace_exists("labondemand-user-42") is True
+
+
+def test_ensure_namespace_exists_reports_failure(mock_k8s):
+    from backend.k8s_utils import ensure_namespace_exists
+
+    mock_k8s["core"].create_namespace.side_effect = k8s_client.exceptions.ApiException(
+        status=403
+    )
+    assert ensure_namespace_exists("labondemand-user-42") is False

@@ -557,7 +557,7 @@ async def deploy_assignment_to_class(
                 svc_type = template.default_service_type if template else "NodePort"
                 dep_type = template.deployment_type if template else "custom"
 
-                result = await deployment_service.create_deployment(
+                result = deployment_service.create_deployment(
                     name=dep_name,
                     image=image,
                     replicas=1,
