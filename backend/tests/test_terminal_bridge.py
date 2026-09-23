@@ -331,7 +331,10 @@ def test_idle_timeout_setting_default_is_30_minutes():
 def test_wsclient_contract_used_by_the_bridge(monkeypatch):
     """Vérifie sur la vraie classe WSClient l'API dont dépend le pont :
     update(timeout) borné, read_all (stdout+stderr dans l'ordre, tampon vidé),
-    is_open, write_stdin, write_channel(RESIZE_CHANNEL) et close."""
+    is_open, write_stdin, write_channel(RESIZE_CHANNEL) et close.
+
+    Compatible kubernetes 32.x (v4.channel.k8s.io) et 36.x, qui négocie
+    v5.channel.k8s.io et lit ``subprotocol`` / ``getheaders()`` du socket."""
     from kubernetes.stream import ws_client as ws_mod
     from websocket import ABNF
 
@@ -341,9 +344,13 @@ def test_wsclient_contract_used_by_the_bridge(monkeypatch):
 
     class _FakeWebSocket:
         connected = True
+        subprotocol = "v5.channel.k8s.io"
 
         def __init__(self):
             self.sock = readable
+
+        def getheaders(self):
+            return {"sec-websocket-protocol": self.subprotocol}
 
         def recv_data_frame(self, control_frame=False):
             readable.recv(1)
@@ -380,9 +387,13 @@ def test_wsclient_contract_used_by_the_bridge(monkeypatch):
 
         _frame(ABNF.OPCODE_TEXT, b"\x01hello ")
         _frame(ABNF.OPCODE_TEXT, b"\x02oops")
+        # Signal CLOSE v5 (canal 255) : jamais mêlé à la sortie du terminal.
+        _frame(ABNF.OPCODE_BINARY, bytes([255, 1]))
         exec_client.update(timeout=1)
         exec_client.update(timeout=0)
+        exec_client.update(timeout=0)
         assert exec_client.read_all() == "hello oops"
+        assert exec_client.is_open()
         assert exec_client.read_all() == ""
 
         exec_client.write_stdin("ls\n")
