@@ -16,9 +16,11 @@ async def test_status(client):
     assert "version" in body
 
 
-async def test_health_connected(client):
+async def test_health_connected(client, mock_k8s):
     r = await client.get("/api/v1/health")
     assert r.status_code == 200
     body = r.json()
-    assert body["database"] == "connected"
-    assert "users" in body
+    assert body["status"] == "healthy"
+    assert body["db"] == "ok"
+    assert body["redis"] == "ok"
+    assert body["k8s"] == "ok"
