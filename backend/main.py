@@ -8,9 +8,8 @@ import logging
 import time
 import uuid
 import uvicorn
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
 
 from .config import settings
 from .logging_config import (
@@ -19,7 +18,7 @@ from .logging_config import (
     reset_request_id,
     shorten_token,
 )
-from .database import get_db, SessionLocal
+from .database import SessionLocal
 from .session import setup_session_handler, validate_cookie_settings
 from .csrf import CSRFMiddleware
 from .error_handlers import global_exception_handler
@@ -314,62 +313,6 @@ async def health_check() -> dict:
 
     return await run_health_checks()
 
-
-# ============= ENDPOINT DE DIAGNOSTIC =============
-
-if settings.DEBUG_MODE:
-
-    @app.post("/api/v1/diagnostic/test-auth")
-    async def test_auth(request: Request, db: Session = Depends(get_db)):
-        """
-        Endpoint de diagnostic pour tester l'authentification.
-        Disponible uniquement en mode DEBUG.
-        """
-        try:
-            body = await request.json()
-            username = body.get("username")
-            password = body.get("password")
-
-            if not username or not password:
-                return {
-                    "success": False,
-                    "message": "Le nom d'utilisateur et le mot de passe sont requis",
-                    "details": None,
-                }
-
-            from starlette.concurrency import run_in_threadpool
-
-            from .security import authenticate_user
-
-            # Hachage bcrypt + requête DB : hors de la boucle d'événements.
-            user = await run_in_threadpool(authenticate_user, db, username, password)
-
-            if user:
-                return {
-                    "success": True,
-                    "message": "Authentification réussie",
-                    "details": {
-                        "user_id": user.id,
-                        "username": user.username,
-                        "email": user.email,
-                        "role": user.role.value,
-                        "is_active": user.is_active,
-                    },
-                }
-            else:
-                return {
-                    "success": False,
-                    "message": "Échec de l'authentification",
-                    "details": None,
-                }
-        except Exception as e:
-            import traceback
-
-            return {
-                "success": False,
-                "message": f"Erreur lors de l'authentification: {str(e)}",
-                "details": traceback.format_exc(),
-            }
 
 # ============= POINT D'ENTRÉE =============
 

@@ -413,7 +413,7 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 ## Sécurité — rappels admin
 
 - Changer `ADMIN_DEFAULT_PASSWORD` dès la première connexion
-- Ne jamais activer `DEBUG_MODE=True` en production (expose Swagger + test-auth)
+- Ne jamais activer `DEBUG_MODE=True` en production (mode debug de FastAPI)
 - Surveiller `logs/audit.log` (ou l'onglet **Logs d'Audit** dans l'UI) pour les actions sensibles : `user_deleted`, `quota_override_set`, `users_imported_csv`
 - Les sessions expirées sont automatiquement purgées par Redis (TTL Redis = `SESSION_EXPIRY_HOURS`)
 - Un admin supprimé voit ses sessions immédiatement invalidées

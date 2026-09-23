@@ -368,10 +368,14 @@ session) par nécessité du protocole ; ce `state` les protège.
 
 ---
 
-## Endpoint de diagnostic
+## Mode debug
 
-`POST /api/v1/diagnostic/test-auth` n'est accessible que si `DEBUG_MODE=True`.
-**Ne jamais activer `DEBUG_MODE` en production.**
+`DEBUG_MODE=True` active le mode debug de FastAPI et est signalé par
+`GET /api/v1/status`. **Ne jamais l'activer en production.** L'ancien endpoint
+de diagnostic `POST /api/v1/diagnostic/test-auth` (actif en mode debug) a été
+supprimé : il vérifiait un mot de passe sans aucune limitation de débit et
+renvoyait le détail du compte. Pour tester des identifiants, utiliser
+`POST /api/v1/auth/login`.
 
 ---
 

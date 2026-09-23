@@ -264,7 +264,6 @@ ASYNC_ENDPOINT_ALLOWLIST = {
     "backend.main.read_root",
     "backend.main.get_status",
     "backend.main.health_check",
-    "backend.main.test_auth",
     "backend.routers.k8s_terminal.ws_pod_terminal",
     "backend.routers.classrooms.deploy_assignment_to_class",
     "backend.routers.classrooms.test_now",
