@@ -68,7 +68,8 @@ DB_ROOT_PASSWORD=root_password_secret
 
 ```env
 REDIS_PASSWORD=change-me
-REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+# REDIS_URL est construit par compose.yaml à partir de REDIS_PASSWORD : ne pas la
+# redéfinir dans .env (une entrée obsolète sans mot de passe casse l'auth Redis).
 REDIS_NAMESPACE=session:
 SESSION_EXPIRY_HOURS=24
 SECURE_COOKIES=False      # false en HTTP local, true en HTTPS production

@@ -23,6 +23,18 @@ read_when: |
    doit rester non exposé publiquement; une URL sans mot de passe ou un mot de
    passe incorrect empêchera la création des sessions.
 
+   Si les logs affichent
+   `AuthenticationError: HELLO must be called with the client already authenticated`,
+   l'API s'est connectée sans mot de passe à un Redis protégé par `requirepass`
+   (typiquement une entrée `REDIS_URL=redis://redis:6379/0` obsolète restée dans
+   `.env`). `compose.yaml` construit désormais `REDIS_URL` à partir de
+   `REDIS_PASSWORD` et ignore cette valeur; vérifier puis recréer l'API :
+
+   ```bash
+   docker compose config | grep REDIS_URL          # doit contenir :<mot_de_passe>@
+   docker compose up -d --force-recreate api
+   ```
+
 3. **Kubeconfig manquant** — L'API a besoin d'un kubeconfig valide. En développement,
    monter `~/.kube:/root/.kube:ro` dans le conteneur. Le kubeconfig est un secret
    local et ne doit pas être versionné.
