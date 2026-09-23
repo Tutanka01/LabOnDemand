@@ -69,7 +69,10 @@ services:
       - MYSQL_PASSWORD=${DB_PASSWORD:-labondemand}
       - MYSQL_DATABASE=${DB_NAME:-labondemand}
     ports:
-      - "${DB_PORT:-3306}:3306"
+      # Boucle locale par défaut : l'API joint MariaDB par le réseau Compose.
+      # Un port publié contourne le pare-feu de l'hôte (ufw, firewalld) ;
+      # DB_BIND_ADDRESS=0.0.0.0 pour l'exposer au réseau (déconseillé).
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${DB_PORT:-3306}:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
     networks:

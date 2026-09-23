@@ -228,7 +228,9 @@ Derrière un répartiteur de charge supplémentaire, ajouter son IP (liste
 séparée par des virgules). **Jamais `*`** : uvicorn retiendrait alors
 l'entrée de `X-Forwarded-For` choisie par le client, ce qui contourne toute
 limite par IP. Le port de l'API n'est publié que sur `127.0.0.1`
-(`API_BIND_ADDRESS`) : le trafic passe par nginx.
+(`API_BIND_ADDRESS`) : le trafic passe par nginx. Celui de MariaDB aussi
+(`DB_BIND_ADDRESS`) : l'API joint la base par le réseau Compose, et un port
+publié par Docker contourne le pare-feu de l'hôte (ufw, firewalld).
 
 ---
 
@@ -474,6 +476,7 @@ Toutes les actions sensibles sont tracées dans `logs/audit.log` :
 - [ ] `DEBUG_MODE=False`
 - [ ] `ADMIN_DEFAULT_PASSWORD` changé dès le premier démarrage
 - [ ] Redis non accessible publiquement et protégé par `REDIS_PASSWORD`
+- [ ] MariaDB publié sur `127.0.0.1` uniquement (`DB_BIND_ADDRESS`), `DB_ROOT_PASSWORD` et `DB_PASSWORD` forts
 - [ ] `CORS_ORIGINS` limité aux origines frontend attendues (ni `*`, ni domaine de labs)
 - [ ] `FORWARDED_ALLOW_IPS` limité aux proxys (jamais `*`), port API publié sur `127.0.0.1`
 - [ ] `RATE_LIMIT_*` adaptés à la taille des salles derrière un même NAT
