@@ -1594,8 +1594,20 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         try:
             role_val = getattr(current_user.role, "value", str(current_user.role))
             ensure_namespace_baseline(effective_namespace, str(role_val))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Best-effort : le déploiement continue, mais quota/limites absents
+            # doivent rester visibles pour l'exploitation.
+            logger.warning(
+                "namespace_baseline_failed",
+                exc_info=True,
+                extra={
+                    "extra_fields": {
+                        "namespace": effective_namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "error": str(exc),
+                    }
+                },
+            )
 
         # Valider les permissions
         self.validate_permissions(current_user, deployment_type)
