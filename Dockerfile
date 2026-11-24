@@ -1,32 +1,64 @@
-FROM python:3.13-slim
+# syntax=docker/dockerfile:1
+#
+# LabOnDemand API image.
+#
+# Stages:
+#   base    - Python runtime + application dependencies (shared, cached layer)
+#   test    - base + test dependencies + backend sources; runs the pytest suite
+#   runtime - production image (default target, last stage): baked code, non-root user
+#
+# Build behind a proxy with: docker build --build-arg HTTP_PROXY=... --build-arg HTTPS_PROXY=... .
 
-# Set proxy environment variables for build steps
-#ENV http_proxy=http://proxy.makhal:3128
-#ENV https_proxy=http://proxy.makhal:3128
-#ENV HTTP_PROXY=http://proxy.makhal:3128
-#ENV HTTPS_PROXY=http://proxy.makhal:3128
+FROM python:3.13-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Installation de kubectl (via dépôts Debian pour éviter les downloads externes)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates kubernetes-client && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copie des fichiers du projet
+# Dependencies first: this layer is reused as long as requirements.txt is unchanged.
 COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+
+FROM base AS test
+
+COPY backend/requirements-test.txt /tmp/requirements-test.txt
+RUN pip install -r /tmp/requirements-test.txt
+
 COPY backend/ /app/backend/
-# Ne copiez PAS le fichier .env dans l'image !
+WORKDIR /app/backend
 
-# Installation des dépendances Python
-RUN pip install --no-cache-dir -r requirements.txt
+# The suite mocks Redis/Kubernetes and uses in-memory SQLite (see backend/tests/conftest.py):
+# no .env, kubeconfig, MariaDB or Redis is needed.
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
 
-# Vérification que kubectl est correctement installé
-RUN kubectl version --client
 
-# Exposition du port utilisé par l'API (sera écrasé par la variable d'environnement si définie)
+FROM base AS runtime
+
+# Unprivileged user. The kubeconfig is mounted read-only at $KUBECONFIG (the Kubernetes
+# client reads that variable), and /app/logs must be writable by APP_UID on bind mounts.
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN groupadd --system --gid "${APP_GID}" app \
+    && useradd --system --uid "${APP_UID}" --gid app --home-dir /home/app --create-home app \
+    && mkdir -p /app/logs \
+    && chown app:app /app/logs
+
+ENV KUBECONFIG=/etc/labondemand/kubeconfig
+
+COPY backend/ /app/backend/
+
+USER app
+
 EXPOSE 8000
 
-# Commande pour démarrer l'API en utilisant uvicorn directement
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/status', timeout=4).status == 200 else 1)"]
+
+# Single worker on purpose: the API runs an in-process cleanup loop and an in-memory
+# rate limiter; concurrency comes from the threadpool used by sync route handlers.
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

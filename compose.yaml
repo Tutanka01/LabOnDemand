@@ -1,33 +1,48 @@
+# LabOnDemand - development stack.
+#
+#   docker compose up --build                                        # dev: hot reload, sources mounted
+#   docker compose -f compose.yaml -f compose.prod.yaml up -d --build  # production (see compose.prod.yaml)
+#   docker compose --profile test run --rm --build tests             # backend test suite (no .env needed)
+#
+# Development defaults (passwords, ports) are convenience fallbacks only; the production
+# override refuses to start without real secrets.
+
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
+      args:
+        # Match the host user that owns ./logs and kubeconfig.yaml on Linux hosts.
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
     container_name: labondemand-api
     ports:
-      - "${API_PORT:-8000}:8000"
+      # Direct API access (Swagger at /docs) for local debugging only.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
-      - ./backend:/app/backend
-      - ./.env:/app/.env  # Monter le fichier .env comme un volume pour qu'il soit accessible
-      - ./kubeconfig.yaml:/root/.kube/config:ro # Monter kubeconfig.yaml en lecture seule
-      - ./logs:/app/logs # Persister les journaux applicatifs
+      - ./backend:/app/backend          # hot reload of backend sources
+      - ./kubeconfig.yaml:/etc/labondemand/kubeconfig:ro
+      - ./logs:/app/logs
     env_file:
-      - ./.env  # Utiliser le fichier .env pour injecter les variables d'environnement
+      # Optional so that `docker compose --profile test ...` works from a clean checkout;
+      # the dev stack still expects a .env (cp .env.exemple .env). Required in production.
+      - path: ./.env
+        required: false
     environment:
-      - PYTHONPATH=/app
-      - PYTHONUNBUFFERED=1
       - CLUSTER_EXTERNAL_IP=${CLUSTER_EXTERNAL_IP:-}
-      # Construit depuis REDIS_PASSWORD : évite toute REDIS_URL obsolète (sans mot de passe) dans .env
+      # Built from REDIS_PASSWORD so a stale REDIS_URL (without password) in .env is ignored.
       - REDIS_URL=redis://:${REDIS_PASSWORD:-change-me}@redis:6379/0
       - SECURE_COOKIES=${SECURE_COOKIES:-False}
     restart: unless-stopped
-    # Si vous souhaitez que l'API démarre uniquement après un autre service 
-    # (comme une base de données par exemple), vous pouvez décommenter les lignes suivantes:
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Keep a single uvicorn process: the API runs an in-process cleanup loop and an
+    # in-memory rate limiter (see documentation/architecture.md).
     command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "backend"]
 
   frontend:
@@ -38,24 +53,26 @@ services:
     ports:
       - "${FRONTEND_PORT:-80}:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
     depends_on:
       api:
         condition: service_started
 
   db:
-    image: mariadb:latest
+    # Pinned version; override with MARIADB_IMAGE if the existing data volume was
+    # created by a newer server (MariaDB does not support downgrades).
+    image: ${MARIADB_IMAGE:-mariadb:13.0}
     container_name: labondemand-db
-    env_file:
-      - ./.env  # Utiliser le fichier .env pour les secrets de la base de données
     environment:
       - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD:-root}
       - MYSQL_USER=${DB_USER:-labondemand}
       - MYSQL_PASSWORD=${DB_PASSWORD:-labondemand}
       - MYSQL_DATABASE=${DB_NAME:-labondemand}
+      # Run mariadb-upgrade automatically when the server version changes.
+      - MARIADB_AUTO_UPGRADE=1
     ports:
-      - "${DB_PORT:-3306}:3306"
+      - "127.0.0.1:${DB_PORT:-3306}:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
     restart: unless-stopped
@@ -67,10 +84,11 @@ services:
       start_period: 30s
 
   redis:
-    image: redis:8-alpine
+    image: redis:8.12-alpine
     container_name: labondemand-redis
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-change-me}
+    # Sessions only: no persistence, a Redis restart logs users out.
     command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:-change-me}"]
     restart: unless-stopped
     healthcheck:
@@ -79,6 +97,17 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+
+  # Backend test suite: mocks Redis/Kubernetes and uses in-memory SQLite, so it needs
+  # no .env, kubeconfig, MariaDB or Redis. Runs the code baked at build time (use --build).
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    image: labondemand-api-tests
+    network_mode: none
 
 volumes:
   mariadb_data:

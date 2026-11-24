@@ -1,0 +1,74 @@
+# LabOnDemand - production override, applied on top of compose.yaml:
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+#
+# Differences with the development stack:
+#   - the API runs the code baked into the image (no source mount, no --reload);
+#   - only the frontend (nginx) is published; the API, MariaDB and Redis stay on the
+#     internal Compose network;
+#   - DB_ROOT_PASSWORD, DB_PASSWORD and REDIS_PASSWORD are required (no default fallback);
+#   - DEBUG_MODE is forced off, SECURE_COOKIES defaults to True (set it to False only
+#     when the site is served over plain HTTP);
+#   - healthchecks gate startup order, container logs are rotated.
+#
+# The API must stay a single uvicorn worker: it runs an in-process cleanup loop and an
+# in-memory rate limiter. Concurrency comes from the threadpool used by sync handlers.
+# Requires Docker Compose >= 2.24 (!reset / !override tags).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  api:
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: !reset []
+    env_file: !override
+      - path: ./.env
+        required: true
+    volumes: !override
+      - ./kubeconfig.yaml:/etc/labondemand/kubeconfig:ro
+      - ./logs:/app/logs
+    environment:
+      - DEBUG_MODE=False
+      - SECURE_COOKIES=${SECURE_COOKIES:-True}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}@redis:6379/0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/status', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+
+  frontend:
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+
+  db:
+    ports: !reset []
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD must be set in .env}
+      - MYSQL_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+    restart: unless-stopped
+    logging: *default-logging
+
+  redis:
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"]
+    restart: unless-stopped
+    logging: *default-logging

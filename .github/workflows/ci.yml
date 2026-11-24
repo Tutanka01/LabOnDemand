@@ -1,0 +1,82 @@
+# Backend tests + frontend production build, using the same Dockerfiles as local development.
+# Local equivalents:
+#   docker compose --profile test run --rm --build tests
+#   docker compose build frontend
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  compose-config:
+    name: Compose files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate dev and production Compose files
+        env:
+          DB_ROOT_PASSWORD: ci
+          DB_PASSWORD: ci
+          REDIS_PASSWORD: ci
+        run: |
+          docker compose config -q
+          touch .env
+          docker compose -f compose.yaml -f compose.prod.yaml config -q
+
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Builds the `tests` service image (Dockerfile target `test`) with a layer cache.
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          tags: labondemand-api-tests
+          load: true
+          cache-from: type=gha,scope=api-test
+          cache-to: type=gha,scope=api-test,mode=max
+      - name: Run backend test suite
+        run: docker compose --profile test run --rm tests
+
+  api-image:
+    name: API image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: false
+          cache-from: type=gha,scope=api-runtime
+          cache-to: type=gha,scope=api-runtime,mode=max
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Same build as `docker compose build frontend` (type-check + Vite production build).
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend-app
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max

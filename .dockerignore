@@ -1,24 +1,30 @@
+# Build context of the API image (root Dockerfile): only requirements.txt and backend/ are used.
 .git
+.github
 .agents
 .codex
+.claude
 venv
 .venv
 env
 ENV
-__pycache__
-*.pyc
-.pytest_cache
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
 .mypy_cache
 .ruff_cache
 logs
 *.log
+# Local secrets: never part of an image
 .env
 .env.*
 kubeconfig.yaml
 OLDkubeconfig.yaml
 kubeconfig.*
-frontend
 frontend-app
+deploy
+dockerfiles
+nginx
 Diagrammes
 documentation
 tests
