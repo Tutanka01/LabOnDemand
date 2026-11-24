@@ -218,8 +218,8 @@ du callback. Toute non-concordance retourne `400 Bad Request`.
 
 ## Endpoint de diagnostic
 
-`POST /api/v1/diagnostic/test-auth` n'est accessible que si `DEBUG_MODE=True`.
-**Ne jamais activer `DEBUG_MODE` en production.**
+L'ancien endpoint `POST /api/v1/diagnostic/test-auth` a été supprimé (il renvoyait des traces d'exécution).
+`DEBUG_MODE=True` n'active plus que Swagger UI : **ne jamais l'activer en production.**
 
 ---
 
@@ -307,6 +307,7 @@ Toutes les actions sensibles sont tracées dans `logs/audit.log` :
 
 ## Checklist sécurité production
 
+- [ ] Pile lancée avec l'override de production (`docker compose -f compose.yaml -f compose.prod.yaml up -d --build`) : seul le frontend est publié, `DEBUG_MODE` forcé à `False`, secrets obligatoires, API non-root
 - [ ] `SECURE_COOKIES=True` (HTTPS uniquement)
 - [ ] `SESSION_SAMESITE=Strict`
 - [ ] `DEBUG_MODE=False`

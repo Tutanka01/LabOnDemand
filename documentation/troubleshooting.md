@@ -35,9 +35,43 @@ read_when: |
    docker compose up -d --force-recreate api
    ```
 
-3. **Kubeconfig manquant** — L'API a besoin d'un kubeconfig valide. En développement,
-   monter `~/.kube:/root/.kube:ro` dans le conteneur. Le kubeconfig est un secret
-   local et ne doit pas être versionné.
+3. **Kubeconfig manquant ou illisible** — L'API lit `./kubeconfig.yaml`, monté en
+   lecture seule sur `/etc/labondemand/kubeconfig` (variable `KUBECONFIG` de l'image).
+   Si le fichier n'existe pas sur l'hôte, Docker crée un répertoire à sa place :
+   le supprimer et créer le fichier. Le kubeconfig est un secret local et ne doit
+   pas être versionné.
+
+4. **`PermissionError` sur `/app/logs` ou sur le kubeconfig (hôte Linux)** — L'API
+   tourne sous l'utilisateur non-root `app` (UID 1000 par défaut). Les fichiers de
+   `./logs` créés par une ancienne image (root) ne sont pas modifiables :
+   `sudo chown -R 1000:1000 logs`, ou définir `APP_UID` / `APP_GID` dans `.env`
+   puis `docker compose build api`.
+
+5. **Production : `required variable ... is missing a value`** — `compose.prod.yaml`
+   refuse de démarrer sans `DB_ROOT_PASSWORD`, `DB_PASSWORD` et `REDIS_PASSWORD`
+   (pas de valeur de repli). Les définir dans `.env`.
+
+6. **MariaDB refuse de démarrer après la mise à jour** — l'image est épinglée
+   (`mariadb:13.0`). Si le volume `mariadb_data` a été créé par une version plus
+   récente (ancien `mariadb:latest`), définir `MARIADB_IMAGE=mariadb:<version>`
+   dans `.env` (la version figure dans les logs du conteneur `db`).
+
+## L'interface affiche une erreur « service indisponible » (HTTP 503)
+
+**Cause** : l'API n'arrive pas à joindre le cluster Kubernetes. Les endpoints de
+liste et de lecture renvoient HTTP 503 avec un message `detail` au lieu d'une liste
+vide ; les pages qui ne dépendent pas de Kubernetes continuent de fonctionner.
+
+**Diagnostic** :
+```bash
+curl -s http://localhost/api/v1/k8s/ping          # {"k8s": false} si le cluster est injoignable
+docker compose logs api --since 10m | grep -i timeout
+```
+
+Chaque appel Kubernetes est borné par `K8S_CONNECT_TIMEOUT_SECONDS` (5 s) et
+`K8S_READ_TIMEOUT_SECONDS` (30 s). Vérifier l'adresse du serveur dans
+`kubeconfig.yaml`, la connectivité réseau depuis l'hôte Docker et les variables
+de proxy.
 
 ## Déploiement échoue avec "Forbidden" ou 403
 
@@ -139,8 +173,7 @@ DELETE FROM users WHERE id = <OLD_ID>;
 2. L'`OIDC_REDIRECT_URI` doit correspondre exactement à ce qui est enregistré
    auprès de l'IdP.
 3. Vérifier que `FRONTEND_BASE_URL` est défini (utilisé pour les redirections).
-4. Activer `DEBUG_MODE=true` pour accéder à `/api/v1/diagnostic/test-auth` et
-   inspecter les claims OIDC reçus.
+4. Consulter `logs/app.log` (événements `oidc_*`, par exemple `oidc_token_exchange_failed`) pour voir l'erreur renvoyée par l'IdP.
 
 ## Session expirée / déconnexion intempestive
 
@@ -176,9 +209,14 @@ kubectl delete deployment <name> -n <namespace>
 ## Réinitialiser le mot de passe admin
 
 ```bash
-# Via le script inclus
-docker compose exec api python reset_admin.py
+# Demande le nouveau mot de passe (non affiché) ; crée le compte s'il n'existe pas
+docker compose exec api python -m backend.reset_admin
 
-# Ou via docker_reset_admin.py (sans accès réseau à la BDD)
-docker compose exec api python docker_reset_admin.py
+# Autre compte, ou mot de passe pris dans ADMIN_DEFAULT_PASSWORD (sans TTY)
+docker compose exec api python -m backend.reset_admin --username alice
+docker compose exec -T api python -m backend.reset_admin --from-env
 ```
+
+Le compte est réactivé et repasse au rôle `admin`. Le mot de passe doit respecter
+la politique de l'application (12 caractères minimum, majuscule, minuscule,
+chiffre, caractère spécial).

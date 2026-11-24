@@ -19,7 +19,7 @@
 - Backend : modele `AssignmentSubmission` (1 ligne/etudiant/devoir, upsert), router etudiant
   `/api/v1/student/assignments` (liste, detail, submit, submission), endpoints de correction
   cote prof (liste des rendus, detail, grade), champ `deliverables` ajoute a `Assignment`,
-  migrations + tests (`tests/test_submissions.py`, 10 verts).
+  migrations + tests (`backend/tests/test_submissions.py`, 10 verts).
 - Frontend : « Mes devoirs » comme page d'accueil etudiant, page detail (consignes +
   livrables en **Markdown**, ouverture du lab pousse, rendu texte + liens), vue de
   correction prof (tableau + dialogue note/feedback), dialogue de creation enrichi (enonce
@@ -58,7 +58,7 @@
   check en direct, polling), colonne verdict `x/y` + boutons « Tester maintenant » /
   « Relancer les tests (classe) » cote prof, resultats detailles + note suggeree pre-remplie
   dans la correction (composant partage `GradingResults.tsx`), i18n FR/EN.
-- Brique 6 : `tests/test_grading.py` (15 tests : securite manifeste/NetworkPolicy, parsing,
+- Brique 6 : `backend/tests/test_grading.py` (15 tests : securite manifeste/NetworkPolicy, parsing,
   score, visibilite, endpoints + autorisations, pipeline pull complet K8s mocke) ; reconciliation
   des runs bloques dans `tasks/cleanup.py`.
 - Perimetre : probes *outside* http/tcp/sql + script. Les probes *inside* (file/command) sont

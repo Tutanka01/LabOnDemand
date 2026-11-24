@@ -52,12 +52,12 @@ SSH au serveur suivi d'un `cat` ou `tail -f` du fichier.
 La fonctionnalité **Logs d'Audit** ajoute :
 
 - Un **endpoint API** sécurisé pour lire, filtrer et exporter les logs
-- Un **onglet dédié** dans le dashboard d'administration (`admin.html#audit`)
+- Un **onglet dédié** dans le dashboard d'administration (`/admin#audit`)
 - Des **statistiques** en temps réel (KPI, histogramme 7 jours, top événements)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Admin Dashboard  ─────────────────────────────── /admin.html   │
+│  Admin Dashboard  ─────────────────────────────── /admin        │
 │                                                                  │
 │  [Utilisateurs] [Templates] [Runtimes] [Parc des Labs] [Audit]  │
 │                                                         ▲        │
@@ -231,24 +231,24 @@ Content-Type: application/json
 ```bash
 # Connexions échouées des dernières 24h
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?event=login_failed&date_from=2026-02-25T00:00:00"
+  "http://localhost/api/v1/audit-logs?event=login_failed&date_from=2026-02-25T00:00:00"
 
 # Toutes les actions sur l'utilisateur alice
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?username=alice"
+  "http://localhost/api/v1/audit-logs?username=alice"
 
 # Alertes et erreurs uniquement
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?level=WARNING"
+  "http://localhost/api/v1/audit-logs?level=WARNING"
 
 # Export JSON de tous les déploiements du mois
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?category=deployments&date_from=2026-02-01T00:00:00&export=json" \
+  "http://localhost/api/v1/audit-logs?category=deployments&date_from=2026-02-01T00:00:00&export=json" \
   -o audit-deploiements-fevrier.json
 
 # Page 2, 100 entrées par page, recherche fulltext
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?search=labondemand-user-42&page=2&page_size=100"
+  "http://localhost/api/v1/audit-logs?search=labondemand-user-42&page=2&page_size=100"
 ```
 
 ---
@@ -297,7 +297,7 @@ Aucun paramètre de filtre (toujours calculé sur tout le fichier).
 
 ## 5. Interface d'administration
 
-L'onglet **Logs d'Audit** est accessible depuis `http://<host>/admin.html#audit`.
+L'onglet **Logs d'Audit** est accessible depuis `http://<host>/admin#audit`.
 Il se charge de façon différée (lazy) à la première ouverture, comme l'onglet
 "Parc des Labs".
 
@@ -456,7 +456,7 @@ Identifier une attaque par force brute ou des identifiants erronés en masse :
 **Via l'API** :
 ```bash
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?event=login_failed&level=WARNING"
+  "http://localhost/api/v1/audit-logs?event=login_failed&level=WARNING"
 ```
 
 **Via le fichier** :
@@ -473,7 +473,7 @@ grep '"message":"login_failed"' logs/audit.log | jq '{ts: .timestamp, user: .use
 **Via l'API** :
 ```bash
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?event=user_deleted&username=alice"
+  "http://localhost/api/v1/audit-logs?event=user_deleted&username=alice"
 ```
 
 **Via le fichier** :
@@ -492,7 +492,7 @@ Toutes les actions tracées pour `bob` (connexions, modifications de profil, dé
 **Via l'API** :
 ```bash
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?username=bob&page_size=200"
+  "http://localhost/api/v1/audit-logs?username=bob&page_size=200"
 ```
 
 ---
@@ -506,7 +506,7 @@ Exporter tous les événements d'un jour donné pour analyse externe :
 
 # Via l'API :
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?date_from=2026-02-20T00:00:00&date_to=2026-02-20T23:59:59&export=json" \
+  "http://localhost/api/v1/audit-logs?date_from=2026-02-20T00:00:00&date_to=2026-02-20T23:59:59&export=json" \
   -o incident-20260220.json
 ```
 
@@ -516,7 +516,7 @@ curl -H "Cookie: session_id=<tok>" \
 
 ```bash
 curl -H "Cookie: session_id=<tok>" \
-  "http://localhost:8000/api/v1/audit-logs?event=quota_override_set"
+  "http://localhost/api/v1/audit-logs?event=quota_override_set"
 ```
 
 Chaque entrée contient `target_user_id`, `admin_user_id`, `max_apps`, `max_cpu_m`,
@@ -706,9 +706,8 @@ tail -f logs/audit.log | jq '{ts: .timestamp, ev: .message, user: .username, ip:
 | `backend/main.py` | Enregistrement du router (`app.include_router`) |
 | `backend/logging_config.py` | Configuration du logger `labondemand.audit` et rotation |
 | `backend/config.py` | Variables `LOG_DIR`, `LOG_MAX_BYTES`, `LOG_BACKUP_COUNT`, `AUDIT_LOG_MAX_BYTES`, `AUDIT_LOG_BACKUP_COUNT` |
-| `frontend/admin.html` | Onglet "Logs d'Audit" + panel HTML |
-| `frontend/js/audit-logs.js` | Logique JS : stats, filtres, tableau, modal, export |
-| `frontend/css/admin.css` | Styles des KPI, sparkbar, badges, modal de détail |
+| `frontend-app/src/pages/admin.tsx` | Page d'administration, onglet `#audit` |
+| `frontend-app/src/components/admin/AuditLogViewer.tsx` | Stats, filtres, tableau, détail, export |
 | `logs/audit.log` | Fichier de logs (généré à l'exécution) |
 
 ### Fichiers source des événements audités

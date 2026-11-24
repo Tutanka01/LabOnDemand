@@ -24,7 +24,7 @@ LabOnDemand supporte deux modes, configurables via `SSO_ENABLED` :
 
 ### Mode SSO (OIDC)
 
-1. L'utilisateur clique sur "Se connecter via SSO" sur `login.html`.
+1. L'utilisateur clique sur "Se connecter via SSO" sur la page `/login`.
 2. Le frontend redirige vers `GET /api/v1/auth/sso/login`.
 3. L'API génère un `state` anti-CSRF, le stocke dans un cookie `oidc_state`, puis redirige vers l'IdP.
 4. Après authentification à l'IdP, celui-ci redirige vers `GET /api/v1/auth/sso/callback?code=…&state=…`.
@@ -241,9 +241,7 @@ des namespaces orphelins (voir `documentation/lifecycle.md`).
 ## Tests
 
 ```bash
-python backend/tests/run_tests.py --backend     # endpoints FastAPI
-python backend/tests/run_tests.py --ui          # Selenium (front)
-python backend/tests/run_tests.py --all         # combinaison
+docker compose --profile test run --rm --build tests python -m pytest tests/test_auth.py tests/test_sso.py tests/test_security.py -q
 ```
 
-`backend/tests/test_auth.py` couvre les chemins critiques (login/logout/register) et `backend/tests/test_ui.py` exécute les scénarios Selenium (formulaires, redirections, CRUD admin).
+`backend/tests/test_auth.py` couvre les chemins critiques (login/logout/register), `test_sso.py` le flux OIDC et `test_security.py` la politique de mots de passe et les sessions. Voir [testing.md](testing.md).

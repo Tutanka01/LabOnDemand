@@ -17,13 +17,13 @@ les guides spécialisés selon votre profil.
 ## Démarrage express (≈ 10 minutes)
 
 1. **Prérequis**
-   - Docker Desktop + Docker Compose Plugin
-   - `kubectl` pointant vers un cluster (k3s, kind, Minikube, ou distant)
+   - Docker + Docker Compose v2 (≥ 2.24 pour l'override de production)
+   - Un kubeconfig vers un cluster (k3s, kind, Minikube, ou distant), copié en `kubeconfig.yaml` à la racine
    - Helm (si vous installez un Ingress Controller)
 
 2. **Préparer la configuration**
    ```bash
-   cp .env.example .env
+   cp .env.exemple .env
    # Renseigner : DB_PASSWORD, DB_ROOT_PASSWORD, REDIS_PASSWORD, ADMIN_DEFAULT_PASSWORD
    # Optionnel  : INGRESS_*, SSO/OIDC, LAB_TTL_*
    ```
@@ -31,17 +31,20 @@ les guides spécialisés selon votre profil.
 
 3. **Lancer**
    ```bash
-   docker compose up -d --build
+   docker compose up -d --build                                          # développement
+   docker compose -f compose.yaml -f compose.prod.yaml up -d --build     # production
    docker compose logs -f api   # attendre "Application startup complete"
    ```
+   Différences dev / production : voir [`development-setup.md`](development-setup.md#trois-façons-de-lancer-la-pile).
 
 4. **Se connecter**
-   - Ouvrir `http://localhost/login.html`
+   - Ouvrir `http://localhost/login`
    - Connexion admin : `admin` / valeur de `ADMIN_DEFAULT_PASSWORD`
 
 5. **Nettoyer**
    ```bash
-   docker compose down -v
+   docker compose down        # conserve le volume mariadb_data
+   # docker compose down -v   # supprime aussi la base de données (destructif)
    ```
 
 > Besoin de préparer un cluster k3s + Ingress + MetalLB ? Voir `platform-setup.md`.
@@ -112,13 +115,15 @@ les guides spécialisés selon votre profil.
 
 | Objectif | Commande |
 |----------|----------|
-| Healthcheck API | `curl http://localhost:8000/api/v1/health` |
+| Healthcheck API | `curl http://localhost/api/v1/health` |
 | Logs en direct | `docker compose logs -f api` |
-| Audit trail (UI) | `http://<host>/admin.html#audit` |
+| Audit trail (UI) | `http://<host>/admin#audit` |
 | Audit trail (CLI) | `tail -f logs/audit.log` |
 | Labs expirés nettoyés | `grep deployment_auto_paused_expired logs/app.log` |
 | Namespaces K8s actifs | `kubectl get ns -l managed-by=labondemand` |
-| Lancer les tests | `python backend/tests/run_tests.py --all` |
+| Lancer les tests backend | `docker compose --profile test run --rm --build tests` |
+| Vérifier le build frontend | `docker compose build frontend` |
+| Réinitialiser le mot de passe admin | `docker compose exec api python -m backend.reset_admin` |
 
 ---
 

@@ -189,7 +189,7 @@ Puis mettre à jour `ensure_namespace_baseline()` pour aligner le ResourceQuota 
 ### Accorder une dérogation temporaire à un étudiant
 
 ```bash
-curl -X PUT "http://localhost:8000/api/v1/auth/users/42/quota-override?max_apps=8&expires_at=2026-06-01T00:00:00" \
+curl -X PUT "http://localhost/api/v1/auth/users/42/quota-override?max_apps=8&expires_at=2026-06-01T00:00:00" \
   -H "Cookie: session_id=<token_admin>"
 ```
 

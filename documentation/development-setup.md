@@ -31,11 +31,29 @@ cp .env.exemple .env    # puis éditer selon ton environnement
 # Lancer l'application
 docker compose up --build
 
-# L'API est disponible sur http://localhost:8000
 # Le frontend est disponible sur http://localhost
+# L'API est publiée sur http://127.0.0.1:8000 (dev uniquement, pour /docs et le débogage)
 ```
 
 Attendre que FastAPI affiche `Application startup complete` dans les logs. Un compte `admin` est automatiquement créé avec le mot de passe défini par `ADMIN_DEFAULT_PASSWORD`.
+
+---
+
+## Trois façons de lancer la pile
+
+| Usage | Commande | Particularités |
+|---|---|---|
+| Développement | `docker compose up --build` | `backend/` monté dans le conteneur, `uvicorn --reload`, API (8000) et MariaDB (3306) publiées sur `127.0.0.1` uniquement, mots de passe de repli si `.env` les omet |
+| Production | `docker compose -f compose.yaml -f compose.prod.yaml up -d --build` | Code figé dans l'image, pas de `--reload`, seul le frontend (`FRONTEND_PORT`, 80 par défaut) est publié, `DB_ROOT_PASSWORD` / `DB_PASSWORD` / `REDIS_PASSWORD` obligatoires, `DEBUG_MODE=False` forcé, `SECURE_COOKIES=True` par défaut, healthchecks + rotation des logs Docker |
+| Tests backend | `docker compose --profile test run --rm --build tests` | Aucun `.env`, kubeconfig, MariaDB ni Redis requis (voir [testing.md](testing.md)) |
+
+Points communs :
+
+- **Images épinglées** : `mariadb:13.0` (surchargeable via `MARIADB_IMAGE`, avec `MARIADB_AUTO_UPGRADE=1`) et `redis:8.12-alpine`. MariaDB ne sait pas revenir à une version antérieure : si le volume `mariadb_data` a été créé par une version plus récente (ancien `mariadb:latest`), définir `MARIADB_IMAGE` à cette version.
+- **API non-root** : l'image tourne sous l'utilisateur `app` (UID/GID 1000 par défaut, build args `APP_UID` / `APP_GID` lus depuis `.env`). Sur un hôte Linux, `./logs` doit être accessible en écriture et `kubeconfig.yaml` en lecture par cet UID : `sudo chown -R 1000:1000 logs` (les fichiers créés par l'ancienne image root appartiennent à root), ou reconstruire avec `APP_UID=$(id -u)`.
+- **Un seul processus uvicorn** : l'API exécute une boucle de nettoyage et un limiteur de débit en mémoire dans son processus ; ne pas ajouter `--workers`. La concurrence vient du pool de threads de FastAPI (les handlers qui font de la base de données ou du Kubernetes sont des `def` synchrones).
+- **`.env`** est injecté via `env_file` (il n'est plus monté comme fichier dans le conteneur). Il est facultatif en dev (pour que le profil `test` fonctionne sur un dépôt fraîchement cloné) et obligatoire en production.
+- **nginx** : la configuration `nginx/nginx.conf` est montée dans le conteneur frontend (elle n'est pas intégrée à l'image).
 
 ---
 
@@ -50,7 +68,7 @@ FRONTEND_PORT=80
 CORS_ORIGINS=http://localhost,http://localhost:8000
 ```
 
-> `DEBUG_MODE=True` active Swagger UI (`/docs`) et l'endpoint de diagnostic `/api/v1/diagnostic/test-auth`.
+> `DEBUG_MODE=True` active Swagger UI (`/docs`).
 > **Ne jamais utiliser en production.**
 
 ### Base de données
@@ -122,7 +140,16 @@ OIDC_REDIRECT_URI=https://votre-app.fr/api/v1/auth/sso/callback
 
 ```env
 CLUSTER_EXTERNAL_IP=           # IP externe du cluster pour les NodePorts
+K8S_CONNECT_TIMEOUT_SECONDS=5  # délai de connexion par appel à l'API Kubernetes
+K8S_READ_TIMEOUT_SECONDS=30    # délai de lecture par appel
+# K8S_MAX_RETRIES=1            # nouvelles tentatives urllib3 par appel
 ```
+
+Chaque appel au client Kubernetes reçoit ces délais par défaut (`settings.init_kubernetes()`). Quand le cluster est injoignable, les endpoints de liste/lecture répondent **HTTP 503** avec un `detail` au lieu d'une liste vide ; seul `GET /api/v1/k8s/ping` continue de répondre 200 avec `{"k8s": false}`.
+
+### Pool de connexions MariaDB
+
+`backend/database.py` lit `DB_POOL_SIZE` (40), `DB_MAX_OVERFLOW` (calculé, 143 connexions au maximum au total), `DB_POOL_TIMEOUT` (10 s) et `DB_POOL_RECYCLE` (1800 s). Les valeurs par défaut couvrent le pire cas (40 threads FastAPI, workers du grader, déploiement de classe) tout en restant sous le `max_connections` par défaut de MariaDB (151) ; si la base est saturée, l'API répond 503 au lieu d'appliquer des limites par défaut.
 
 ### TTL et nettoyage automatique
 
@@ -160,6 +187,9 @@ docker compose logs -f frontend
 
 # Ouvrir un shell dans le conteneur API
 docker compose exec api bash
+
+# Réinitialiser (ou recréer) le mot de passe d'un compte admin local
+docker compose exec api python -m backend.reset_admin
 
 # Reconstruire uniquement le backend
 docker compose build api
@@ -267,10 +297,10 @@ Le fichier `kubeconfig.yaml` à la racine du projet est monté en lecture seule 
 ```yaml
 # compose.yaml — service api
 volumes:
-  - ./kubeconfig.yaml:/root/.kube/config:ro
+  - ./kubeconfig.yaml:/etc/labondemand/kubeconfig:ro
 ```
 
-L'application détecte automatiquement le kubeconfig via `config.load_kube_config()`. En production (in-cluster), utiliser `config.load_incluster_config()`.
+L'image définit `KUBECONFIG=/etc/labondemand/kubeconfig`, que `config.load_kube_config()` lit par défaut (l'ancien chemin `/root/.kube/config` n'est plus lisible par l'utilisateur non-root). Le kubeconfig doit être lisible par l'UID de l'image (voir plus haut).
 
 > Le kubeconfig est un secret opérationnel. Ne le versionnez jamais.
 
@@ -279,17 +309,11 @@ L'application détecte automatiquement le kubeconfig via `config.load_kube_confi
 ## Lancer les tests
 
 ```bash
-# Suite complète (recommandé — même environnement que la CI)
-docker compose exec api python -m pytest backend/tests/ -q
+# Suite backend complète (même commande que la CI)
+docker compose --profile test run --rm --build tests
 
-# Un seul fichier
-docker compose exec api python -m pytest backend/tests/test_classrooms.py -q
-
-# Un seul test, avec affichage des logs
-docker compose exec api python -m pytest backend/tests/test_auth.py::test_login_success -v -s
-
-# Alternative hors Docker (nécessite un virtualenv configuré)
-PYTHONPATH=. pytest backend/tests/ -q
+# Build de production du frontend (type-check + Vite)
+docker compose build frontend
 ```
 
-Voir `documentation/testing.md` pour la configuration détaillée et la liste des fixtures.
+Voir `documentation/testing.md` pour les variantes (un fichier, un test), la configuration et la liste des fixtures.

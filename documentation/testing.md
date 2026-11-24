@@ -11,33 +11,29 @@ read_when: |
 
 ## Lancer les tests
 
-La suite pytest tourne entièrement en mémoire — aucune dépendance externe (MariaDB, Redis, Kubernetes) n'est requise.
+La suite pytest tourne entièrement en mémoire — aucune dépendance externe (MariaDB, Redis, Kubernetes) n'est requise, ni `.env`, ni `kubeconfig.yaml`. Elle s'exécute dans le service Compose `tests` (profil `test`), construit depuis la cible `test` du `Dockerfile` racine (image API + `backend/requirements-test.txt`), sans réseau (`network_mode: none`).
 
 ```bash
-# Depuis un conteneur déjà démarré (recommandé)
-docker compose exec api python -m pytest backend/tests/ -q
+# Suite complète (reconstruit l'image avec le code courant)
+docker compose --profile test run --rm --build tests
 
-# Avec affichage des logs (utile pour déboguer)
-docker compose exec api python -m pytest backend/tests/ -q -s
-
-# Un seul fichier
-docker compose exec api python -m pytest backend/tests/test_classrooms.py -q
-
-# Un seul test
-docker compose exec api python -m pytest backend/tests/test_auth.py::test_login_success -v
-
-# Stopper au premier échec
-docker compose exec api python -m pytest backend/tests/ -x -q
-
-# Relancer uniquement les tests en échec
-docker compose exec api python -m pytest backend/tests/ --lf -q
+# Arguments pytest : ils remplacent la commande par défaut (répertoire de travail : backend/)
+docker compose --profile test run --rm --build tests python -m pytest tests/test_classrooms.py -q
+docker compose --profile test run --rm --build tests python -m pytest tests/test_auth.py -k login -v
+docker compose --profile test run --rm --build tests python -m pytest -x -q -s
 ```
 
-> **Alternative hors Docker** (si tu as un virtualenv configuré) :
-> ```bash
-> PYTHONPATH=. pytest backend/tests/ -q
-> ```
-> Voir `documentation/development-setup.md` pour les prérequis.
+Le code est copié dans l'image au moment du build : sans `--build`, c'est la version de la dernière construction qui est testée.
+
+L'image d'exécution de l'API ne contient pas pytest : `docker compose exec api python -m pytest ...` ne fonctionne plus.
+
+Pour le frontend, la vérification minimale est la construction de l'image de production (type-check TypeScript + build Vite) :
+
+```bash
+docker compose build frontend
+```
+
+La CI GitHub Actions (`.github/workflows/ci.yml`) exécute ces mêmes étapes sur chaque pull request et chaque push sur `master` : validation des fichiers Compose, suite backend, construction de l'image API et de l'image frontend.
 
 ---
 
@@ -60,6 +56,8 @@ docker compose exec api python -m pytest backend/tests/ --lf -q
 | `test_submissions.py` | Soumissions étudiants, notation manuelle, statut de correction |
 | `test_migrations.py` | Idempotence des 18 migrations SQL |
 | `test_seed.py` | Idempotence du seeding (admin, templates, runtime configs) |
+| `test_files.py` | Explorateur de fichiers des volumes (liste, téléversement, téléchargement zip, garde-fous de chemin) |
+| `test_grading.py` | Grader Pod : manifeste Job + NetworkPolicy, score, endpoints, watcher |
 
 ---
 
@@ -137,15 +135,8 @@ async def test_student_cannot_create_classroom(student_client):
 
 ---
 
-## Tests exclus de la suite automatique
+## Tests hors suite automatique
 
-`test_ui.py` (tests Selenium) nécessite un navigateur et un serveur live — il est exclu du `pytest.ini` et doit être lancé manuellement :
+Il n'y a plus de tests d'interface Selenium (`test_ui.py` visait l'ancien frontend statique, supprimé). Les vérifications d'interface se font manuellement (captures ou notes dans la pull request).
 
-```bash
-# Démarrer l'application d'abord
-docker compose up
-
-# Dans un autre terminal
-pip install selenium
-pytest backend/tests/test_ui.py -v
-```
+`tests/load_test_deployments.py` (racine du dépôt) est un script de charge qui crée de vrais déploiements sur le cluster ; il n'est pas lancé par pytest. Mode d'emploi en tête du fichier.

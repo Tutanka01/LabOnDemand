@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 
-LabOnDemand is a Dockerized FastAPI platform with a React/Vite frontend. Backend source lives in `backend/` and is served as `backend.main:app` by the `api` service. The main frontend application lives in `frontend-app/` and is built into an Nginx image by the `frontend` service. The legacy `frontend/` directory may still exist, but it is not the primary UI unless a task explicitly says otherwise.
+LabOnDemand is a Dockerized FastAPI platform with a React/Vite frontend. Backend source lives in `backend/` and is served as `backend.main:app` by the `api` service. The main frontend application lives in `frontend-app/` and is built into an Nginx image by the `frontend` service. The former static `frontend/` directory has been removed.
 
-Integration and regression tests belong in `backend/tests/` (unit/API suite, `pytest.ini` lives in `backend/`). The top-level `tests/` directory holds load and integration scripts (for example `load_test_deployments.py`), not the main suite. Deployment and operations assets are split across `compose.yaml`, `Dockerfile`, `frontend-app/Dockerfile`, `nginx/`, `dockerfiles/`, `deploy/` (manifestes Kubernetes), `kubeconfig.yaml`, and `documentation/`. Shared images and diagrams are stored under `Diagrammes/Images/`.
+Integration and regression tests belong in `backend/tests/` (unit/API suite, `pytest.ini` lives in `backend/`). The top-level `tests/` directory holds load and integration scripts (for example `load_test_deployments.py`), not the main suite. Deployment and operations assets are split across `compose.yaml` (dev + `tests` profile), `compose.prod.yaml` (production override), `Dockerfile` (API image: `test` and `runtime` targets), `.github/workflows/`, `frontend-app/Dockerfile`, `nginx/`, `dockerfiles/`, `deploy/` (Kubernetes manifests), `kubeconfig.yaml`, and `documentation/`. Shared images and diagrams are stored under `Diagrammes/Images/`.
 
 ## Before Starting Work
 
@@ -17,7 +17,6 @@ Several environment facts are stable and documented; re-discovering them is wast
 - Do not rebuild or re-push a lab image unless its Dockerfile (or a `--build-arg` input) changed. amd64 builds run
   under emulation on Apple Silicon and take 10–20 minutes; BuildKit reuses cached layers after an interrupt.
 - Do not run node image prune/pre-pull unless the task explicitly asks for it (it is slow and re-downloads images).
-- The pre-existing test failures listed in `Testing Guidelines` are known; do not debug them again.
 - Docker Hub credentials for `tutanka01` are already in the local credential store; no `docker login` is needed.
 
 ## Lab Kubernetes Cluster
@@ -80,12 +79,14 @@ This project runs under Docker Compose. Do not use host-level `npm`, `node`, `uv
 Use these examples:
 
 - `cp .env.exemple .env`: create local configuration before running services.
-- `docker compose up --build`: build and run the API, frontend, MariaDB, and Redis stack.
-- `docker compose up -d --build`: run the full stack in the background.
+- `docker compose up --build`: build and run the dev stack (API with `--reload` and `backend/` mounted, frontend, MariaDB, Redis).
+- `docker compose up -d --build`: run the dev stack in the background.
+- `docker compose -f compose.yaml -f compose.prod.yaml up -d --build`: production (baked code, no reload, only the frontend published, required secrets, healthchecks, log rotation).
 - `docker compose down`: stop local containers while preserving named volumes.
 - `docker compose logs -f api`: follow backend logs.
 - `docker compose logs -f frontend`: follow frontend/Nginx logs.
-- `docker compose exec -T api python -m pytest backend/tests -q --ignore=backend/tests/test_ui.py`: run the backend test suite inside the API container.
+- `docker compose --profile test run --rm --build tests`: run the backend test suite (Dockerfile `test` target; needs no `.env`, kubeconfig, MariaDB or Redis).
+- `docker compose exec api python -m backend.reset_admin`: reset (or create) a local admin password.
 - `docker compose build frontend`: validate the production frontend build through the Dockerfile.
 - `docker compose build api`: rebuild the backend image after dependency or Dockerfile changes.
 
@@ -95,7 +96,9 @@ The `frontend-app/package.json` scripts are for the Docker image build and shoul
 
 Use Python 3.13-compatible code for the container runtime. Follow PEP 8 with 4-space indentation, `snake_case` for functions and variables, `PascalCase` for classes, and explicit type hints on new FastAPI handlers and service functions. Keep backend logic inside `backend/` modules rather than embedding behavior in route handlers.
 
-The API container mounts `./backend`, `./.env`, `./kubeconfig.yaml`, and `./logs`. Treat `kubeconfig.yaml` and `.env` as local secrets. Avoid tests or code paths that require a live Kubernetes cluster unless clearly marked as integration-level.
+In dev the API container mounts `./backend`, `./kubeconfig.yaml` (at `/etc/labondemand/kubeconfig`, the image's `KUBECONFIG`) and `./logs`; `.env` is injected with `env_file`. The image runs as the non-root user `app` (UID 1000, build args `APP_UID`/`APP_GID`). Treat `kubeconfig.yaml` and `.env` as local secrets.
+
+The API must stay a single uvicorn process (in-process cleanup loop and in-memory rate limiter): do not add `--workers`. Route handlers that do DB or Kubernetes work are plain `def` (FastAPI threadpool); keep `async def` for WebSockets, streaming and background loops, and move blocking calls there into a thread. Kubernetes calls have default timeouts (`K8S_CONNECT_TIMEOUT_SECONDS`, `K8S_READ_TIMEOUT_SECONDS`); when the cluster is unreachable, list/read endpoints return HTTP 503, never an empty 200. Avoid tests or code paths that require a live Kubernetes cluster unless clearly marked as integration-level.
 
 ## Frontend Guidelines
 
@@ -109,19 +112,18 @@ Keep UI code typed and component-focused. Use descriptive filenames and colocate
 
 Place backend tests in `backend/tests/` using `test_*.py` filenames and descriptive test function names such as `test_teacher_quota_is_enforced`. Prefer focused unit tests for authorization, session handling, template validation, Kubernetes object generation, and API regressions.
 
-Run tests through Docker Compose, for example:
+Run tests through Docker Compose (the same command runs in CI, `.github/workflows/ci.yml`):
 
 ```bash
-docker compose exec -T api python -m pytest backend/tests -q --ignore=backend/tests/test_ui.py
+docker compose --profile test run --rm --build tests
+docker compose --profile test run --rm --build tests python -m pytest tests/test_auth.py -q   # cwd is backend/
 ```
 
-Known pre-existing failures on a clean checkout (do not debug them again):
+The tests image bakes the code at build time: keep `--build`. The runtime API image has no pytest, so `docker compose exec api python -m pytest` does not work.
 
-- `backend/tests/test_ui.py` cannot be collected: `selenium` is not installed in the API image (integration-level).
-- `test_deployments.py::test_list_deployments_with_items` and `test_health.py::test_health_connected` fail for
-  reasons unrelated to most changes.
+The suite is expected to be fully green; a failing test is a real regression, not a known failure.
 
-If a test dependency is genuinely needed, install or bake it into the container workflow rather than relying on a host virtualenv.
+If a test dependency is genuinely needed, add it to `backend/requirements-test.txt` (installed by the Dockerfile `test` stage) rather than relying on a host virtualenv.
 
 For frontend changes, at minimum run `docker compose build frontend` to verify the TypeScript/Vite production build. For UI behavior changes, include screenshots or manual verification notes in the pull request.
 

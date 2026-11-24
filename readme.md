@@ -15,11 +15,19 @@ git clone <repo> && cd LabOnDemand
 cp .env.exemple .env          # adapter ADMIN_DEFAULT_PASSWORD, REDIS_PASSWORD et CLUSTER_EXTERNAL_IP
 nano kubeconfig.yaml          # secret local: ne pas versionner
 docker compose up --build
-# → API sur http://localhost:8000  |  Frontend sur http://localhost
+# → Frontend sur http://localhost  |  API (dev) sur http://127.0.0.1:8000
 # → Compte admin: admin / valeur de ADMIN_DEFAULT_PASSWORD
 ```
 
-Voir [documentation/development-setup.md](documentation/development-setup.md) pour la configuration complète (.env, kubeconfig, stockage persistant).
+| Usage | Commande |
+|---|---|
+| Développement (rechargement à chaud) | `docker compose up --build` |
+| Production | `docker compose -f compose.yaml -f compose.prod.yaml up -d --build` |
+| Tests backend (sans `.env` ni cluster) | `docker compose --profile test run --rm --build tests` |
+| Build de production du frontend | `docker compose build frontend` |
+| Réinitialiser le mot de passe admin | `docker compose exec api python -m backend.reset_admin` |
+
+La CI GitHub Actions lance les tests backend et les builds des images API et frontend sur chaque pull request. Voir [documentation/development-setup.md](documentation/development-setup.md) pour la configuration complète (.env, kubeconfig, différences dev/production).
 
 ## Fonctionnalités
 
@@ -42,8 +50,8 @@ Voir [documentation/development-setup.md](documentation/development-setup.md) po
 | Document | Contenu |
 |---|---|
 | [architecture.md](documentation/architecture.md) | Structure du code, flux d'une requête, RBAC, Ingress |
-| [development-setup.md](documentation/development-setup.md) | Setup local, variables .env, migrations |
-| [testing.md](documentation/testing.md) | Suite de tests automatisés (pytest, fixtures, mocks) |
+| [development-setup.md](documentation/development-setup.md) | Setup local, dev/production, variables .env, migrations |
+| [testing.md](documentation/testing.md) | Suite de tests automatisés (pytest, fixtures, mocks, CI) |
 | [security.md](documentation/security.md) | Sessions, RBAC, mots de passe, OIDC, secrets K8s |
 | [lifecycle.md](documentation/lifecycle.md) | TTL et nettoyage automatique des labs Kubernetes |
 | [assignment-lifecycle.md](documentation/assignment-lifecycle.md) | Cycle de vie des devoirs, soumissions et corrections |

@@ -99,7 +99,7 @@ Les variables `AUDIT_LOG_*` permettent de configurer une retention plus longue p
 | `access.log` | 5 MiB | 10 | ~55 MiB |
 | `audit.log` | 10 MiB | 30 | ~310 MiB |
 
-Exporter `LOG_DIR` permet de rediriger les journaux vers un volume partage ou un chemin specifique. Sur Docker Compose, `compose.yaml` monte `./logs:/app/logs` pour persister localement entre redemarrages.
+Exporter `LOG_DIR` permet de rediriger les journaux vers un volume partage ou un chemin specifique. Sur Docker Compose, `compose.yaml` monte `./logs:/app/logs` pour persister localement entre redemarrages. L'API tourne sous un utilisateur non-root (UID 1000 par defaut, build arg `APP_UID`) : sur un hote Linux, `./logs` doit lui appartenir (`sudo chown -R 1000:1000 logs`). En production, `compose.prod.yaml` limite aussi la sortie console des conteneurs (driver `json-file`, 5 fichiers de 10 Mo).
 
 ## Collecte et exploitation
 
@@ -163,7 +163,7 @@ Des champs supplementaires sont ajoutes selon le contexte (ex: `deployment_name`
 Les logs d'audit sont consultables directement dans le dashboard d'administration sans acces SSH :
 
 ```
-http://<host>/admin.html#audit
+http://<host>/admin#audit
 ```
 
 L'API lit automatiquement `audit.log` ET tous les fichiers rotat\u00e9s (`audit.log.1` … `audit.log.N`), fusionnant et triant les entrees par timestamp. L'historique complet reste visible dans l'UI meme apres plusieurs rotations.
@@ -203,7 +203,7 @@ Certains bruits de logs ont ete desactives:
 - Configuration: `backend/config.py`
 - Volume Compose: `compose.yaml`
 - Exemple d audit: consulter `logs/audit.log`
-- Interface UI audit: `frontend/admin.html` + `frontend/js/audit-logs.js`
+- Interface UI audit: `frontend-app/src/components/admin/AuditLogViewer.tsx` (onglet `/admin#audit`)
 - Documentation audit detaillee: [`audit-logs.md`](audit-logs.md)
 
 Pour toute amelioration ou ajout de loggers, mettez a jour cette documentation et soumettez une merge request pour validation.

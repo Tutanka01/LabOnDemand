@@ -17,8 +17,8 @@ logs d'audit et dark mode.
 
 ## Accès à l'interface d'administration
 
-- **Gestion des utilisateurs** : `http://<host>/admin.html`
-- **Statistiques du cluster** : `http://<host>/admin-stats.html`
+- **Gestion des utilisateurs** : `http://<host>/admin`
+- **Statistiques du cluster** : `http://<host>/admin-stats`
 - **API (Swagger)** : `http://<host>/docs` (uniquement si `DEBUG_MODE=true`)
 - **Health check** : `GET /api/v1/health`
 
@@ -125,7 +125,7 @@ file: <fichier.csv>
 ### Via cURL
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/auth/users/import \
+curl -X POST http://localhost/api/v1/auth/users/import \
   -H "Cookie: session_id=<token>" \
   -F "file=@etudiants.csv"
 ```
@@ -183,7 +183,7 @@ Tous les paramètres sont optionnels. `null` signifie "utiliser la valeur du rô
 de plus de CPU pendant 2 semaines.
 
 ```bash
-curl -X PUT "http://localhost:8000/api/v1/auth/users/42/quota-override?max_apps=10&max_cpu_m=4000&expires_at=2026-03-15T00:00:00" \
+curl -X PUT "http://localhost/api/v1/auth/users/42/quota-override?max_apps=10&max_cpu_m=4000&expires_at=2026-03-15T00:00:00" \
   -H "Cookie: session_id=<token_admin>"
 ```
 
@@ -213,7 +213,7 @@ get_role_limits(role="student", user_id=42)
 ### Health check
 
 ```bash
-curl http://localhost:8000/api/v1/health
+curl http://localhost/api/v1/health
 ```
 
 ```json
@@ -226,14 +226,14 @@ curl http://localhost:8000/api/v1/health
 }
 ```
 
-Valeurs possibles par composant : `"ok"` ou `"error: <message>"`.
+Valeurs possibles par composant : `"ok"` ou `"error"` (le détail de l'erreur est écrit dans `logs/app.log`, jamais renvoyé au client).
 
 Intégrer dans Docker Compose, Prometheus Blackbox Exporter ou tout outil de
 monitoring externe.
 
 ### Statistiques du cluster
 
-Page `admin-stats.html` — accessible aux admins et enseignants.
+Page `admin-stats` — accessible aux admins et enseignants.
 
 Via l'API :
 
@@ -288,7 +288,7 @@ L'interface **Logs d'Audit** permet aux administrateurs de consulter, filtrer, p
 ### Accès
 
 ```
-http://<host>/admin.html#audit
+http://<host>/admin#audit
 ```
 
 L'onglet est réservé au rôle `admin`. Il se charge en lazy loading à la première ouverture.
@@ -333,7 +333,7 @@ Le bouton **Exporter JSON** télécharge toutes les entrées correspondant aux f
 ```bash
 # Équivalent cURL
 curl -H "Cookie: session_id=<token_admin>" \
-  "http://localhost:8000/api/v1/audit-logs?export=json&category=auth&date_from=2026-01-01T00:00:00" \
+  "http://localhost/api/v1/audit-logs?export=json&category=auth&date_from=2026-01-01T00:00:00" \
   -o export.json
 ```
 
@@ -389,7 +389,7 @@ En l'absence de préférence stockée, le mode suit la configuration système
 (`prefers-color-scheme`).
 
 Pour changer le mode par défaut à l'échelle de la plateforme, modifier
-`frontend/js/darkmode.js` (fonction `getPreferredTheme`).
+`frontend-app/src/lib/theme.ts`.
 
 ---
 
@@ -397,11 +397,11 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 
 | Objectif | Commande |
 |----------|----------|
-| Healthcheck API | `curl http://localhost:8000/api/v1/health` |
-| Lister les utilisateurs | `curl -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users` |
-| Importer un CSV | `curl -X POST -F "file=@users.csv" -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users/import` |
-| Voir la dérogation quota | `curl -H "Cookie: session_id=<tok>" http://localhost:8000/api/v1/auth/users/42/quota-override` |
-| Logs d'audit (UI) | `http://<host>/admin.html#audit` |
+| Healthcheck API | `curl http://localhost/api/v1/health` |
+| Lister les utilisateurs | `curl -H "Cookie: session_id=<tok>" http://localhost/api/v1/auth/users` |
+| Importer un CSV | `curl -X POST -F "file=@users.csv" -H "Cookie: session_id=<tok>" http://localhost/api/v1/auth/users/import` |
+| Voir la dérogation quota | `curl -H "Cookie: session_id=<tok>" http://localhost/api/v1/auth/users/42/quota-override` |
+| Logs d'audit (UI) | `http://<host>/admin#audit` |
 | Logs d'audit (CLI) | `tail -f logs/audit.log \| python3 -m json.tool` |
 | Logs application | `docker compose logs -f api` |
 | Namespaces K8s actifs | `kubectl get ns -l managed-by=labondemand` |
@@ -411,7 +411,7 @@ Pour changer le mode par défaut à l'échelle de la plateforme, modifier
 ## Sécurité — rappels admin
 
 - Changer `ADMIN_DEFAULT_PASSWORD` dès la première connexion
-- Ne jamais activer `DEBUG_MODE=True` en production (expose Swagger + test-auth)
+- Ne jamais activer `DEBUG_MODE=True` en production (expose Swagger)
 - Surveiller `logs/audit.log` (ou l'onglet **Logs d'Audit** dans l'UI) pour les actions sensibles : `user_deleted`, `quota_override_set`, `users_imported_csv`
 - Les sessions expirées sont automatiquement purgées par Redis (TTL Redis = `SESSION_EXPIRY_HOURS`)
 - Un admin supprimé voit ses sessions immédiatement invalidées

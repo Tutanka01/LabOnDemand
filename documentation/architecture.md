@@ -82,7 +82,9 @@ LabOnDemand/
 │   │   └── lamp_deploy.py          # Stack LAMP (Apache + PHP + MySQL + phpMyAdmin)
 │   ├── tasks/                      # Tâches de fond asyncio
 │   │   └── cleanup.py              # Nettoyage labs expirés + namespaces orphelins + runs grader bloqués
-│   └── tests/                      # Suite pytest (18 fichiers, SQLite in-memory)
+│   ├── reset_admin.py              # Réinitialisation d'un compte admin (python -m backend.reset_admin)
+│   ├── pytest.ini + requirements-test.txt
+│   └── tests/                      # Suite pytest (SQLite in-memory, Redis/K8s mockés)
 ├── frontend-app/                   # SPA React/TypeScript/Vite (frontend principal)
 │   ├── src/
 │   │   ├── components/
@@ -100,13 +102,16 @@ LabOnDemand/
 │   │   └── styles/main.css         # Tailwind + variables CSS
 │   ├── Dockerfile                  # Build Node.js 20 → runtime Nginx:alpine
 │   └── package.json
-├── frontend/                       # Ancien frontend HTML/Vanilla JS (legacy, non utilisé)
 ├── documentation/                  # Documentation détaillée (ce dossier)
 ├── dockerfiles/                    # Dockerfiles images de déploiement (vscode, etc.)
 │   └── grader/                     # Image Grader Pod (Dockerfile + grader.py + contrat, voir grader-pod.md)
 ├── nginx/                          # Configuration Nginx
-├── tests/                          # Tests d'intégration / charge
-└── compose.yaml                    # Docker Compose (dev/local)
+├── tests/                          # Script de charge (load_test_deployments.py), hors pytest
+├── deploy/                         # Manifestes Kubernetes (Ingress Traefik…)
+├── .github/workflows/ci.yml        # CI : Compose config, tests backend, images API et frontend
+├── Dockerfile                      # Image API : cibles base / test / runtime (non-root)
+├── compose.yaml                    # Docker Compose (dev + service `tests` sous le profil `test`)
+└── compose.prod.yaml               # Override de production
 ```
 
 > `*` = endpoint rate-limité (10 créations / 5 min par IP)
@@ -336,7 +341,16 @@ Les étapes 1 et 2 sont non-bloquantes : une erreur K8s ou Redis n'empêche pas 
 }
 ```
 
-Utilisé par Docker Compose (`healthcheck`), le monitoring externe, et les outils de déploiement CI/CD.
+Utilisé par le monitoring externe. Comme il interroge Kubernetes, il n'est **pas** utilisé comme healthcheck de conteneur : le `HEALTHCHECK` de l'image API (et `compose.prod.yaml`) appelle `GET /api/v1/status`, qui ne dépend d'aucun service externe.
+
+---
+
+## Exécution et concurrence
+
+- L'API tourne dans **un seul processus uvicorn** (pas de `--workers`) : la tâche de nettoyage (`tasks/cleanup.py`) et le limiteur de débit (slowapi) vivent en mémoire dans ce processus ; plusieurs workers dupliqueraient la boucle de nettoyage et fausseraient les limites.
+- Les handlers qui font des appels base de données ou Kubernetes sont des fonctions `def` synchrones, exécutées par FastAPI dans son pool de threads ; `async def` est réservé aux WebSockets, aux transferts en streaming et aux boucles de fond, qui délèguent leurs appels bloquants à un thread. Un appel Kubernetes lent ne bloque donc plus les autres requêtes.
+- Chaque appel au client Kubernetes a un délai par défaut (`K8S_CONNECT_TIMEOUT_SECONDS`, `K8S_READ_TIMEOUT_SECONDS`). Si le cluster est injoignable, les endpoints de liste/lecture répondent **HTTP 503** avec un `detail` (et non une liste vide) ; `GET /api/v1/k8s/ping` reste à 200 avec `{"k8s": false}`.
+- Le pool de connexions MariaDB est dimensionné pour ce pool de threads (`DB_POOL_*`, voir `development-setup.md`).
 
 ---
 
@@ -363,4 +377,4 @@ Bibliothèques clés :
 - **Xterm.js** : terminal WebSocket intégré dans le dashboard
 - **lucide-react** : icônes
 
-L'UI est bilingue (français / anglais). Les chaînes de traduction sont dans `frontend-app/src/locales/fr.json` et `en.json`. Toute nouvelle chaîne visible doit être ajoutée dans les deux fichiers.
+L'UI est bilingue (français / anglais). Les chaînes de traduction sont dans `frontend-app/src/locales/fr.json` et `en.json`, complétés par des fichiers par domaine `frontend-app/src/locales/{fr,en}/*.json`. Toute nouvelle chaîne visible doit être ajoutée en français et en anglais.
