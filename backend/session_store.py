@@ -1,7 +1,8 @@
-from datetime import timedelta
-import os
-from typing import Dict, Any, Optional
 import json
+import logging
+import os
+import time
+from typing import Any, Dict, Optional
 
 # Nouveau backend: Redis
 try:
@@ -17,8 +18,7 @@ SESSION_EXPIRY_HOURS = int(os.getenv("SESSION_EXPIRY_HOURS", "24"))
 SESSION_TTL_SECONDS = SESSION_EXPIRY_HOURS * 3600
 REDIS_NAMESPACE = os.getenv("REDIS_NAMESPACE", "session:")
 
-
-import time
+logger = logging.getLogger("labondemand.session_store")
 
 
 class RedisSessionStore:
@@ -65,8 +65,8 @@ class RedisSessionStore:
             # Si le contenu est corrompu, on supprime la clé pour éviter des erreurs futures
             try:
                 self.delete(session_id)
-            except Exception:
-                pass
+            except redis.RedisError as exc:
+                logger.warning("corrupted_session_delete_failed", extra={"extra_fields": {"error": str(exc)}})
             return None
 
     def delete(self, session_id: str) -> bool:

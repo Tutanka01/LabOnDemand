@@ -131,3 +131,36 @@ async def test_student_cannot_change_own_role(student_client, student_user):
         json={"role": "admin"},
     )
     assert r.status_code in (403, 422)
+
+
+# ---------- client_ip: real client address behind the nginx proxy ----------
+
+def _request_with(peer: str, headers: dict) -> "Request":
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "client": (peer, 12345),
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+    }
+    return Request(scope)
+
+
+def test_client_ip_uses_x_real_ip_from_local_proxy():
+    from backend.security import client_ip
+
+    assert client_ip(_request_with("172.18.0.5", {"X-Real-IP": "203.0.113.7"})) == "203.0.113.7"
+
+
+def test_client_ip_ignores_x_real_ip_from_public_peer():
+    from backend.security import client_ip
+
+    # A client reaching the API directly cannot pick its own rate-limit identity.
+    assert client_ip(_request_with("8.8.8.8", {"X-Real-IP": "203.0.113.7"})) == "8.8.8.8"
+
+
+def test_client_ip_falls_back_to_peer():
+    from backend.security import client_ip
+
+    assert client_ip(_request_with("172.18.0.5", {})) == "172.18.0.5"
+    assert client_ip(_request_with("172.18.0.5", {"X-Real-IP": "not-an-ip"})) == "172.18.0.5"

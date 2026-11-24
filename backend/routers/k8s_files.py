@@ -4,6 +4,10 @@ Toutes les opérations passent par un exec one-shot dans le pod du lab
 (équivalent de ``kubectl exec``). Conséquence assumée : un lab en pause
 (``replicas=0``) n'a pas de pod, donc pas de navigation possible tant qu'il
 n'est pas repris.
+
+Every handler is a plain ``def`` (run in FastAPI's threadpool): the Kubernetes
+client and its exec websocket are blocking. Downloads return sync generators,
+which Starlette iterates in a worker thread as well.
 """
 from __future__ import annotations
 
@@ -21,11 +25,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from kubernetes import client
 from kubernetes.stream import stream as k8s_stream
-from starlette.concurrency import run_in_threadpool
 
 from .. import schemas
 from ..deployment_service import deployment_service
-from ..k8s_utils import build_user_namespace, validate_k8s_name
+from ..k8s_utils import validate_k8s_name
 from ..models import User, UserRole
 from ..security import get_current_user
 from ._helpers import audit_logger, raise_k8s_http
@@ -508,7 +511,7 @@ def _stream_headers(filename: str, inline: bool = False) -> dict:
 
 
 @router.get("/files", response_model=schemas.VolumeFileList)
-async def list_files(
+def list_files(
     namespace: str,
     pod: Optional[str] = None,
     pvc: Optional[str] = None,
@@ -572,7 +575,7 @@ async def list_files(
 
 
 @router.get("/files/download")
-async def download_file(
+def download_file(
     namespace: str,
     path: str,
     pod: Optional[str] = None,
@@ -639,7 +642,7 @@ async def download_file(
 
 
 @router.get("/files/preview")
-async def preview_file(
+def preview_file(
     namespace: str,
     path: str,
     pod: Optional[str] = None,
@@ -691,7 +694,7 @@ async def preview_file(
 
 
 @router.post("/files/upload", response_model=schemas.VolumeFileEntry)
-async def upload_file(
+def upload_file(
     namespace: str = Form(...),
     path: str = Form(...),
     file: UploadFile = File(...),
@@ -707,9 +710,11 @@ async def upload_file(
     destination = f"{directory.rstrip('/')}/{filename}"
     core_v1 = client.CoreV1Api()
 
+    # Sync handler: the multipart body is already spooled by Starlette, so the
+    # upload is read straight from its file object, off the event loop.
     total = file.size
     if total is None:  # pragma: no cover - Starlette fournit toujours .size
-        content = await file.read()
+        content = file.file.read()
         total = len(content)
         chunks = [content]
     else:
@@ -743,17 +748,17 @@ async def upload_file(
     try:
         if chunks is None:
             while True:
-                chunk = await file.read(_CHUNK_SIZE)
+                chunk = file.file.read(_CHUNK_SIZE)
                 if not chunk:
                     break
-                await run_in_threadpool(ws_client.write_stdin, chunk)
+                ws_client.write_stdin(chunk)
         else:
             for chunk in chunks:
-                await run_in_threadpool(ws_client.write_stdin, chunk)
+                ws_client.write_stdin(chunk)
 
         deadline = time.monotonic() + _EXEC_TIMEOUT
         while ws_client.is_open() and time.monotonic() < deadline:
-            await run_in_threadpool(ws_client.update, 0.2)
+            ws_client.update(0.2)
         if ws_client.is_open():
             raise HTTPException(status_code=504, detail="Dépôt interrompu (pod injoignable)")
         errors = ws_client.read_all()
@@ -810,7 +815,7 @@ async def upload_file(
 
 
 @router.post("/files/mkdir", response_model=schemas.VolumeFileEntry)
-async def create_directory(
+def create_directory(
     payload: schemas.VolumeFileCreateRequest,
     current_user: User = Depends(get_current_user),
 ):
@@ -849,7 +854,7 @@ async def create_directory(
 
 
 @router.post("/files/rename", response_model=schemas.VolumeFileEntry)
-async def rename_entry(
+def rename_entry(
     payload: schemas.VolumeFileRenameRequest,
     current_user: User = Depends(get_current_user),
 ):
@@ -895,7 +900,7 @@ async def rename_entry(
 
 
 @router.delete("/files")
-async def delete_entry(
+def delete_entry(
     namespace: str,
     path: str,
     pod: Optional[str] = None,

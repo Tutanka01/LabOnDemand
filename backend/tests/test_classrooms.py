@@ -64,3 +64,39 @@ async def test_teacher_cannot_enroll_non_student(teacher_client, db, teacher_use
     body = r.json()
     assert body["enrolled"] == 0
     assert body["results"][0]["status"] == "error"
+
+
+async def test_classroom_lists_report_counts_and_active_labs(teacher_client, db, teacher_user, student_user):
+    from backend.models import Assignment, Deployment
+
+    classroom = Classroom(name="Counts", owner_id=teacher_user.id)
+    db.add(classroom)
+    db.commit()
+    db.refresh(classroom)
+    other = _make_extra_user(db, "student2", UserRole.student)
+    db.add_all([
+        Enrollment(classroom_id=classroom.id, user_id=student_user.id),
+        Enrollment(classroom_id=classroom.id, user_id=other.id),
+        Assignment(classroom_id=classroom.id, title="A1", instructions="x"),
+        Assignment(classroom_id=classroom.id, title="A2", instructions="x", status="archived"),
+        Deployment(user_id=student_user.id, name="old-lab", namespace="ns", deployment_type="custom", status="deleted"),
+        Deployment(user_id=student_user.id, name="lab-1", namespace="ns", deployment_type="custom", status="active"),
+    ])
+    db.commit()
+
+    r = await teacher_client.get(f"{BASE}/classrooms")
+    assert r.status_code == 200
+    row = next(c for c in r.json() if c["id"] == classroom.id)
+    assert (row["student_count"], row["active_assignment_count"]) == (2, 1)
+
+    r = await teacher_client.get(f"{BASE}/teacher/dashboard")
+    assert r.status_code == 200
+    row = next(c for c in r.json()["classrooms"] if c["id"] == classroom.id)
+    assert (row["student_count"], row["active_assignment_count"]) == (2, 1)
+
+    r = await teacher_client.get(f"{BASE}/classrooms/{classroom.id}/students")
+    assert r.status_code == 200
+    students = {s["username"]: s for s in r.json()}
+    assert students[student_user.username]["lab_name"] == "lab-1"
+    assert students[student_user.username]["lab_status"] == "active"
+    assert students["student2"]["lab_name"] is None

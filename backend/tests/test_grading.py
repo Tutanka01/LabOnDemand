@@ -94,11 +94,6 @@ def _run(db, aid, user_id, **kw):
     return r
 
 
-def _noop_async(*_a, **_k):
-    async def _inner():
-        return None
-    return _inner()
-
 
 # ── Unitaires : manifeste & sécurité ───────────────────────────────────────
 
@@ -203,9 +198,8 @@ async def test_student_run_tests_requires_lab(student_client, db, teacher_user, 
 
 
 async def test_student_run_tests_creates_queued_run(
-    student_client, db, teacher_user, student_user, monkeypatch
+    student_client, db, teacher_user, student_user, scheduled_gradings
 ):
-    monkeypatch.setattr("backend.grader_service.run_grading", _noop_async)
     cls = _classroom(db, teacher_user.id)
     asgn = _assignment(db, cls.id)
     _enroll(db, cls.id, student_user.id)
@@ -219,6 +213,7 @@ async def test_student_run_tests_creates_queued_run(
     assert body["status"] == "queued"
     assert body["trigger"] == "student_self"
     assert db.query(GradingRun).filter(GradingRun.assignment_id == asgn.id).count() == 1
+    assert scheduled_gradings == [body["id"]]
 
 
 async def test_run_tests_disabled_when_grading_mode_none(
@@ -273,9 +268,8 @@ async def test_teacher_test_now_requires_demo_lab(teacher_client, db, teacher_us
 
 
 async def test_teacher_run_tests_all_queues_per_student_with_lab(
-    teacher_client, db, teacher_user, student_user, monkeypatch
+    teacher_client, db, teacher_user, student_user, scheduled_gradings
 ):
-    monkeypatch.setattr("backend.grader_service.run_grading", _noop_async)
     cls = _classroom(db, teacher_user.id)
     asgn = _assignment(db, cls.id)
     _spec(db, asgn.id)
@@ -297,6 +291,7 @@ async def test_teacher_run_tests_all_queues_per_student_with_lab(
     r = await teacher_client.post(f"{BASE}/classrooms/{cls.id}/assignments/{asgn.id}/run-tests-all")
     assert r.status_code == 200
     assert r.json()["queued"] == 1
+    assert len(scheduled_gradings) == 1
 
 
 async def test_submissions_list_includes_verdict(teacher_client, db, teacher_user, student_user):
@@ -342,7 +337,7 @@ async def test_run_grading_pull_pipeline(db, teacher_user, student_user, monkeyp
     monkeypatch.setattr(grader_service, "_read_job_logs", lambda j, n: logs)
     monkeypatch.setattr(grader_service.settings, "GRADER_POLL_INTERVAL_SECONDS", 0)
 
-    await grader_service.run_grading(run.id)
+    grader_service.run_grading(run.id)
 
     db.expire_all()
     refreshed = db.query(GradingRun).filter(GradingRun.id == run.id).first()

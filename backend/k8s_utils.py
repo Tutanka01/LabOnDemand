@@ -3,20 +3,14 @@ Utilitaires Kubernetes - Fonctions de base pour les opérations K8s
 Principe KISS : fonctions simples et focalisées
 """
 
-import re
 import datetime
+import logging
+import re
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
 from kubernetes import client
 
-# Types légers pour éviter des imports circulaires coûteux
-try:
-    from .models import User, UserRole  # type: ignore
-except Exception:  # lors de l'import utilitaire isolé
-    User = Any  # type: ignore
-
-    class UserRole:  # type: ignore
-        student = "student"
+logger = logging.getLogger("labondemand.k8s")
 
 
 def validate_k8s_name(name: str) -> str:
@@ -105,20 +99,6 @@ def create_labondemand_labels(
     return labels
 
 
-def get_namespace_for_deployment(
-    deployment_type: str, user_namespace: Optional[str] = None
-) -> str:
-    """
-    Détermine le namespace approprié pour un déploiement
-    """
-    from .config import settings
-
-    if user_namespace:
-        return user_namespace
-
-    return settings.DEFAULT_NAMESPACES.get(deployment_type, "labondemand-custom")
-
-
 def build_user_namespace(user: Any) -> str:
     """
     Construit le namespace dédié à un utilisateur.
@@ -131,25 +111,6 @@ def build_user_namespace(user: Any) -> str:
     prefix = validate_k8s_name(settings.USER_NAMESPACE_PREFIX)
     user_id = user if isinstance(user, int) else user.id
     return validate_k8s_name(f"{prefix}-{user_id}")
-
-
-def should_use_user_namespace(
-    user: Any, deployment_type: str, explicit_namespace: Optional[str]
-) -> bool:
-    """
-    Stratégie d'isolation:
-    - Étudiants: namespace dédié obligatoire (ignore le namespace explicite non autorisé)
-    - Enseignants/Admins: utilisent leur namespace dédié par défaut, sauf si un namespace explicite est fourni
-    """
-    try:
-        role_val = getattr(user.role, "value", str(user.role))
-    except Exception:
-        role_val = str(getattr(user, "role", ""))
-    role_val = str(role_val)
-    if role_val == "student":
-        return True
-    # Pour teacher/admin: si un namespace explicite est fourni, on le respecte, sinon namespace user
-    return explicit_namespace is None
 
 
 def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
@@ -308,15 +269,24 @@ def ensure_namespace_baseline(namespace_name: str, role: str) -> bool:
 
         return True
     except Exception as e:
-        print(f"[namespace-baseline] Erreur sur {namespace_name}: {e}")
+        logger.warning(
+            "namespace_baseline_failed",
+            extra={"extra_fields": {"namespace": namespace_name, "error": str(e)}},
+        )
         return False
 
 
-def get_role_limits(role: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+def get_role_limits(
+    role: str, user_id: Optional[int] = None, db: Optional[Any] = None
+) -> Dict[str, Any]:
     """Retourne les plafonds de ressources pour un rôle, en tenant compte des
     dérogations de quota définies par un admin (``UserQuotaOverride``).
 
-    Priorité : override admin > défaut du rôle.
+    Priorité : override admin > défaut du rôle. ``db`` is an optional session
+    to read the override with (a short-lived one is opened otherwise).
+
+    Fails closed: when the override cannot be read, raises HTTP 503 instead of
+    falling back to the role defaults (an admin override may be stricter).
 
     Returns:
         Dict avec ``max_apps``, ``max_requests_cpu_m``, ``max_requests_mem_mi``,
@@ -348,66 +318,114 @@ def get_role_limits(role: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         return base
 
     # Appliquer l'override si présent et non expiré
-    try:
-        from .database import SessionLocal
-        from .models import UserQuotaOverride
-        from datetime import datetime, timezone
+    from .database import read_session
+    from .error_handlers import db_unavailable
+    from .models import UserQuotaOverride
 
-        with SessionLocal() as db:
-            now = datetime.now(timezone.utc)
-            override = (
-                db.query(UserQuotaOverride)
-                .filter(
-                    UserQuotaOverride.user_id == user_id,
-                    (UserQuotaOverride.expires_at == None)
-                    | (UserQuotaOverride.expires_at > now),  # noqa: E711
-                )
-                .first()
+    def _lookup(session: Any) -> Any:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return (
+            session.query(UserQuotaOverride)
+            .filter(
+                UserQuotaOverride.user_id == user_id,
+                (UserQuotaOverride.expires_at == None)  # noqa: E711
+                | (UserQuotaOverride.expires_at > now),
             )
-            if override:
-                if override.max_apps is not None:
-                    base["max_apps"] = override.max_apps
-                if override.max_cpu_m is not None:
-                    base["max_requests_cpu_m"] = override.max_cpu_m
-                if override.max_mem_mi is not None:
-                    base["max_requests_mem_mi"] = override.max_mem_mi
-    except Exception:
-        pass  # En cas d'erreur DB, utiliser les limites par défaut du rôle
+            .first()
+        )
 
+    try:
+        if db is not None:
+            override = _lookup(db)
+        else:
+            with read_session() as session:
+                override = _lookup(session)
+    except Exception as exc:
+        logger.error(
+            "quota_override_lookup_failed",
+            extra={"extra_fields": {"user_id": user_id, "error": str(exc)}},
+        )
+        raise db_unavailable()
+
+    if override:
+        if override.max_apps is not None:
+            base["max_apps"] = override.max_apps
+        if override.max_cpu_m is not None:
+            base["max_requests_cpu_m"] = override.max_cpu_m
+        if override.max_mem_mi is not None:
+            base["max_requests_mem_mi"] = override.max_mem_mi
     return base
 
 
-async def ensure_namespace_exists(namespace_name: str) -> bool:
+def _is_unreachable(exc: BaseException) -> bool:
+    """True when ``exc`` means the API server is unreachable or unusable
+    (transport error, platform credentials rejected, server-side failure),
+    as opposed to a request the cluster refused (RBAC, validation...)."""
+    from .error_handlers import K8S_TRANSPORT_ERRORS
+
+    if isinstance(exc, K8S_TRANSPORT_ERRORS):
+        return True
+    if isinstance(exc, client.exceptions.ApiException):
+        status = getattr(exc, "status", 0) or 0
+        return status == 401 or status >= 500 or not 100 <= status <= 599
+    return False
+
+
+def ensure_namespace_exists(namespace_name: str) -> bool:
+    """Make sure a namespace exists, creating it when missing (blocking call).
+
+    Returns False (after logging the cause) when the cluster refuses to read
+    or create it (RBAC...). Raises HTTP 503 when the cluster is unreachable.
     """
-    Vérifie qu'un namespace existe et le crée si nécessaire
-    """
+    from .error_handlers import k8s_unavailable
+
+    v1 = client.CoreV1Api()
     try:
-        v1 = client.CoreV1Api()
-        try:
-            v1.read_namespace(namespace_name)
-            return True
-        except client.exceptions.ApiException as e:
-            if e.status == 404:
-                # Créer le namespace
-                namespace_manifest = {
-                    "apiVersion": "v1",
-                    "kind": "Namespace",
-                    "metadata": {
-                        "name": namespace_name,
-                        "labels": {
-                            "managed-by": "labondemand",
-                            "created-at": datetime.datetime.now().strftime("%Y-%m-%d"),
-                        },
-                    },
-                }
-                v1.create_namespace(namespace_manifest)
-                print(f"Namespace {namespace_name} créé avec succès")
-                return True
-            else:
-                raise e
-    except Exception as e:
-        print(f"Erreur lors de la gestion du namespace {namespace_name}: {e}")
+        v1.read_namespace(namespace_name)
+        return True
+    except Exception as exc:
+        if _is_unreachable(exc):
+            logger.warning(
+                "namespace_read_unreachable",
+                extra={"extra_fields": {"namespace": namespace_name, "error": f"{type(exc).__name__}: {exc}"}},
+            )
+            raise k8s_unavailable()
+        if not (isinstance(exc, client.exceptions.ApiException) and exc.status == 404):
+            logger.error(
+                "namespace_read_failed",
+                extra={"extra_fields": {"namespace": namespace_name, "error": str(exc)}},
+            )
+            return False
+
+    namespace_manifest = {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {
+            "name": namespace_name,
+            "labels": {
+                "managed-by": "labondemand",
+                "created-at": datetime.datetime.now().strftime("%Y-%m-%d"),
+            },
+        },
+    }
+    try:
+        v1.create_namespace(namespace_manifest)
+    except Exception as exc:
+        if isinstance(exc, client.exceptions.ApiException) and exc.status == 409:
+            return True  # created concurrently by another request
+        if _is_unreachable(exc):
+            logger.warning(
+                "namespace_create_unreachable",
+                extra={"extra_fields": {"namespace": namespace_name, "error": f"{type(exc).__name__}: {exc}"}},
+            )
+            raise k8s_unavailable()
+        logger.error(
+            "namespace_create_failed",
+            extra={"extra_fields": {"namespace": namespace_name, "error": str(exc)}},
+        )
         return False
+    logger.info("namespace_created", extra={"extra_fields": {"namespace": namespace_name}})
+    return True
 
 
 def validate_resource_format(

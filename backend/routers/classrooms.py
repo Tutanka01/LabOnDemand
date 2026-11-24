@@ -10,22 +10,25 @@ Endpoints :
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import grader_service
+from .. import database, grader_service
 from ..database import get_db
 from ..deployment_service import deployment_service
+from ..error_handlers import K8S_UNAVAILABLE_DETAIL
 from ..models import (
     Assignment,
     AssignmentDeployment,
@@ -62,8 +65,13 @@ from ..schemas import (
 from ..security import get_current_user, is_teacher_or_admin
 from ..security import get_password_hash, validate_password_strength
 from ..config import settings
+from ._helpers import K8S_TRANSPORT_ERRORS, resolve_assignment_labs
 
 audit_logger = logging.getLogger("labondemand.audit")
+logger = logging.getLogger("labondemand.classrooms")
+
+# Student labs created in parallel by "deploy to all students".
+BULK_SPAWN_CONCURRENCY = 4
 
 classrooms_router = APIRouter(prefix="/api/v1/classrooms", tags=["classrooms"])
 teacher_router = APIRouter(prefix="/api/v1/teacher", tags=["teacher"])
@@ -168,7 +176,11 @@ def list_classrooms(
     if not include_archived:
         q = q.filter(Classroom.archived == False)  # noqa: E712
     classrooms = q.order_by(Classroom.created_at.desc()).all()
-    return [_enrich_classroom(c, db) for c in classrooms]
+    students, assignments = _classroom_counts([c.id for c in classrooms], db)
+    return [
+        _classroom_response(c, students.get(c.id, 0), assignments.get(c.id, 0))
+        for c in classrooms
+    ]
 
 
 @classrooms_router.post("", response_model=ClassroomResponse, status_code=201, dependencies=[Depends(is_teacher_or_admin)])
@@ -234,22 +246,23 @@ def list_students(
     cls = _get_classroom_or_404(cid, db)
     _require_classroom_access(cls, current_user, db)
 
-    enrollments = (
-        db.query(Enrollment)
-        .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
-        .all()
-    )
-    result = []
-    for enr in enrollments:
-        student = db.query(User).filter(User.id == enr.user_id).first()
-        if not student:
-            continue
-        active_dep = (
+    rows = _enrolled_students(cid, db)
+    # Most recent active lab per student, in one query.
+    active_labs: Dict[int, Deployment] = {}
+    if rows:
+        for dep in (
             db.query(Deployment)
-            .filter(Deployment.user_id == enr.user_id, Deployment.status == "active")
-            .order_by(Deployment.created_at.desc())
-            .first()
-        )
+            .filter(
+                Deployment.user_id.in_([student.id for _, student in rows]),
+                Deployment.status == "active",
+            )
+            .order_by(Deployment.created_at.desc(), Deployment.id.desc())
+        ):
+            active_labs.setdefault(dep.user_id, dep)
+
+    result = []
+    for enr, student in rows:
+        active_dep = active_labs.get(student.id)
         result.append(
             StudentLabStatus(
                 user_id=student.id,
@@ -356,7 +369,7 @@ def create_and_enroll_student(
 
 
 @classrooms_router.post("/{cid}/students/import", status_code=200, dependencies=[Depends(is_teacher_or_admin)])
-async def import_students_csv(
+def import_students_csv(
     cid: int,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -368,7 +381,8 @@ async def import_students_csv(
     if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Le fichier doit être au format CSV (.csv)")
 
-    content = await file.read()
+    # The upload is already spooled when a sync handler runs: read it directly.
+    content = file.file.read()
     try:
         text_content = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -433,7 +447,7 @@ def unenroll_student(
     enr = db.query(Enrollment).filter(Enrollment.classroom_id == cid, Enrollment.user_id == user_id, Enrollment.removed_at.is_(None)).first()
     if not enr:
         raise HTTPException(status_code=404, detail="Inscription introuvable")
-    enr.removed_at = datetime.utcnow()
+    enr.removed_at = datetime.now(timezone.utc)
     db.commit()
 
 
@@ -510,13 +524,138 @@ def archive_assignment(
     db.commit()
 
 
+@dataclass(frozen=True)
+class _SpawnSpec:
+    """Everything a worker needs to create one student lab (plain data, no ORM)."""
+
+    assignment_id: int
+    image: str
+    port: int
+    service_type: str
+    deployment_type: str
+    cpu_request: str
+    cpu_limit: str
+    memory_request: str
+    memory_limit: str
+    labels: Dict[str, str] = field(default_factory=dict)
+
+
+def _spawn_error_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    if isinstance(exc, K8S_TRANSPORT_ERRORS):
+        return K8S_UNAVAILABLE_DETAIL
+    return str(exc) or type(exc).__name__
+
+
+def _created_deployment_id(result: Any, user_id: int, dep_name: str, db: Session) -> Optional[int]:
+    """DB id of the lab just created (the service records it in its own session)."""
+    if isinstance(result, dict) and result.get("deployment_db_id"):
+        return int(result["deployment_db_id"])
+    row = (
+        db.query(Deployment.id)
+        .filter(
+            Deployment.user_id == user_id,
+            Deployment.name == dep_name,
+            Deployment.deleted_at.is_(None),
+        )
+        .order_by(Deployment.id.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def _spawn_student_lab(spec: _SpawnSpec, user_id: int, username: str, dep_name: str) -> BulkSpawnResult:
+    """Create one student's lab and record the outcome (runs in a worker thread).
+
+    Each step opens its own short-lived session: no session is shared between
+    threads, and no connection is held while Kubernetes works. Failures are
+    recorded per student and never propagate to the other workers.
+    """
+    dep_id: Optional[int] = None
+    error: Optional[str] = None
+    try:
+        with database.SessionLocal() as db:
+            student = db.query(User).filter(User.id == user_id).first()
+            if student is None:
+                raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+            db.expunge(student)  # detached copy with its columns loaded
+
+        result = deployment_service.create_deployment(
+            name=dep_name,
+            image=spec.image,
+            replicas=1,
+            namespace=None,
+            create_service=True,
+            service_port=spec.port,
+            service_target_port=spec.port,
+            service_type=spec.service_type,
+            deployment_type=spec.deployment_type,
+            cpu_request=spec.cpu_request,
+            cpu_limit=spec.cpu_limit,
+            memory_request=spec.memory_request,
+            memory_limit=spec.memory_limit,
+            additional_labels=dict(spec.labels),
+            current_user=student,
+        )
+        with database.SessionLocal() as db:
+            dep_id = _created_deployment_id(result, user_id, dep_name, db)
+    except Exception as exc:  # one student's failure must not abort the class
+        error = _spawn_error_message(exc)
+        logger.warning(
+            "bulk_spawn_student_failed",
+            exc_info=not isinstance(exc, HTTPException),
+            extra={
+                "extra_fields": {
+                    "assignment_id": spec.assignment_id,
+                    "user_id": user_id,
+                    "deployment_name": dep_name,
+                    "error": error,
+                }
+            },
+        )
+
+    try:
+        with database.SessionLocal() as db:
+            db.add(
+                AssignmentDeployment(
+                    assignment_id=spec.assignment_id,
+                    user_id=user_id,
+                    deployment_id=dep_id if error is None else None,
+                    spawn_status="ok" if error is None else "error",
+                    spawn_error=error[:500] if error else None,
+                )
+            )
+            db.commit()
+    except Exception:
+        # The lab itself may exist; report the bookkeeping failure for this student only.
+        logger.exception(
+            "bulk_spawn_record_failed",
+            extra={"extra_fields": {"assignment_id": spec.assignment_id, "user_id": user_id}},
+        )
+        if error is None:
+            error = "Lab créé mais non rattaché au devoir (erreur base de données)"
+
+    if error is not None:
+        return BulkSpawnResult(
+            user_id=user_id, username=username, status="error", error=error[:200], deployment_name=dep_name
+        )
+    return BulkSpawnResult(user_id=user_id, username=username, status="ok", deployment_name=dep_name)
+
+
 @classrooms_router.post("/{cid}/assignments/{aid}/deploy-all", response_model=BulkSpawnReport, dependencies=[Depends(is_teacher_or_admin)])
-async def deploy_assignment_to_class(
+def deploy_assignment_to_class(
     cid: int,
     aid: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Create the assignment lab for every active enrolled student.
+
+    Labs are created by a bounded pool of ``BULK_SPAWN_CONCURRENCY`` worker
+    threads, each with its own DB sessions; students that already have the lab
+    are skipped and a failing student is reported without stopping the others.
+    """
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
 
@@ -530,79 +669,71 @@ async def deploy_assignment_to_class(
     if asgn.template_key:
         template = db.query(Template).filter(Template.key == asgn.template_key, Template.active == True).first()  # noqa: E712
 
-    enrollments = (
-        db.query(Enrollment)
-        .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
-        .all()
+    spec = _SpawnSpec(
+        assignment_id=aid,
+        image=template.default_image if template else "nginx:latest",
+        port=template.default_port if template else 80,
+        service_type=template.default_service_type if template else "NodePort",
+        deployment_type=template.deployment_type if template else "custom",
+        cpu_request=_preset_cpu(asgn.cpu_preset, "request"),
+        cpu_limit=_preset_cpu(asgn.cpu_preset, "limit"),
+        memory_request=_preset_ram(asgn.ram_preset, "request"),
+        memory_limit=_preset_ram(asgn.ram_preset, "limit"),
+        labels={"labondemand.io/assignment-id": str(aid)},
     )
-    students = [db.query(User).filter(User.id == e.user_id, User.is_active == True).first() for e in enrollments]  # noqa: E712
-    students = [s for s in students if s]
 
-    sem = asyncio.Semaphore(5)
     slug = _slugify(asgn.title)
+    students = [
+        (student.id, student.username, f"{slug}-u{student.id}")
+        for _, student in _enrolled_students(cid, db, active_only=True)
+    ]
+    existing = {
+        (user_id, name)
+        for user_id, name in db.query(Deployment.user_id, Deployment.name).filter(
+            Deployment.user_id.in_([sid for sid, _, _ in students] or [-1]),
+            Deployment.name.in_([name for _, _, name in students] or [""]),
+            Deployment.status.in_(["active", "paused"]),
+        )
+    }
+    # End the read transaction so the request's pooled connection is released
+    # while the workers wait on Kubernetes.
+    db.rollback()
 
-    async def spawn_one(student: User) -> BulkSpawnResult:
-        async with sem:
-            dep_name = f"{slug}-u{student.id}"
-            existing = db.query(Deployment).filter(
-                Deployment.user_id == student.id,
-                Deployment.name == dep_name,
-                Deployment.status.in_(["active", "paused"]),
-            ).first()
-            if existing:
-                return BulkSpawnResult(user_id=student.id, username=student.username, status="skipped", deployment_name=dep_name)
-            try:
-                image = template.default_image if template else "nginx:latest"
-                port = template.default_port if template else 80
-                svc_type = template.default_service_type if template else "NodePort"
-                dep_type = template.deployment_type if template else "custom"
+    results: List[Optional[BulkSpawnResult]] = [None] * len(students)
+    pending = []
+    for index, (user_id, username, dep_name) in enumerate(students):
+        if (user_id, dep_name) in existing:
+            results[index] = BulkSpawnResult(
+                user_id=user_id, username=username, status="skipped", deployment_name=dep_name
+            )
+        else:
+            pending.append((index, user_id, username, dep_name))
 
-                result = await deployment_service.create_deployment(
-                    name=dep_name,
-                    image=image,
-                    replicas=1,
-                    namespace=None,
-                    create_service=True,
-                    service_port=port,
-                    service_target_port=port,
-                    service_type=svc_type,
-                    deployment_type=dep_type,
-                    cpu_request=_preset_cpu(asgn.cpu_preset, "request"),
-                    cpu_limit=_preset_cpu(asgn.cpu_preset, "limit"),
-                    memory_request=_preset_ram(asgn.ram_preset, "request"),
-                    memory_limit=_preset_ram(asgn.ram_preset, "limit"),
-                    additional_labels={"labondemand.io/assignment-id": str(aid)},
-                    current_user=student,
-                )
-                dep_id = None
-                if isinstance(result, dict) and "deployment_db_id" in result:
-                    dep_id = result["deployment_db_id"]
-                ad = AssignmentDeployment(assignment_id=aid, user_id=student.id, deployment_id=dep_id, spawn_status="ok")
-                db.add(ad)
-                db.commit()
-                return BulkSpawnResult(user_id=student.id, username=student.username, status="ok", deployment_name=dep_name)
-            except Exception as exc:
-                db.rollback()
-                ad = AssignmentDeployment(assignment_id=aid, user_id=student.id, spawn_status="error", spawn_error=str(exc)[:500])
-                db.add(ad)
-                db.commit()
-                return BulkSpawnResult(user_id=student.id, username=student.username, status="error", error=str(exc)[:200])
+    if pending:
+        workers = min(BULK_SPAWN_CONCURRENCY, len(pending))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="bulk-spawn") as pool:
+            futures = {
+                index: pool.submit(_spawn_student_lab, spec, user_id, username, dep_name)
+                for index, user_id, username, dep_name in pending
+            }
+            for index, future in futures.items():
+                results[index] = future.result()
 
-    results = await asyncio.gather(*[spawn_one(s) for s in students])
-    ok = sum(1 for r in results if r.status == "ok")
-    skipped = sum(1 for r in results if r.status == "skipped")
-    errors = sum(1 for r in results if r.status == "error")
+    final = [r for r in results if r is not None]
+    ok = sum(1 for r in final if r.status == "ok")
+    skipped = sum(1 for r in final if r.status == "skipped")
+    errors = sum(1 for r in final if r.status == "error")
 
-    audit_logger.info("assignment_deployed_bulk", extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "total": len(results), "ok": ok, "errors": errors}})
+    audit_logger.info("assignment_deployed_bulk", extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "total": len(final), "ok": ok, "errors": errors}})
 
     return BulkSpawnReport(
         assignment_id=aid,
         classroom_id=cid,
-        total=len(results),
+        total=len(final),
         ok=ok,
         skipped=skipped,
         errors=errors,
-        results=list(results),
+        results=final,
     )
 
 
@@ -630,23 +761,22 @@ def _get_assignment_or_404(cid: int, aid: int, db: Session) -> Assignment:
 
 def _resolve_assignment_lab(aid: int, user_id: int, db: Session) -> Optional[Deployment]:
     """Lab d'un utilisateur pour un devoir, via AssignmentDeployment (source de vérité)."""
-    link = (
-        db.query(AssignmentDeployment)
-        .filter(
-            AssignmentDeployment.assignment_id == aid,
-            AssignmentDeployment.user_id == user_id,
-            AssignmentDeployment.deployment_id.isnot(None),
-        )
-        .order_by(AssignmentDeployment.created_at.desc())
-        .first()
-    )
-    if not link or link.deployment_id is None:
-        return None
-    return (
-        db.query(Deployment)
-        .filter(Deployment.id == link.deployment_id, Deployment.status.in_(["active", "paused"]))
-        .first()
-    )
+    return resolve_assignment_labs(db, [aid], [user_id]).get((aid, user_id))
+
+
+def _latest_runs(aid: int, user_ids: Iterable[int], db: Session) -> Dict[int, GradingRun]:
+    """Most recent Grading Run per student for an assignment, in one query."""
+    ids = set(user_ids)
+    if not ids:
+        return {}
+    latest: Dict[int, GradingRun] = {}
+    for run in (
+        db.query(GradingRun)
+        .filter(GradingRun.assignment_id == aid, GradingRun.user_id.in_(ids))
+        .order_by(GradingRun.id.desc())
+    ):
+        latest.setdefault(run.user_id, run)
+    return latest
 
 
 @classrooms_router.get("/{cid}/assignments/{aid}/submissions", response_model=List[TeacherSubmissionRow], dependencies=[Depends(is_teacher_or_admin)])
@@ -661,28 +791,24 @@ def list_submissions(
     _require_owner_or_admin(cls, current_user)
     _get_assignment_or_404(cid, aid, db)
 
-    enrollments = (
-        db.query(Enrollment)
-        .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
-        .all()
-    )
+    students = [student for _, student in _enrolled_students(cid, db)]
     submissions = {
         s.user_id: s
         for s in db.query(AssignmentSubmission).filter(AssignmentSubmission.assignment_id == aid).all()
     }
+    lab_ids = {s.deployment_id for s in submissions.values() if s.deployment_id}
+    labs = (
+        {d.id: d for d in db.query(Deployment).filter(Deployment.id.in_(lab_ids))}
+        if lab_ids
+        else {}
+    )
+    runs = _latest_runs(aid, [student.id for student in students], db)
 
     rows: List[TeacherSubmissionRow] = []
-    for enr in enrollments:
-        student = db.query(User).filter(User.id == enr.user_id).first()
-        if not student:
-            continue
+    for student in students:
         sub = submissions.get(student.id)
-        lab = (
-            db.query(Deployment).filter(Deployment.id == sub.deployment_id).first()
-            if sub and sub.deployment_id
-            else None
-        )
-        run = grader_service.latest_run_for(aid, student.id, db)
+        lab = labs.get(sub.deployment_id) if sub and sub.deployment_id else None
+        run = runs.get(student.id)
         rows.append(
             TeacherSubmissionRow(
                 user_id=student.id,
@@ -941,7 +1067,7 @@ def _require_spec_with_tests(aid: int, db: Session) -> GradingSpec:
     response_model=GradingRunResponse,
     dependencies=[Depends(is_teacher_or_admin)],
 )
-async def test_now(
+def test_now(
     cid: int,
     aid: int,
     current_user: User = Depends(get_current_user),
@@ -960,21 +1086,17 @@ async def test_now(
             detail="Aucun lab de démo : déployez-vous un lab pour ce devoir avant de tester",
         )
 
-    run = GradingRun(
-        assignment_id=aid,
-        user_id=current_user.id,
-        deployment_id=lab.id,
-        trigger="teacher",
-        status="queued",
+    user_id = current_user.id
+    run = grader_service.enqueue_run(
+        db, assignment_id=aid, user_id=user_id, deployment_id=lab.id, trigger="teacher"
     )
-    db.add(run)
-    db.commit()
-    db.refresh(run)
+    if run is None:
+        raise HTTPException(status_code=409, detail=grader_service.RUN_ALREADY_ACTIVE_DETAIL)
 
-    asyncio.create_task(grader_service.run_grading(run.id))
+    grader_service.schedule_grading(run.id)
     audit_logger.info(
         "grading_run_started",
-        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "teacher"}},
+        extra={"extra_fields": {"assignment_id": aid, "user_id": user_id, "run_id": run.id, "trigger": "teacher"}},
     )
     return grader_service.run_to_response(run, for_student=False)
 
@@ -1009,48 +1131,49 @@ def get_grading_run_teacher(
     "/{cid}/assignments/{aid}/run-tests-all",
     dependencies=[Depends(is_teacher_or_admin)],
 )
-async def run_tests_all(
+def run_tests_all(
     cid: int,
     aid: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """(Re)lance les tests sur toute la classe : un Grading Run par étudiant ayant un lab."""
+    """(Re)lance les tests sur toute la classe : un Grading Run par étudiant ayant un lab.
+
+    Students whose previous run for this assignment is still queued/running
+    are skipped (counted in ``skipped``), never queued twice.
+    """
     cls = _get_classroom_or_404(cid, db)
     _require_owner_or_admin(cls, current_user)
     _get_assignment_or_404(cid, aid, db)
     _require_spec_with_tests(aid, db)
 
-    enrollments = (
-        db.query(Enrollment)
+    enrolled_ids = [
+        user_id
+        for (user_id,) in db.query(Enrollment.user_id)
         .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
-        .all()
-    )
+        .order_by(Enrollment.id)
+    ]
+    labs = resolve_assignment_labs(db, [aid], enrolled_ids)
+    lab_ids = {user_id: labs[(aid, user_id)].id for user_id in enrolled_ids if (aid, user_id) in labs}
     run_ids: List[int] = []
-    for enr in enrollments:
-        lab = _resolve_assignment_lab(aid, enr.user_id, db)
-        if not lab:
-            continue
-        run = GradingRun(
-            assignment_id=aid,
-            user_id=enr.user_id,
-            deployment_id=lab.id,
-            trigger="teacher",
-            status="queued",
+    skipped = 0
+    for user_id, lab_id in lab_ids.items():
+        run = grader_service.enqueue_run(
+            db, assignment_id=aid, user_id=user_id, deployment_id=lab_id, trigger="teacher"
         )
-        db.add(run)
-        db.flush()
+        if run is None:
+            skipped += 1
+            continue
         run_ids.append(run.id)
-    db.commit()
 
     for rid in run_ids:
-        asyncio.create_task(grader_service.run_grading(rid))
+        grader_service.schedule_grading(rid)
 
     audit_logger.info(
         "grading_runs_started_bulk",
-        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids)}},
+        extra={"extra_fields": {"assignment_id": aid, "classroom_id": cid, "queued": len(run_ids), "skipped": skipped}},
     )
-    return {"queued": len(run_ids)}
+    return {"queued": len(run_ids), "skipped": skipped}
 
 
 # ── TEACHER DASHBOARD ──────────────────────────────────────────────────────────
@@ -1083,18 +1206,18 @@ def teacher_dashboard(
         q = q.filter(Classroom.owner_id == current_user.id)
     classrooms = q.order_by(Classroom.created_at.desc()).all()
 
-    classes_data = []
-    for cls in classrooms:
-        student_count = db.query(Enrollment).filter(Enrollment.classroom_id == cls.id, Enrollment.removed_at.is_(None)).count()
-        active_assignments = db.query(Assignment).filter(Assignment.classroom_id == cls.id, Assignment.status == "active").count()
-        classes_data.append({
+    students, assignments = _classroom_counts([c.id for c in classrooms], db)
+    classes_data = [
+        {
             "id": cls.id,
             "name": cls.name,
             "description": cls.description,
-            "student_count": student_count,
-            "active_assignment_count": active_assignments,
+            "student_count": students.get(cls.id, 0),
+            "active_assignment_count": assignments.get(cls.id, 0),
             "created_at": cls.created_at,
-        })
+        }
+        for cls in classrooms
+    ]
 
     return {
         "classroom_count": len(classes_data),
@@ -1105,9 +1228,43 @@ def teacher_dashboard(
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
 
+def _enrolled_students(cid: int, db: Session, *, active_only: bool = False) -> List[tuple[Enrollment, User]]:
+    """Current enrollments of a classroom with their users, in one joined query."""
+    query = (
+        db.query(Enrollment, User)
+        .join(User, User.id == Enrollment.user_id)
+        .filter(Enrollment.classroom_id == cid, Enrollment.removed_at.is_(None))
+    )
+    if active_only:
+        query = query.filter(User.is_active == True)  # noqa: E712
+    return [(enr, user) for enr, user in query.order_by(Enrollment.id).all()]
+
+
+def _classroom_counts(classroom_ids: List[int], db: Session) -> tuple[Dict[int, int], Dict[int, int]]:
+    """``(students, active assignments)`` per classroom, two grouped queries."""
+    if not classroom_ids:
+        return {}, {}
+    students = dict(
+        db.query(Enrollment.classroom_id, func.count(Enrollment.id))
+        .filter(Enrollment.classroom_id.in_(classroom_ids), Enrollment.removed_at.is_(None))
+        .group_by(Enrollment.classroom_id)
+        .all()
+    )
+    assignments = dict(
+        db.query(Assignment.classroom_id, func.count(Assignment.id))
+        .filter(Assignment.classroom_id.in_(classroom_ids), Assignment.status == "active")
+        .group_by(Assignment.classroom_id)
+        .all()
+    )
+    return students, assignments
+
+
 def _enrich_classroom(cls: Classroom, db: Session) -> ClassroomResponse:
-    student_count = db.query(Enrollment).filter(Enrollment.classroom_id == cls.id, Enrollment.removed_at.is_(None)).count()
-    active_assignments = db.query(Assignment).filter(Assignment.classroom_id == cls.id, Assignment.status == "active").count()
+    students, assignments = _classroom_counts([cls.id], db)
+    return _classroom_response(cls, students.get(cls.id, 0), assignments.get(cls.id, 0))
+
+
+def _classroom_response(cls: Classroom, student_count: int, active_assignments: int) -> ClassroomResponse:
     return ClassroomResponse(
         id=cls.id,
         name=cls.name,

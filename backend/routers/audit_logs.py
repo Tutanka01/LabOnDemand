@@ -16,11 +16,11 @@ Lecture des fichiers :
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 import logging
 
@@ -270,7 +270,7 @@ def _filter_entries(
 
 
 @audit_router.get("/stats", dependencies=[Depends(is_admin)])
-async def get_audit_stats():
+def get_audit_stats():
     """
     Retourne les statistiques globales des logs d'audit :
       - total d'entrées
@@ -293,8 +293,6 @@ async def get_audit_stats():
     now_utc = datetime.now(timezone.utc)
     activity_7d: list[dict] = []
     for i in range(6, -1, -1):
-        from datetime import timedelta
-
         d = (now_utc - timedelta(days=i)).date()
         activity_7d.append({"date": d.isoformat(), "count": 0})
 
@@ -353,7 +351,7 @@ async def get_audit_stats():
 
 
 @audit_router.get("", dependencies=[Depends(is_admin)])
-async def list_audit_logs(
+def list_audit_logs(
     # Pagination
     page: int = Query(1, ge=1, description="Page (commence à 1)"),
     page_size: int = Query(50, ge=1, le=500, description="Entrées par page"),

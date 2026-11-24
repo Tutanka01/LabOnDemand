@@ -5,20 +5,23 @@ multiple Kubernetes deployments (e.g. VS Code) in quick succession.  It is
 intended for local load-testing scenarios such as validating quota settings or
 observing scheduler behaviour when many labs are started at once.
 
-Usage
+Usage (from the repository root, against a running stack; no host Python needed)
 -----
-    python tests/load_test_deployments.py \
-        --base-url http://localhost:8000 \
-        --username admin \
-        --password admin123 \
-        --count 60
+    docker run --rm -it --network host -v "$PWD/tests:/tests:ro" python:3.13-slim \
+        sh -c "pip install -q requests && python /tests/load_test_deployments.py \
+            --base-url http://localhost --username admin --password '<password>' --count 60"
 
-By default the script starts 60 VS Code deployments using the "low" CPU/RAM
-preset (0.25 vCPU, 256 Mi).  See ``python tests/load_test_deployments.py --help`` for the available
-options (different template, resource presets, pacing delay, automatic cleanup,
-etc.).
+``--base-url`` goes through the frontend nginx (``http://localhost``), which also works
+with the production override where the API port is not published. ``--network host``
+only reaches the host's ports on Linux; on Docker Desktop use
+``--base-url http://host.docker.internal``.
 
-The script requires the ``requests`` package (already listed in ``requirements.txt``).
+By default the script starts 60 VS Code deployments using the "low" CPU and "medium"
+RAM presets.  See ``--help`` for the available options (different template, resource
+presets, pacing delay, automatic cleanup, etc.).
+
+Each run creates real Kubernetes resources and counts against the account's quotas.
+The script requires the ``requests`` package (installed by the command above).
 """
 from __future__ import annotations
 
@@ -35,7 +38,7 @@ except ImportError as exc:  # pragma: no cover - convenience for CLI usage
         "The 'requests' package is required. Install it with 'pip install requests' or add it to requirements.txt"
     ) from exc
 
-# ----- Presets borrowed from the frontend (frontend/script.js) -----------------
+# ----- CPU/RAM presets (request, limit) ---------------------------------------
 CPU_PRESETS: Dict[str, Tuple[str, str]] = {
     "very-low": ("100m", "200m"),
     "low": ("250m", "500m"),
@@ -65,9 +68,9 @@ class TemplatePreset:
 def _load_template_presets() -> Dict[str, TemplatePreset]:
     """Return the deployment templates supported by the load test.
 
-    These values mirror those used by the frontend when a student launches an
-    application (see ``frontend/script.js``).  Add more entries here if you want
-    to stress-test other templates.
+    Images and ports mirror ``backend/templates.py``; the backend may still apply
+    the admin-managed runtime configuration (image, resource floors) on creation.
+    Add more entries here if you want to stress-test other templates.
     """
 
     return {
@@ -86,14 +89,14 @@ def _load_template_presets() -> Dict[str, TemplatePreset]:
             service_target_port=8888,
         ),
         "netbeans": TemplatePreset(
-            image="tutanka01/k8s:netbeans",
+            image="tutanka01/labondemand:netbeansjava",
             create_service=True,
             service_type="NodePort",
-            service_port=6080,
-            service_target_port=6080,
+            service_port=6901,
+            service_target_port=6901,
         ),
         "lamp": TemplatePreset(
-            image="tutanka01/k8s:lamp-stack",
+            image="php:8.2-apache",
             create_service=True,
             service_type="NodePort",
             service_port=8080,
@@ -114,7 +117,7 @@ TEMPLATE_PRESETS = _load_template_presets()
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Bulk create LabOnDemand deployments for load testing")
-    parser.add_argument("--base-url", default="http://localhost:8000", help="LabOnDemand backend URL")
+    parser.add_argument("--base-url", default="http://localhost", help="LabOnDemand URL (frontend nginx)")
     parser.add_argument("--username", required=True, help="Account used to authenticate against the API")
     parser.add_argument("--password", required=True, help="Password for the account")
     parser.add_argument("--count", type=int, default=60, help="Number of deployments to create")
@@ -128,13 +131,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--cpu",
         choices=sorted(CPU_PRESETS.keys()),
         default="low",
-        help="CPU preset to request (mirrors the frontend options)",
+        help="CPU preset to request",
     )
     parser.add_argument(
         "--ram",
         choices=sorted(RAM_PRESETS.keys()),
         default="medium",
-        help="Memory preset to request (mirrors the frontend options)",
+        help="Memory preset to request",
     )
     parser.add_argument(
         "--prefix",
@@ -159,7 +162,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--namespace-prefix",
-        default="labondemand",
+        default="labondemand-user",
         help="Namespace prefix (matches USER_NAMESPACE_PREFIX in backend settings)",
     )
     return parser.parse_args(argv)

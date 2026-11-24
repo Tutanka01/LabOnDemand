@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 
 
 @router.get("/runtime-configs", response_model=List[schemas.RuntimeConfigResponse])
-async def list_runtime_configs(
+def list_runtime_configs(
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
     db: Session = Depends(get_db)
@@ -23,7 +23,7 @@ async def list_runtime_configs(
 
 
 @router.post("/runtime-configs", response_model=schemas.RuntimeConfigResponse)
-async def create_runtime_config(
+def create_runtime_config(
     payload: schemas.RuntimeConfigCreate,
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
@@ -39,7 +39,7 @@ async def create_runtime_config(
 
 
 @router.put("/runtime-configs/{rc_id}", response_model=schemas.RuntimeConfigResponse)
-async def update_runtime_config(
+def update_runtime_config(
     rc_id: int,
     payload: schemas.RuntimeConfigUpdate,
     current_user: User = Depends(get_current_user),
@@ -58,7 +58,7 @@ async def update_runtime_config(
 
 
 @router.delete("/runtime-configs/{rc_id}")
-async def delete_runtime_config(
+def delete_runtime_config(
     rc_id: int,
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),

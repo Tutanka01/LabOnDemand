@@ -54,8 +54,10 @@ async def test_list_all_pvcs_teacher(teacher_client, mock_k8s):
         k8s_client.exceptions.ApiException(status=404)
     )
     r = await teacher_client.get("/api/v1/k8s/pvcs/all")
-    # route may be shadowed by /pvcs/{name} returning 404 or succeed with 200
-    assert r.status_code in (200, 404, 500)
+    # "/pvcs/all" is declared before "/pvcs/{name}": never read as a PVC name.
+    assert r.status_code == 200
+    assert r.json()["items"] == []
+    mock_k8s["core"].read_namespaced_persistent_volume_claim.assert_not_called()
 
 
 async def test_list_all_pvcs_admin(admin_client, mock_k8s):
@@ -64,7 +66,7 @@ async def test_list_all_pvcs_admin(admin_client, mock_k8s):
         k8s_client.exceptions.ApiException(status=404)
     )
     r = await admin_client.get("/api/v1/k8s/pvcs/all")
-    assert r.status_code in (200, 404, 500)
+    assert r.status_code == 200
 
 
 async def test_list_all_pvcs_student_forbidden(student_client, mock_k8s):
@@ -110,3 +112,13 @@ async def test_delete_pvc_bound_with_force(student_client, mock_k8s, student_use
     r = await student_client.delete("/api/v1/k8s/pvcs/active-vol", params={"force": "true"})
     assert r.status_code == 200
     assert r.json()["forced"] is True
+
+
+async def test_list_all_pvcs_unreachable_returns_503(teacher_client, mock_k8s):
+    import urllib3
+
+    mock_k8s["core"].list_persistent_volume_claim_for_all_namespaces.side_effect = (
+        urllib3.exceptions.MaxRetryError(None, "/api", reason="refused")
+    )
+    r = await teacher_client.get("/api/v1/k8s/pvcs/all")
+    assert r.status_code == 503

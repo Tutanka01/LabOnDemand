@@ -18,17 +18,23 @@ Périmètre MVP-2 : probes *outside* (http / tcp / sql) + script. Les probes *in
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+import os
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 from kubernetes import client
+
+from sqlalchemy import update
 
 from .config import settings
 from .database import SessionLocal
 from .k8s_utils import ensure_namespace_baseline
+from .lab_locks import KeyedLocks
 from .models import (
     Assignment,
     Deployment,
@@ -48,6 +54,27 @@ _NETWORK_POLICY_NAME = "grader-egress"
 
 # Kinds exécutables par le grader isolé (depuis l'extérieur du lab).
 SUPPORTED_KINDS = {"http", "tcp", "sql", "script"}
+
+# Grading runs watched at the same time (each worker mostly sleeps between polls).
+GRADER_MAX_CONCURRENT_RUNS = max(1, int(os.getenv("GRADER_MAX_CONCURRENT_RUNS", "16")))
+_EXECUTOR: Optional[ThreadPoolExecutor] = None
+# Set by shutdown(): workers of that executor stop polling and give up.
+_STOP_EVENT: Optional[threading.Event] = None
+_EXECUTOR_LOCK = threading.Lock()
+
+ACTIVE_RUN_STATUSES = ("queued", "running")
+RUN_ALREADY_ACTIVE_DETAIL = (
+    "Des tests sont déjà en cours pour ce devoir : attends leur résultat avant d'en relancer."
+)
+INTERRUPTED_BY_SHUTDOWN = "Run interrompu (arrêt du serveur)"
+INTERRUPTED_BY_RESTART = "Run interrompu (redémarrage du serveur)"
+
+# Serialises "is a run active? -> insert a queued run" per (user, assignment).
+_ENQUEUE_LOCKS = KeyedLocks()
+
+
+class _Stopped(Exception):
+    """The grader pool is shutting down: stop watching the Job."""
 
 
 def _now() -> datetime:
@@ -304,18 +331,146 @@ def summarize(results: list) -> dict:
 # ── Watcher : crée le Job, surveille, récupère les résultats ─────────────────
 
 
-async def run_grading(run_id: int) -> None:
-    """Tâche de fond : provisionne le Job grader, attend sa fin, enregistre le verdict.
+def has_active_run(db, assignment_id: int, user_id: int) -> bool:
+    """True when the user already has a queued or running run for this assignment."""
+    return (
+        db.query(GradingRun.id)
+        .filter(
+            GradingRun.assignment_id == assignment_id,
+            GradingRun.user_id == user_id,
+            GradingRun.status.in_(ACTIVE_RUN_STATUSES),
+        )
+        .first()
+        is not None
+    )
 
-    Toutes les API K8s sont synchrones : on les exécute dans un executor pour ne pas
-    bloquer la boucle asyncio. La fonction possède sa propre session DB (elle survit à
-    la requête HTTP qui l'a déclenchée)."""
-    loop = asyncio.get_event_loop()
+
+def enqueue_run(
+    db, *, assignment_id: int, user_id: int, deployment_id: Optional[int], trigger: str
+) -> Optional[GradingRun]:
+    """Insert and commit a ``queued`` run, unless one is already active.
+
+    Returns ``None`` when the user already has a queued/running run for this
+    assignment: one user can occupy at most one grader worker per assignment,
+    so a student hammering "run tests" cannot starve the others. The check
+    and the insert are serialised per (user, assignment) in this process; the
+    caller schedules the returned run.
+    """
+    with _ENQUEUE_LOCKS.hold((int(user_id), int(assignment_id))):
+        # Fresh transaction: see runs committed by concurrent requests.
+        db.rollback()
+        if has_active_run(db, assignment_id, user_id):
+            return None
+        run = GradingRun(
+            assignment_id=assignment_id,
+            user_id=user_id,
+            deployment_id=deployment_id,
+            trigger=trigger,
+            status="queued",
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+
+
+def _executor() -> Tuple[ThreadPoolExecutor, threading.Event]:
+    global _EXECUTOR, _STOP_EVENT
+    with _EXECUTOR_LOCK:
+        if _EXECUTOR is None or _STOP_EVENT is None:
+            _EXECUTOR = ThreadPoolExecutor(
+                max_workers=GRADER_MAX_CONCURRENT_RUNS, thread_name_prefix="grader"
+            )
+            _STOP_EVENT = threading.Event()
+        return _EXECUTOR, _STOP_EVENT
+
+
+def schedule_grading(run_id: int) -> None:
+    """Queue a grading run on the grader worker pool (callable from any thread).
+
+    Runs execute in background threads, never on the event loop; at most
+    ``GRADER_MAX_CONCURRENT_RUNS`` watch the cluster at the same time, the rest
+    stay ``queued`` until a worker frees up.
+    """
+    executor, stop = _executor()
+    executor.submit(_run_grading_logged, run_id, stop)
+
+
+def _run_grading_logged(run_id: int, stop: Optional[threading.Event] = None) -> None:
+    try:
+        run_grading(run_id, stop=stop)
+    except Exception:  # run_grading already records failures; never lose a traceback
+        logger.exception("grading_worker_crashed", extra={"extra_fields": {"run_id": run_id}})
+
+
+def shutdown() -> None:
+    """Stop the grader pool without waiting (called on application shutdown).
+
+    Queued runs that no worker picked up are dropped; workers watching a Job
+    stop polling at once and mark their run as interrupted. Runs left
+    queued/running in the DB are reconciled at the next start
+    (``reconcile_orphaned_runs``) or by the cleanup loop.
+    """
+    global _EXECUTOR, _STOP_EVENT
+    with _EXECUTOR_LOCK:
+        executor, _EXECUTOR = _EXECUTOR, None
+        stop, _STOP_EVENT = _STOP_EVENT, None
+    if stop is not None:
+        stop.set()
+    if executor is not None:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def reconcile_orphaned_runs(db) -> int:
+    """Mark every queued/running run as interrupted (call once at startup).
+
+    The API is a single process and the grader pool lives in memory, so at
+    startup no worker can own a run: those left active by the previous process
+    (stopped, reloaded or killed) would otherwise block their student's next
+    run until the cleanup loop's much larger bound.
+    """
+    result = db.execute(
+        update(GradingRun)
+        .where(GradingRun.status.in_(ACTIVE_RUN_STATUSES))
+        .values(status="error", error=INTERRUPTED_BY_RESTART, finished_at=_now())
+    )
+    db.commit()
+    count = result.rowcount or 0
+    if count:
+        logger.info("grading_runs_reconciled_at_startup", extra={"extra_fields": {"count": count}})
+    return count
+
+
+def _claim_run(db, run_id: int) -> bool:
+    """Atomically move a run from ``queued`` to ``running``.
+
+    A conditional UPDATE, so a run the cleanup loop flipped to ``error`` while
+    it waited in the queue is never started (and never overwritten).
+    """
+    result = db.execute(
+        update(GradingRun)
+        .where(GradingRun.id == run_id, GradingRun.status == "queued")
+        .values(status="running", started_at=_now())
+    )
+    db.commit()
+    return (result.rowcount or 0) == 1
+
+
+def run_grading(run_id: int, stop: Optional[threading.Event] = None) -> None:
+    """Provisionne le Job grader, attend sa fin et enregistre le verdict (bloquant).
+
+    Exécuté dans un thread du pool grader (voir ``schedule_grading``). La fonction
+    possède sa propre session DB : elle survit à la requête HTTP qui l'a déclenchée.
+    ``stop`` (set by ``shutdown``) interrupts the wait for the Job."""
     db = SessionLocal()
     job_name = job_name_for_run(run_id)
+    stopped = False
     try:
+        if stop is not None and stop.is_set():
+            return  # shutting down: leave the run queued for the startup reconciliation
         run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
-        if not run:
+        if not run or run.status != "queued":
+            # Inconnu, ou déjà réconcilié par la tâche de nettoyage pendant l'attente.
             return
         spec = db.query(GradingSpec).filter(GradingSpec.assignment_id == run.assignment_id).first()
         if not spec:
@@ -341,18 +496,14 @@ async def run_grading(run_id: int) -> None:
             custom_script=spec.custom_script,
         )
 
-        run.status = "running"
-        run.started_at = _now()
-        db.commit()
+        if not _claim_run(db, run.id):
+            return  # reconciled (error) while it waited in the queue
+        db.refresh(run)
 
-        # Provisionner l'infra puis créer le Job (appels K8s bloquants → executor).
-        await loop.run_in_executor(None, ensure_grader_infra)
-        await loop.run_in_executor(
-            None,
-            lambda: _create_job(manifest),
-        )
+        ensure_grader_infra()
+        _create_job(manifest)
 
-        logs = await _watch_job(loop, job_name, timeout)
+        logs = _watch_job(job_name, timeout, stop)
 
         if logs is None:
             _finish_error(db, run, f"Timeout : le grader n'a pas répondu en {timeout}s")
@@ -375,21 +526,46 @@ async def run_grading(run_id: int) -> None:
             "grading_run_done",
             extra={"extra_fields": {"run_id": run.id, "passed": summary["passed"], "total": summary["total"]}},
         )
+    except _Stopped:
+        stopped = True
+        _record_interrupted(db, run_id)
     except Exception as exc:  # garde-fou : un run ne doit jamais rester bloqué
         logger.exception("grading_run_failed", extra={"extra_fields": {"run_id": run_id, "error": str(exc)}})
         try:
+            db.rollback()
             run = db.query(GradingRun).filter(GradingRun.id == run_id).first()
             if run and run.status not in ("done", "error"):
-                _finish_error(db, run, f"Erreur interne du grader : {exc}")
+                _finish_error(db, run, f"Erreur interne du grader : {type(exc).__name__}")
         except Exception:
+            logger.exception("grading_run_error_not_recorded", extra={"extra_fields": {"run_id": run_id}})
             db.rollback()
     finally:
-        # Nettoyage best-effort du Job (le TTL est le filet de sécurité).
-        try:
-            await loop.run_in_executor(None, lambda: _delete_job(job_name))
-        except Exception:
-            pass
+        # Nettoyage best-effort du Job (le TTL est le filet de sécurité). Skipped
+        # on shutdown: a Kubernetes call could delay the exit, and the Job's
+        # activeDeadlineSeconds + ttlSecondsAfterFinished remove it anyway.
+        if not stopped:
+            try:
+                _delete_job(job_name)
+            except Exception as exc:
+                logger.info("grader_job_delete_failed", extra={"extra_fields": {"job": job_name, "error": str(exc)}})
         db.close()
+
+
+def _record_interrupted(db, run_id: int) -> None:
+    """Mark a run interrupted by shutdown (best-effort, one quick UPDATE)."""
+    try:
+        db.rollback()
+        db.execute(
+            update(GradingRun)
+            .where(GradingRun.id == run_id, GradingRun.status.in_(ACTIVE_RUN_STATUSES))
+            .values(status="error", error=INTERRUPTED_BY_SHUTDOWN, finished_at=_now())
+        )
+        db.commit()
+        logger.info("grading_run_interrupted", extra={"extra_fields": {"run_id": run_id}})
+    except Exception:
+        # Left running: reconciled at the next start.
+        db.rollback()
+        logger.warning("grading_run_interrupt_not_recorded", extra={"extra_fields": {"run_id": run_id}})
 
 
 def _load_probes(spec: GradingSpec) -> list:
@@ -420,25 +596,28 @@ def _delete_job(job_name: str) -> None:
             raise
 
 
-async def _watch_job(loop, job_name: str, timeout: int) -> Optional[str]:
+def _watch_job(
+    job_name: str, timeout: int, stop: Optional[threading.Event] = None
+) -> Optional[str]:
     """Poll le statut du Job jusqu'à complétion, puis renvoie les logs du pod.
 
-    Retourne ``None`` en cas de timeout global."""
+    Retourne ``None`` en cas de timeout global ; lève ``_Stopped`` dès que
+    ``stop`` est positionné (arrêt de l'API)."""
     ns = settings.GRADER_NAMESPACE
-    deadline = timeout + settings.GRADER_WATCH_GRACE_SECONDS
-    elapsed = 0
+    deadline = time.monotonic() + timeout + settings.GRADER_WATCH_GRACE_SECONDS
     poll = max(1, settings.GRADER_POLL_INTERVAL_SECONDS)
+    stop = stop or threading.Event()
 
-    while elapsed < deadline:
-        await asyncio.sleep(poll)
-        elapsed += poll
-        status = await loop.run_in_executor(None, lambda: _read_job_status(job_name, ns))
+    while time.monotonic() < deadline:
+        if stop.wait(poll):
+            raise _Stopped()
+        status = _read_job_status(job_name, ns)
         if status is None:
             continue
         succeeded = getattr(status, "succeeded", None) or 0
         failed = getattr(status, "failed", None) or 0
         if succeeded or failed:
-            return await loop.run_in_executor(None, lambda: _read_job_logs(job_name, ns))
+            return _read_job_logs(job_name, ns)
     return None
 
 

@@ -43,3 +43,15 @@ async def test_quotas_response_shape(student_client, mock_k8s):
     r = await student_client.get("/api/v1/quotas/me")
     assert r.status_code == 200
     assert isinstance(r.json(), dict)
+
+
+async def test_quotas_unreachable_cluster_returns_503(student_client, monkeypatch):
+    import urllib3
+    from backend.deployment_service import deployment_service
+
+    def _boom(user):
+        raise urllib3.exceptions.MaxRetryError(None, "/api", reason="refused")
+
+    monkeypatch.setattr(deployment_service, "get_user_quota_summary", _boom)
+    r = await student_client.get("/api/v1/quotas/me")
+    assert r.status_code == 503

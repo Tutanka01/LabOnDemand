@@ -49,7 +49,7 @@ def _ensure_pvc_access(pvc: client.V1PersistentVolumeClaim, user: User) -> None:
 
 
 @router.get("/pvcs", response_model=schemas.PVCListResponse)
-async def list_user_pvcs(current_user: User = Depends(get_current_user)):
+def list_user_pvcs(current_user: User = Depends(get_current_user)):
     """Lister les volumes persistants du namespace utilisateur."""
     namespace = build_user_namespace(current_user)
     core_v1 = client.CoreV1Api()
@@ -68,8 +68,28 @@ async def list_user_pvcs(current_user: User = Depends(get_current_user)):
     return schemas.PVCListResponse(items=pvcs)
 
 
+@router.get("/pvcs/all", response_model=schemas.PVCListResponse)
+def list_all_labondemand_pvcs(
+    current_user: User = Depends(get_current_user),
+    _: bool = Depends(is_teacher_or_admin),
+):
+    """Lister tous les PVC LabOnDemand (enseignant/admin).
+
+    Declared before ``/pvcs/{name}`` so that "all" is not taken for a PVC name.
+    """
+    core_v1 = client.CoreV1Api()
+    label_selector = "managed-by=labondemand"
+    try:
+        listing = core_v1.list_persistent_volume_claim_for_all_namespaces(label_selector=label_selector)
+    except Exception as e:
+        raise_k8s_http(e)
+
+    pvcs = [_map_pvc(pvc) for pvc in getattr(listing, "items", []) or []]
+    return schemas.PVCListResponse(items=pvcs)
+
+
 @router.get("/pvcs/{name}", response_model=schemas.PVCInfo)
-async def get_user_pvc(
+def get_user_pvc(
     name: str,
     current_user: User = Depends(get_current_user),
 ):
@@ -87,7 +107,7 @@ async def get_user_pvc(
 
 
 @router.delete("/pvcs/{name}")
-async def delete_user_pvc(
+def delete_user_pvc(
     name: str,
     force: bool = Query(False, description="Supprimer même si le volume est encore Bound"),
     current_user: User = Depends(get_current_user),
@@ -126,22 +146,3 @@ async def delete_user_pvc(
     )
 
     return {"message": f"Volume {name} supprimé", "forced": force}
-
-
-@router.get("/pvcs/all", response_model=schemas.PVCListResponse)
-async def list_all_labondemand_pvcs(
-    current_user: User = Depends(get_current_user),
-    _: bool = Depends(is_teacher_or_admin),
-):
-    """Lister tous les PVC LabOnDemand (enseignant/admin)."""
-    core_v1 = client.CoreV1Api()
-    label_selector = "managed-by=labondemand"
-    try:
-        listing = core_v1.list_persistent_volume_claim_for_all_namespaces(label_selector=label_selector)
-    except client.exceptions.ApiException as e:
-        raise_k8s_http(e)
-    except Exception as e:
-        raise_k8s_http(e)
-
-    pvcs = [_map_pvc(pvc) for pvc in getattr(listing, "items", []) or []]
-    return schemas.PVCListResponse(items=pvcs)

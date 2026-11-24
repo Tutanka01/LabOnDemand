@@ -18,16 +18,126 @@ Usage::
     print(settings.INGRESS_BASE_DOMAIN)
 """
 
+import inspect
+import logging
 import os
+import threading
 from pathlib import Path
-from typing import Dict, Set
+from typing import Dict, Set, Tuple
 from urllib.parse import urlparse
 
+import urllib3
 from dotenv import load_dotenv
 from kubernetes import client, config
+from kubernetes.client import rest as k8s_rest
 
 # Charger les variables d'environnement
 load_dotenv()
+
+logger = logging.getLogger("labondemand.config")
+
+
+def install_default_k8s_timeout(connect_seconds: float, read_seconds: float) -> None:
+    """Give every Kubernetes REST call a default (connect, read) timeout.
+
+    The generated client only applies a timeout when a call passes
+    ``_request_timeout``; otherwise urllib3 waits forever. We wrap
+    ``RESTClientObject.request`` (the single choke point of every REST verb)
+    so a missing ``_request_timeout`` becomes ``(connect, read)``; an explicit
+    per-call value still wins.
+
+    ``kubernetes.stream.stream()`` (exec / WebSocket sessions used by the
+    terminal and file transfers) is unaffected: it swaps ``ApiClient.request``
+    for a WebSocket call and never reaches ``RESTClientObject``.
+
+    Idempotent: calling it again re-wraps the original method with new values.
+    """
+    current = k8s_rest.RESTClientObject.request
+    original = getattr(current, "__lod_original__", current)
+    if "_request_timeout" not in inspect.signature(original).parameters:
+        logger.warning("k8s_default_timeout_not_installed")
+        return
+    default_timeout: Tuple[float, float] = (connect_seconds, read_seconds)
+
+    def request(
+        self,
+        method,
+        url,
+        query_params=None,
+        headers=None,
+        body=None,
+        post_params=None,
+        _preload_content=True,
+        _request_timeout=None,
+    ):
+        if _request_timeout is None:
+            _request_timeout = default_timeout
+        return original(
+            self,
+            method,
+            url,
+            query_params=query_params,
+            headers=headers,
+            body=body,
+            post_params=post_params,
+            _preload_content=_preload_content,
+            _request_timeout=_request_timeout,
+        )
+
+    request.__lod_original__ = original  # type: ignore[attr-defined]
+    request.__doc__ = original.__doc__
+    k8s_rest.RESTClientObject.request = request
+
+
+_shared_pool_lock = threading.Lock()
+_shared_pool_managers: Dict[Tuple[object, ...], object] = {}
+
+
+def install_shared_k8s_connection_pool() -> None:
+    """Make every Kubernetes REST client reuse one urllib3 connection pool.
+
+    The generated API classes (``client.CoreV1Api()`` ...) each build a new
+    ``ApiClient`` and therefore a new ``PoolManager``: without this, every
+    single call pays a fresh TCP + TLS handshake to the API server. We keep
+    the per-call ``ApiClient`` objects (``kubernetes.stream.stream()``
+    temporarily replaces ``ApiClient.request`` on the instance, so sharing
+    the ApiClient itself across threads would be unsafe) and share only the
+    thread-safe ``PoolManager`` between clients built from an equivalent
+    configuration.
+
+    Idempotent.
+    """
+    current = k8s_rest.RESTClientObject.__init__
+    if getattr(current, "__lod_shared_pool__", False):
+        return
+
+    def __init__(self, configuration, *args, **kwargs):
+        current(self, configuration, *args, **kwargs)
+        key = (
+            configuration.host,
+            configuration.verify_ssl,
+            configuration.ssl_ca_cert,
+            configuration.cert_file,
+            configuration.key_file,
+            configuration.proxy,
+            repr(configuration.proxy_headers),
+            configuration.assert_hostname,
+            configuration.tls_server_name,
+            configuration.connection_pool_maxsize,
+            repr(configuration.retries),
+            args,
+            tuple(sorted(kwargs.items())),
+        )
+        with _shared_pool_lock:
+            self.pool_manager = _shared_pool_managers.setdefault(key, self.pool_manager)
+
+    __init__.__lod_shared_pool__ = True  # type: ignore[attr-defined]
+    k8s_rest.RESTClientObject.__init__ = __init__
+
+
+# Upper bound of concurrent Kubernetes calls: FastAPI's threadpool runs up to 40
+# sync handlers at once, so the shared pool keeps that many connections alive.
+K8S_CONNECTION_POOL_MAXSIZE = 40
 
 
 class Settings:
@@ -122,10 +232,28 @@ class Settings:
         item.strip().lower() for item in _EXCLUDE_TYPES_RAW.split(",") if item.strip()
     }
 
+    # Kubernetes client: default per-attempt timeouts applied to every REST call
+    # (see install_default_k8s_timeout) and retry budget. urllib3 retries
+    # idempotent calls 3 times by default, which multiplies the read timeout.
+    K8S_CONNECT_TIMEOUT_SECONDS = float(os.getenv("K8S_CONNECT_TIMEOUT_SECONDS", "5"))
+    K8S_READ_TIMEOUT_SECONDS = float(os.getenv("K8S_READ_TIMEOUT_SECONDS", "30"))
+    K8S_MAX_RETRIES = int(os.getenv("K8S_MAX_RETRIES", "1"))
+
     @staticmethod
     def init_kubernetes():
         """Initialise la configuration Kubernetes"""
         config.load_kube_config()
+        install_default_k8s_timeout(
+            Settings.K8S_CONNECT_TIMEOUT_SECONDS, Settings.K8S_READ_TIMEOUT_SECONDS
+        )
+        default_configuration = client.Configuration.get_default_copy()
+        default_configuration.retries = urllib3.Retry(total=Settings.K8S_MAX_RETRIES)
+        default_configuration.connection_pool_maxsize = max(
+            default_configuration.connection_pool_maxsize or 0,
+            K8S_CONNECTION_POOL_MAXSIZE,
+        )
+        client.Configuration.set_default(default_configuration)
+        install_shared_k8s_connection_pool()
         # urllib3 (appels REST) ignore les proxies d'environnement, mais
         # websocket-client (exec, port-forward) les route via HTTPS_PROXY :
         # la poignée de main websocket part alors via un proxy qui la coupe
@@ -152,16 +280,6 @@ class Settings:
     GRADER_POLL_INTERVAL_SECONDS = int(os.getenv("GRADER_POLL_INTERVAL_SECONDS", "3"))
     # Marge ajoutée au timeout de la spec avant de déclarer un run en erreur.
     GRADER_WATCH_GRACE_SECONDS = int(os.getenv("GRADER_WATCH_GRACE_SECONDS", "30"))
-
-    # Namespaces par défaut
-    DEFAULT_NAMESPACES = {
-        "jupyter": "labondemand-jupyter",
-        "vscode": "labondemand-vscode",
-        "wordpress": "labondemand-wordpress",
-        "mysql": "labondemand-mysql",
-        "lamp": "labondemand-lamp",
-        "custom": "labondemand-custom",
-    }
 
     # Sessions (Redis)
     REDIS_URL = os.getenv("REDIS_URL", None)

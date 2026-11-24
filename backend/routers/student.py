@@ -13,11 +13,10 @@ qu'ouvrir le lab existant. Le lien devoir<->lab fait foi via ``AssignmentDeploym
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -26,7 +25,6 @@ from .. import grader_service
 from ..database import get_db
 from ..models import (
     Assignment,
-    AssignmentDeployment,
     AssignmentSubmission,
     Classroom,
     Deployment,
@@ -44,6 +42,7 @@ from ..schemas import (
     StudentProbe,
 )
 from ..security import get_current_user
+from ._helpers import resolve_assignment_labs
 
 audit_logger = logging.getLogger("labondemand.audit")
 
@@ -70,26 +69,7 @@ def _require_enrolled(assignment: Assignment, user: User, db: Session) -> None:
 
 def _resolve_lab(assignment_id: int, user_id: int, db: Session) -> Optional[Deployment]:
     """Retrouve le lab d'un étudiant pour un devoir via AssignmentDeployment (source de vérité)."""
-    link = (
-        db.query(AssignmentDeployment)
-        .filter(
-            AssignmentDeployment.assignment_id == assignment_id,
-            AssignmentDeployment.user_id == user_id,
-            AssignmentDeployment.deployment_id.isnot(None),
-        )
-        .order_by(AssignmentDeployment.created_at.desc())
-        .first()
-    )
-    if not link or link.deployment_id is None:
-        return None
-    return (
-        db.query(Deployment)
-        .filter(
-            Deployment.id == link.deployment_id,
-            Deployment.status.in_(["active", "paused"]),
-        )
-        .first()
-    )
+    return resolve_assignment_labs(db, [assignment_id], [user_id]).get((assignment_id, user_id))
 
 
 def _parse_links(raw: Optional[str]) -> list:
@@ -171,16 +151,12 @@ def _is_past_due(due_at: Optional[datetime]) -> bool:
     return _now_utc() > due_at
 
 
-def _build_item(assignment: Assignment, classroom_name: Optional[str], db: Session, user_id: int) -> StudentAssignmentItem:
-    lab = _resolve_lab(assignment.id, user_id, db)
-    sub = (
-        db.query(AssignmentSubmission)
-        .filter(
-            AssignmentSubmission.assignment_id == assignment.id,
-            AssignmentSubmission.user_id == user_id,
-        )
-        .first()
-    )
+def _item(
+    assignment: Assignment,
+    classroom_name: Optional[str],
+    lab: Optional[Deployment],
+    sub: Optional[AssignmentSubmission],
+) -> StudentAssignmentItem:
     return StudentAssignmentItem(
         id=assignment.id,
         classroom_id=assignment.classroom_id,
@@ -228,8 +204,26 @@ def list_my_assignments(
         .order_by(Assignment.due_at.is_(None), Assignment.due_at.asc(), Assignment.created_at.desc())
         .all()
     )
+    if not assignments:
+        return []
+
+    # Labs and submissions for every assignment at once (no per-assignment queries).
+    assignment_ids = [a.id for a in assignments]
+    labs = resolve_assignment_labs(db, assignment_ids, [current_user.id])
+    submissions: Dict[int, AssignmentSubmission] = {
+        sub.assignment_id: sub
+        for sub in db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.assignment_id.in_(assignment_ids),
+            AssignmentSubmission.user_id == current_user.id,
+        )
+    }
     return [
-        _build_item(a, classroom_names.get(a.classroom_id), db, current_user.id)
+        _item(
+            a,
+            classroom_names.get(a.classroom_id),
+            labs.get((a.id, current_user.id)),
+            submissions.get(a.id),
+        )
         for a in assignments
     ]
 
@@ -255,7 +249,6 @@ def get_my_assignment(
     """Détail d'un devoir + l'état de mon lab + ma soumission."""
     assignment = _get_my_assignment_or_404(aid, current_user, db)
     classroom = db.query(Classroom).filter(Classroom.id == assignment.classroom_id).first()
-    item = _build_item(assignment, classroom.name if classroom else None, db, current_user.id)
     sub = (
         db.query(AssignmentSubmission)
         .filter(
@@ -263,6 +256,12 @@ def get_my_assignment(
             AssignmentSubmission.user_id == current_user.id,
         )
         .first()
+    )
+    item = _item(
+        assignment,
+        classroom.name if classroom else None,
+        _resolve_lab(aid, current_user.id, db),
+        sub,
     )
     latest = grader_service.latest_run_for(aid, current_user.id, db)
     return StudentAssignmentDetail(
@@ -394,7 +393,7 @@ def _require_spec_with_tests(aid: int, db: Session) -> GradingSpec:
 
 
 @student_router.post("/assignments/{aid}/run-tests", response_model=GradingRunResponse)
-async def run_tests(
+def run_tests(
     aid: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -409,22 +408,18 @@ async def run_tests(
     if not lab:
         raise HTTPException(status_code=400, detail="Ouvre ton lab avant de lancer les tests")
 
-    run = GradingRun(
-        assignment_id=aid,
-        user_id=current_user.id,
-        deployment_id=lab.id,
-        trigger="student_self",
-        status="queued",
+    user_id = current_user.id
+    run = grader_service.enqueue_run(
+        db, assignment_id=aid, user_id=user_id, deployment_id=lab.id, trigger="student_self"
     )
-    db.add(run)
-    db.commit()
-    db.refresh(run)
+    if run is None:
+        raise HTTPException(status_code=409, detail=grader_service.RUN_ALREADY_ACTIVE_DETAIL)
 
     # Le watcher tourne en tâche de fond ; l'étudiant suit la progression en pollant.
-    asyncio.create_task(grader_service.run_grading(run.id))
+    grader_service.schedule_grading(run.id)
     audit_logger.info(
         "grading_run_started",
-        extra={"extra_fields": {"assignment_id": aid, "user_id": current_user.id, "run_id": run.id, "trigger": "student_self"}},
+        extra={"extra_fields": {"assignment_id": aid, "user_id": user_id, "run_id": run.id, "trigger": "student_self"}},
     )
     return grader_service.run_to_response(run, for_student=True)
 

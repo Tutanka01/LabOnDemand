@@ -1,19 +1,31 @@
 """
-Service de déploiement Kubernetes
-Principe KISS : une classe focalisée sur la création de déploiements
+Kubernetes deployment service: creation, lifecycle (pause/resume) and deletion
+of LabOnDemand labs. Every method is blocking (Kubernetes + DB calls): call it
+from a plain ``def`` route handler or through ``asyncio.to_thread``.
+Multi-component stacks (WordPress, MySQL, LAMP) live in ``backend/services/``.
 """
 
+import base64
+import binascii
 import datetime
 import logging
 import re
 import secrets
-from typing import Dict, Any, Optional, List, Tuple
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Dict, Any, Iterator, Optional, List, Tuple
 from fastapi import HTTPException
 from kubernetes import client
-from sqlalchemy.orm import Session
 
 from .models import User, UserRole, RuntimeConfig, Deployment as DeploymentRecord
 from .config import settings
+from .database import read_session
+from .error_handlers import (
+    K8S_TRANSPORT_ERRORS,
+    db_unavailable,
+    k8s_unavailable,
+)
+from .lab_locks import user_lab_lock
 from .k8s_utils import (
     validate_k8s_name,
     validate_resource_format,
@@ -28,6 +40,10 @@ from .k8s_utils import (
     get_role_limits,
 )
 from .templates import DeploymentConfig, VNC_DESKTOP_TYPES
+from .services.wordpress_deploy import WordPressDeployMixin
+from .services.mysql_deploy import MySQLDeployMixin
+from .services.lamp_deploy import LAMPDeployMixin
+from .services.stacks import STACK_SPECS, ResourcePlan, StackSpec, plan_resources
 
 logger = logging.getLogger("labondemand.deployment")
 audit_logger = logging.getLogger("labondemand.audit")
@@ -37,9 +53,95 @@ PAUSE_REPLICAS_ANNOTATION = "labondemand.io/paused-replicas"
 PAUSE_BY_ANNOTATION = "labondemand.io/paused-by"
 PAUSE_AT_ANNOTATION = "labondemand.io/paused-at"
 
-from .services.wordpress_deploy import WordPressDeployMixin
-from .services.mysql_deploy import MySQLDeployMixin
-from .services.lamp_deploy import LAMPDeployMixin
+# Work directory kept on a PVC (emptyDir fallback) per runtime.
+PERSISTENT_HOME_MOUNTS: Dict[str, str] = {
+    "vscode": "/home/coder/project",
+    "jupyter": "/home/jovyan/work",
+    # VNC desktop: the whole user home (projects, XFCE config…)
+    "netbeans": "/home/lod-user",
+    "eclipse": "/home/lod-user",
+}
+
+
+@dataclass
+class _RuntimeExtras:
+    """Runtime-specific additions to a single-deployment lab."""
+
+    main_port_name: Optional[str] = None
+    extra_container_ports: Optional[List[Dict[str, Any]]] = None
+    additional_service_ports: Optional[List[Dict[str, Any]]] = None
+    env: Optional[List[Dict[str, Any]]] = None
+    env_from: Optional[List[Dict[str, Any]]] = None
+    command: Optional[List[str]] = None
+    args: Optional[List[str]] = None
+    secret_name: Optional[str] = None
+    secret_data: Optional[Dict[str, str]] = None
+    credentials: Optional[Dict[str, Dict[str, str]]] = None
+
+
+def _format_port(detail: Dict[str, Any]) -> str:
+    base = f"{detail.get('port')}->{detail.get('target_port')}"
+    if detail.get("node_port"):
+        base += f" (NodePort {detail['node_port']})"
+    return f"{detail['name']}:{base}" if detail.get("name") else base
+
+
+def _find_node_port(
+    ports_details: List[Dict[str, Any]], target_name: str, fallback_port: int
+) -> Optional[int]:
+    for detail in ports_details:
+        if detail.get("name") == target_name:
+            return detail.get("node_port")
+        if detail.get("target_port") == fallback_port:
+            return detail.get("node_port")
+    return None
+
+
+def _vnc_connection_hints(
+    deployment_type: str,
+    ports_details: List[Dict[str, Any]],
+    target_port: int,
+    credentials: Optional[Dict[str, Dict[str, str]]],
+) -> Dict[str, Any]:
+    password = credentials[deployment_type]["password"] if credentials else None
+    hints: Dict[str, Any] = {
+        "novnc": {
+            "description": "Bureau distant via navigateur (NoVNC)",
+            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
+            "target_port": target_port,
+            "node_port": _find_node_port(ports_details, "novnc", target_port),
+            "protocol": "http",
+            "secure": False,
+            "username": "kasm_user",
+            "password": password,
+        },
+        "vnc": {
+            "description": "Client VNC classique (optionnel)",
+            "target_port": 5901,
+            "node_port": _find_node_port(ports_details, "vnc", 5901),
+            "username": "kasm_user",
+            "password": password,
+        },
+        "audio": {
+            "description": "Flux audio (Websocket Kasm)",
+            "target_port": 4901,
+            "node_port": _find_node_port(ports_details, "audio", 4901),
+        },
+    }
+    # Eclipse Java EE: public URL of the Tomcat application.
+    if deployment_type == "eclipse":
+        hints["tomcat"] = {
+            "description": (
+                "Application web Java EE déployée sur Tomcat "
+                "(doit être démarrée dans Eclipse via « Run on Server »)"
+            ),
+            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
+            "target_port": 8080,
+            "node_port": _find_node_port(ports_details, "tomcat", 8080),
+            "protocol": "http",
+            "secure": False,
+        }
+    return hints
 
 
 class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin):
@@ -212,63 +314,45 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             raise
 
     def validate_permissions(self, user: User, deployment_type: str):
-        """Valide les permissions selon le rôle utilisateur"""
-        if user.role == UserRole.student:
-            try:
-                from .database import SessionLocal
+        """Valide les permissions selon le rôle utilisateur.
 
-                with SessionLocal() as db:
-                    rc = (
-                        db.query(RuntimeConfig)
-                        .filter(
-                            RuntimeConfig.key == deployment_type,
-                            RuntimeConfig.active == True,
-                        )
-                        .first()
+        Fails closed: when the runtime configuration cannot be read, the
+        request fails with HTTP 503 (an admin may have disabled this type).
+        """
+        if user.role != UserRole.student:
+            return
+        try:
+            with read_session(user) as db:
+                rc = (
+                    db.query(RuntimeConfig)
+                    .filter(
+                        RuntimeConfig.key == deployment_type,
+                        RuntimeConfig.active == True,  # noqa: E712
                     )
-                    if not rc or not rc.allowed_for_students:
-                        logger.warning(
-                            "deployment_permission_denied",
-                            extra={
-                                "extra_fields": {
-                                    "user_id": getattr(user, "id", None),
-                                    "deployment_type": deployment_type,
-                                    "role": getattr(
-                                        getattr(user, "role", None), "value", None
-                                    ),
-                                }
-                            },
-                        )
-                        raise HTTPException(
-                            status_code=403,
-                            detail="Type non autorisé pour les étudiants",
-                        )
-            except HTTPException:
-                raise
-            except Exception:
-                # Fallback si DB inaccessible: limiter à un set sûr côté étudiant
-                if deployment_type not in {
-                    "jupyter",
-                    "vscode",
-                    "wordpress",
-                    "mysql",
-                    *VNC_DESKTOP_TYPES,
-                }:
-                    logger.warning(
-                        "deployment_permission_denied_fallback",
-                        extra={
-                            "extra_fields": {
-                                "user_id": getattr(user, "id", None),
-                                "deployment_type": deployment_type,
-                                "role": getattr(
-                                    getattr(user, "role", None), "value", None
-                                ),
-                            }
-                        },
-                    )
-                    raise HTTPException(
-                        status_code=403, detail="Type non autorisé pour les étudiants"
-                    )
+                    .first()
+                )
+                allowed = bool(rc and rc.allowed_for_students)
+        except Exception as exc:
+            logger.error(
+                "deployment_permission_db_unavailable",
+                extra={"extra_fields": {"deployment_type": deployment_type, "error": str(exc)}},
+            )
+            raise db_unavailable()
+        if not allowed:
+            logger.warning(
+                "deployment_permission_denied",
+                extra={
+                    "extra_fields": {
+                        "user_id": getattr(user, "id", None),
+                        "deployment_type": deployment_type,
+                        "role": getattr(getattr(user, "role", None), "value", None),
+                    }
+                },
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Type non autorisé pour les étudiants",
+            )
 
     def apply_deployment_config(
         self,
@@ -281,30 +365,33 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         service_target_port: int,
         create_service: bool,
         service_type: str,
+        session_owner: Any = None,
     ) -> Dict[str, Any]:
         """
-        Applique la configuration selon le type de déploiement
+        Applique la configuration selon le type de déploiement.
+
+        The ``RuntimeConfig`` is read through the session ``session_owner``
+        (the current user) is attached to, if any. Fails closed: a DB failure
+        raises HTTP 503 instead of silently using the static configuration
+        (the DB row may hold stricter or admin-tuned values).
         """
         # 1) Chercher une RuntimeConfig en base
-        config_db = None
         try:
-            # On ne possède pas de session ici; lecture best-effort via client Python K8s context
-            # => Passer par une requête naïve SQL n'est pas souhaitable; on utilisera le fallback si indisponible
-            # L'appelant (router) ne fournit pas de DB session ici. Pour garder KISS, on lit via ORM avec une Session locale si disponible.
-            # On évite l’overengineering; on se contente d’un get via SQLAlchemy SessionLocal si importable.
-            from .database import SessionLocal  # import local pour éviter cycle
-
-            with SessionLocal() as db:
+            with read_session(session_owner) as db:
                 config_db = (
                     db.query(RuntimeConfig)
                     .filter(
                         RuntimeConfig.key == deployment_type,
-                        RuntimeConfig.active == True,
+                        RuntimeConfig.active == True,  # noqa: E712
                     )
                     .first()
                 )
-        except Exception:
-            config_db = None
+        except Exception as exc:
+            logger.error(
+                "runtime_config_lookup_failed",
+                extra={"extra_fields": {"deployment_type": deployment_type, "error": str(exc)}},
+            )
+            raise db_unavailable()
 
         # 2) Fallback statique si pas de config DB
         # Planchers réellement déclarés par la config (jamais la valeur demandée) :
@@ -386,8 +473,14 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 ns, label_selector="managed-by=labondemand"
             )
         except Exception as e:
+            # Never forward the raw error: it may contain the API server address.
+            logger.warning(
+                "user_usage_unavailable",
+                extra={"extra_fields": {"namespace": ns, "error": f"{type(e).__name__}: {e}"}},
+            )
             raise HTTPException(
-                status_code=503, detail=f"Mesure d'usage indisponible (K8s: {e})"
+                status_code=503,
+                detail="Mesure d'usage indisponible : Kubernetes ne répond pas. Réessayez dans un instant.",
             )
 
         for dep in getattr(dep_list, "items", []) or []:
@@ -471,7 +564,8 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         Lève HTTPException 403/400 en cas de dépassement.
         """
         role_val = getattr(current_user.role, "value", str(current_user.role))
-        limits = get_role_limits(str(role_val), getattr(current_user, "id", None))
+        with read_session(current_user) as db:
+            limits = get_role_limits(str(role_val), getattr(current_user, "id", None), db=db)
         usage = self._get_user_usage(current_user)
 
         apps_total = usage["apps_used"] + planned_apps
@@ -513,7 +607,12 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             core = client.CoreV1Api()
             rqs = core.list_namespaced_resource_quota(namespace)
         except Exception as e:
-            # Si on ne peut pas lire les quotas, on ne bloque pas ici (RBAC restreint) -> laisser K8s refuser plus tard si besoin
+            # RBAC may forbid reading quotas: do not block here, Kubernetes
+            # itself rejects what exceeds a ResourceQuota.
+            logger.warning(
+                "k8s_quota_preflight_skipped",
+                extra={"extra_fields": {"namespace": namespace, "error": str(e)}},
+            )
             return
 
         if not getattr(rqs, "items", None):
@@ -790,6 +889,8 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         deleted: bool = False,
     ) -> None:
         try:
+            # Own short session (not the caller's): a fresh transaction sees
+            # rows committed by concurrent requests.
             from .database import SessionLocal
 
             with SessionLocal() as db:
@@ -800,15 +901,17 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 )
                 if user.role != UserRole.admin:
                     query = query.filter(DeploymentRecord.user_id == user.id)
-                rec = query.first()
-                if not rec:
+                # Every live row: duplicates left by older versions are healed too.
+                records = query.all()
+                if not records:
                     return
-                rec.status = status
                 now = datetime.datetime.now(datetime.timezone.utc)
-                if mark_seen:
-                    rec.last_seen_at = now
-                if deleted:
-                    rec.deleted_at = now
+                for rec in records:
+                    rec.status = status
+                    if mark_seen:
+                        rec.last_seen_at = now
+                    if deleted:
+                        rec.deleted_at = now
                 db.commit()
         except Exception as exc:
             logger.warning(
@@ -831,8 +934,37 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         delete_services: bool = True,
         delete_persistent: bool = False,
     ) -> Dict[str, Any]:
-        """Supprime une application LabOnDemand entière via labels, après contrôle d'accès."""
+        """Supprime une application LabOnDemand entière via labels, après contrôle d'accès.
+
+        The Kubernetes deletion and the DB soft delete run under the owner's
+        lab lock, so a concurrent lab list cannot re-create the row in between.
+        """
         resolved = self._resolve_target_deployments(namespace, name, current_user)
+        with user_lab_lock(self._lab_owner_id(resolved["deployments"], current_user)):
+            return self._delete_resolved(
+                resolved, current_user, delete_services, delete_persistent
+            )
+
+    @staticmethod
+    def _lab_owner_id(
+        deployments: List[client.V1Deployment], current_user: User
+    ) -> int:
+        """Owner of a resolved lab (``user-id`` label), the caller by default."""
+        for dep in deployments:
+            owner = ((dep.metadata.labels or {}) if dep.metadata else {}).get("user-id")
+            try:
+                return int(owner)
+            except (TypeError, ValueError):
+                continue
+        return int(current_user.id)
+
+    def _delete_resolved(
+        self,
+        resolved: Dict[str, Any],
+        current_user: User,
+        delete_services: bool,
+        delete_persistent: bool,
+    ) -> Dict[str, Any]:
         display_name = resolved["display_name"]
         stack_name = resolved["stack_name"]
         selector_name = stack_name or display_name
@@ -969,20 +1101,9 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     )
                 elif kind == "secret":
                     self.core_v1.delete_namespaced_secret(resource_name, namespace)
-            except client.exceptions.ApiException as exc:
-                if exc.status != 404:
-                    logger.warning(
-                        "deployment_create_rollback_item_failed",
-                        extra={
-                            "extra_fields": {
-                                "namespace": namespace,
-                                "kind": kind,
-                                "name": resource_name,
-                                "error": str(exc),
-                            }
-                        },
-                    )
             except Exception as exc:
+                if isinstance(exc, client.exceptions.ApiException) and exc.status == 404:
+                    continue  # already gone
                 logger.warning(
                     "deployment_create_rollback_item_failed",
                     extra={
@@ -1072,12 +1193,18 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "paused_by": paused_by_values[0] if paused_by_values else None,
         }
 
-    async def pause_application(
+    def pause_application(
         self, namespace: str, name: str, current_user: User
     ) -> Dict[str, Any]:
+        """Scale every component to 0 and remember the replica count (blocking)."""
         resolved = self._resolve_target_deployments(namespace, name, current_user)
         components_payload: List[Dict[str, Any]] = []
-        iso_now = datetime.datetime.utcnow().isoformat() + "Z"
+        iso_now = (
+            datetime.datetime.now(datetime.timezone.utc)
+            .replace(tzinfo=None)
+            .isoformat()
+            + "Z"
+        )
         paused_by = getattr(
             current_user, "username", str(getattr(current_user, "id", "unknown"))
         )
@@ -1111,12 +1238,11 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 namespace=resolved["namespace"],
                 body=patch_body,
             )
-            lifecycle_after = self.describe_component_lifecycle(updated)
             components_payload.append(
                 {
                     "name": deployment.metadata.name,
                     "previous_replicas": previous_replicas,
-                    "lifecycle": lifecycle_after,
+                    "lifecycle": self.describe_component_lifecycle(updated),
                 }
             )
 
@@ -1155,92 +1281,56 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "message": "Application mise en pause. Les pods seront libérés dans quelques secondes.",
         }
 
-    async def resume_application(
+    def _resume_plan(self, deployments: List[client.V1Deployment]) -> ResourcePlan:
+        """Resources the paused components will request once scaled back up."""
+        totals = {"req_cpu": 0.0, "req_mem": 0.0, "lim_cpu": 0.0, "lim_mem": 0.0}
+        pods = 0
+        for deployment in deployments:
+            replicas = self.describe_component_lifecycle(deployment).get("resume_replicas") or 1
+            pods += replicas
+            tmpl_spec = getattr(getattr(deployment.spec, "template", None), "spec", None)
+            for container in (getattr(tmpl_spec, "containers", None) or []) if tmpl_spec else []:
+                resources = getattr(container, "resources", None)
+                for prefix, values in (
+                    ("req", getattr(resources, "requests", None) if resources else None),
+                    ("lim", getattr(resources, "limits", None) if resources else None),
+                ):
+                    if not isinstance(values, dict):
+                        continue
+                    if values.get("cpu"):
+                        totals[f"{prefix}_cpu"] += parse_cpu_to_millicores(str(values["cpu"])) * replicas
+                    if values.get("memory"):
+                        totals[f"{prefix}_mem"] += parse_memory_to_mi(str(values["memory"])) * replicas
+        return ResourcePlan(
+            requests_cpu_m=int(totals["req_cpu"]),
+            # Containers without limits count their requests against limits quotas.
+            limits_cpu_m=int(totals["lim_cpu"] or totals["req_cpu"]),
+            requests_mem_mi=int(totals["req_mem"]),
+            limits_mem_mi=int(totals["lim_mem"] or totals["req_mem"]),
+            pods=pods,
+            deployments=len(deployments),
+        )
+
+    def resume_application(
         self, namespace: str, name: str, current_user: User
     ) -> Dict[str, Any]:
+        """Scale paused components back up after the quota checks (blocking).
+
+        Quota check and scale-up run under the caller's lab lock (the quota
+        being checked is the caller's), like lab creation.
+        """
         resolved = self._resolve_target_deployments(namespace, name, current_user)
-        components_payload: List[Dict[str, Any]] = []
+        with user_lab_lock(current_user.id):
+            return self._resume_resolved(resolved, current_user)
 
-        # Calculer l'impact quota avant de relancer les pods
-        planned_pods = 0
-        planned_cpu_m = 0
-        planned_mem_mi = 0
-        planned_limits_cpu_m = 0
-        planned_limits_mem_mi = 0
-
-        for deployment in resolved["deployments"]:
-            lifecycle = self.describe_component_lifecycle(deployment)
-            target_replicas = lifecycle.get("resume_replicas") or 1
-            planned_pods += target_replicas
-
-            tmpl_spec = getattr(
-                getattr(deployment.spec, "template", None), "spec", None
-            )
-            containers = []
-            if tmpl_spec and getattr(tmpl_spec, "containers", None):
-                containers = tmpl_spec.containers
-            for container in containers:
-                resources = getattr(container, "resources", None)
-                requests = getattr(resources, "requests", None) if resources else None
-                limits = getattr(resources, "limits", None) if resources else None
-                cpu_req = None
-                mem_req = None
-                cpu_lim = None
-                mem_lim = None
-                if isinstance(requests, dict):
-                    cpu_req = requests.get("cpu")
-                    mem_req = requests.get("memory")
-                if isinstance(limits, dict):
-                    cpu_lim = limits.get("cpu")
-                    mem_lim = limits.get("memory")
-                if cpu_req:
-                    planned_cpu_m += (
-                        parse_cpu_to_millicores(str(cpu_req)) * target_replicas
-                    )
-                if mem_req:
-                    planned_mem_mi += parse_memory_to_mi(str(mem_req)) * target_replicas
-                if cpu_lim:
-                    planned_limits_cpu_m += (
-                        parse_cpu_to_millicores(str(cpu_lim)) * target_replicas
-                    )
-                if mem_lim:
-                    planned_limits_mem_mi += (
-                        parse_memory_to_mi(str(mem_lim)) * target_replicas
-                    )
-
-        if planned_pods == 0:
-            planned_pods = len(resolved["deployments"])
-
-        self._assert_user_quota(
-            current_user=current_user,
-            planned_apps=1,
-            planned_pods=planned_pods,
-            planned_cpu_request_m=int(planned_cpu_m),
-            planned_memory_request_mi=int(planned_mem_mi),
+    def _resume_resolved(
+        self, resolved: Dict[str, Any], current_user: User
+    ) -> Dict[str, Any]:
+        self._enforce_quotas(
+            current_user, resolved["namespace"], self._resume_plan(resolved["deployments"])
         )
-        try:
-            self._preflight_k8s_quota(
-                resolved["namespace"],
-                planned_requests_cpu_m=int(planned_cpu_m),
-                planned_limits_cpu_m=int(planned_limits_cpu_m or planned_cpu_m),
-                planned_requests_mem_mi=int(planned_mem_mi),
-                planned_limits_mem_mi=int(planned_limits_mem_mi or planned_mem_mi),
-                planned_pods=planned_pods,
-                planned_deployments=len(resolved["deployments"]),
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "resume_quota_preflight_failed",
-                extra={
-                    "extra_fields": {
-                        "namespace": resolved["namespace"],
-                        "error": str(exc),
-                    }
-                },
-            )
 
+        components_payload: List[Dict[str, Any]] = []
         for deployment in resolved["deployments"]:
             lifecycle_before = self.describe_component_lifecycle(deployment)
             target_replicas = lifecycle_before.get("resume_replicas") or 1
@@ -1260,12 +1350,11 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 namespace=resolved["namespace"],
                 body=patch_body,
             )
-            lifecycle_after = self.describe_component_lifecycle(updated)
             components_payload.append(
                 {
                     "name": deployment.metadata.name,
                     "target_replicas": target_replicas,
-                    "lifecycle": lifecycle_after,
+                    "lifecycle": self.describe_component_lifecycle(updated),
                 }
             )
 
@@ -1336,7 +1425,8 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
     def get_user_quota_summary(self, user: User) -> Dict[str, Any]:
         """Retourne un résumé des quotas: role, usage courant, limites et restants."""
         role_val = getattr(user.role, "value", str(user.role))
-        limits = get_role_limits(str(role_val), getattr(user, "id", None))
+        with read_session(user) as db:
+            limits = get_role_limits(str(role_val), getattr(user, "id", None), db=db)
         usage = self._get_user_usage(user)
         remaining = {
             "apps": max(limits["max_apps"] - usage["apps_used"], 0),
@@ -1360,8 +1450,14 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         stack_name: Optional[str] = None,
         cpu_requested: Optional[str] = None,
         mem_requested: Optional[str] = None,
-    ) -> None:
-        """Crée ou met à jour l'enregistrement Deployment en base avec expires_at calculé selon le rôle."""
+    ) -> Optional[int]:
+        """Crée ou met à jour l'enregistrement Deployment en base avec expires_at calculé selon le rôle.
+
+        Called under the user's lab lock (see ``create_deployment``), in its
+        own short session so the existence check sees committed rows.
+        Returns the row id, or ``None`` when the DB could not be written (the
+        lab list re-creates the row later).
+        """
         try:
             from .database import SessionLocal
             from .tasks.cleanup import compute_expires_at
@@ -1381,6 +1477,7 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     .first()
                 )
                 if existing:
+                    record = existing
                     existing.status = "active"
                     existing.namespace = namespace
                     existing.deployment_type = deployment_type
@@ -1404,11 +1501,13 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     )
                     db.add(record)
                 db.commit()
+                return int(record.id)
         except Exception as exc:
             logger.warning(
                 "deployment_db_track_failed",
                 extra={"extra_fields": {"name": name, "error": str(exc)}},
             )
+            return None
 
     def create_deployment_manifest(
         self,
@@ -1524,12 +1623,298 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
             "spec": {"selector": {"app": name}, "type": service_type, "ports": ports},
         }
 
-    async def create_deployment(
+    # ------------------------------------------------------------------
+    # Creation helpers shared by single deployments and stacks
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _role_value(user: User) -> str:
+        return str(getattr(user.role, "value", str(user.role)))
+
+    @staticmethod
+    def ingress_url(host: str) -> str:
+        scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
+        return f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
+
+    @contextmanager
+    def _rollback_on_failure(
+        self,
+        namespace: str,
+        created: List[Tuple[str, str]],
+        api_error_prefix: str,
+        unexpected_error_prefix: str,
+        **log_fields: Any,
+    ) -> Iterator[None]:
+        """Delete what the block created if it fails, and map the error to HTTP."""
+        try:
+            yield
+        except HTTPException:
+            self._rollback_created_objects(namespace, created)
+            raise
+        except client.exceptions.ApiException as exc:
+            self._rollback_created_objects(namespace, created)
+            logger.exception(
+                "deployment_k8s_error",
+                extra={
+                    "extra_fields": {
+                        **log_fields,
+                        "namespace": namespace,
+                        "status": getattr(exc, "status", None),
+                        "reason": getattr(exc, "reason", None),
+                    }
+                },
+            )
+            status = exc.status or 0
+            # A 401 means the platform's cluster credentials were rejected
+            # (forwarding it would make the browser think the user session
+            # expired); 503 / status 0 are transport-level failures.
+            if status in (401, 503) or not 100 <= status <= 599:
+                raise k8s_unavailable()
+            raise HTTPException(
+                status_code=status,
+                detail=f"{api_error_prefix}: {exc.reason} - {exc.body}",
+            )
+        except K8S_TRANSPORT_ERRORS as exc:
+            # Cluster unreachable: roll back what can be, answer 503 without
+            # the raw error (it names the API server host).
+            self._rollback_created_objects(namespace, created)
+            logger.error(
+                "deployment_k8s_unreachable",
+                extra={
+                    "extra_fields": {
+                        **log_fields,
+                        "namespace": namespace,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                },
+            )
+            raise k8s_unavailable()
+        except Exception:
+            self._rollback_created_objects(namespace, created)
+            logger.exception(
+                "deployment_unexpected_error",
+                extra={"extra_fields": {**log_fields, "namespace": namespace}},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"{unexpected_error_prefix} (erreur interne, consultez les logs)",
+            )
+
+    @staticmethod
+    def _decode_secret_data(data: Optional[Dict[str, str]]) -> Dict[str, str]:
+        """Decode a Secret's base64 ``data`` (undecodable values are skipped)."""
+        decoded: Dict[str, str] = {}
+        for key, value in (data or {}).items():
+            try:
+                decoded[key] = base64.b64decode(value).decode("utf-8")
+            except (binascii.Error, ValueError, TypeError, UnicodeDecodeError):
+                continue
+        return decoded
+
+    def _create_or_relabel_secret(
+        self,
+        namespace: str,
+        manifest: Dict[str, Any],
+        created: List[Tuple[str, str]],
+    ) -> Dict[str, str]:
+        """Create a stack secret, or reuse the existing one of the same owner.
+
+        Returns the values the pods will actually read: the manifest's
+        ``stringData`` for a new secret, the existing secret's data otherwise
+        (a stack re-created under the same name after a delete that kept its
+        persistent data keeps its old credentials). An existing secret that is
+        not managed by LabOnDemand for the same user is a conflict (HTTP 409).
+        """
+        name = manifest["metadata"]["name"]
+        wanted_labels = manifest["metadata"].get("labels", {}) or {}
+        try:
+            self.core_v1.create_namespaced_secret(namespace, manifest)
+            created.append(("secret", name))
+            return dict(manifest.get("stringData") or {})
+        except client.exceptions.ApiException as exc:
+            if exc.status != 409:
+                raise
+        existing = self.core_v1.read_namespaced_secret(name, namespace)
+        existing_labels = (getattr(existing, "metadata", None) and existing.metadata.labels) or {}
+        if existing_labels.get("managed-by") != "labondemand" or existing_labels.get(
+            "user-id"
+        ) != wanted_labels.get("user-id"):
+            audit_logger.warning(
+                "stack_secret_conflict_foreign_owner",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "secret": name,
+                        "user_id": wanted_labels.get("user-id"),
+                        "existing_owner": existing_labels.get("user-id"),
+                    }
+                },
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"Un secret '{name}' existe déjà et n'appartient pas à ce lab",
+            )
+        values = self._decode_secret_data(getattr(existing, "data", None))
+        try:
+            self.core_v1.patch_namespaced_secret(
+                name=name,
+                namespace=namespace,
+                body={"metadata": {"labels": manifest["metadata"].get("labels", {})}},
+            )
+        except Exception as exc:
+            logger.warning(
+                "stack_secret_relabel_failed",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "secret": name,
+                        "error": str(exc),
+                    }
+                },
+            )
+        logger.info(
+            "stack_secret_reused",
+            extra={"extra_fields": {"namespace": namespace, "secret": name}},
+        )
+        return values
+
+    def _create_pvc_or_fallback(
+        self,
+        namespace: str,
+        manifest: Dict[str, Any],
+        created: List[Tuple[str, str]],
+    ) -> bool:
+        """Create a PVC. Returns False when the cluster cannot provide storage
+        (the caller then mounts an emptyDir); other errors, 409 included, raise."""
+        name = manifest["metadata"]["name"]
+        try:
+            self.core_v1.create_namespaced_persistent_volume_claim(namespace, manifest)
+        except client.exceptions.ApiException as exc:
+            msg = (getattr(exc, "body", "") or "").lower()
+            storage_unavailable = (
+                exc.status in (403, 422)
+                or "no persistent volumes" in msg
+                or "storageclass" in msg
+                or "forbidden" in msg
+            )
+            if exc.status == 409 or not storage_unavailable:
+                raise
+            logger.warning(
+                "deployment_pvc_fallback_empty_dir",
+                extra={
+                    "extra_fields": {
+                        "pvc_name": name,
+                        "namespace": namespace,
+                        "status": exc.status,
+                        "reason": getattr(exc, "reason", None),
+                    }
+                },
+            )
+            return False
+        created.append(("pvc", name))
+        return True
+
+    def _expose_via_ingress(
+        self,
+        namespace: str,
+        ingress_name: str,
+        host: str,
+        service_name: str,
+        service_port: int,
+        labels: Dict[str, str],
+        created: List[Tuple[str, str]],
+    ) -> Dict[str, Any]:
+        """Create (or update) the Ingress of a service; returns its public details."""
+        manifest = self.create_ingress_manifest(
+            ingress_name, host, service_name, service_port, labels
+        )
+        ingress_obj, created_flag = self._apply_ingress(namespace, manifest)
+        if created_flag:
+            created.append(("ingress", ingress_name))
+        return {
+            "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
+            "host": host,
+            "url": self.ingress_url(host),
+            "class": settings.INGRESS_CLASS_NAME,
+            "tls": bool(settings.INGRESS_TLS_SECRET),
+            "created": created_flag,
+        }
+
+    def _enforce_quotas(
+        self, current_user: User, namespace: str, plan: ResourcePlan
+    ) -> None:
+        """Application quotas (per role/override), then namespace ResourceQuotas."""
+        self._assert_user_quota(
+            current_user,
+            planned_apps=1,
+            planned_pods=plan.pods,
+            planned_cpu_request_m=plan.requests_cpu_m,
+            planned_memory_request_mi=plan.requests_mem_mi,
+        )
+        self._preflight_k8s_quota(
+            namespace,
+            planned_requests_cpu_m=plan.requests_cpu_m,
+            planned_limits_cpu_m=plan.limits_cpu_m,
+            planned_requests_mem_mi=plan.requests_mem_mi,
+            planned_limits_mem_mi=plan.limits_mem_mi,
+            planned_pods=plan.pods,
+            planned_deployments=plan.deployments,
+        )
+
+    def _prepare_user_namespace(self, current_user: User, deployment_name: str) -> str:
+        """The user's own namespace, created if needed, with baseline guard-rails."""
+        namespace = build_user_namespace(current_user)
+        if not ensure_namespace_exists(namespace):
+            logger.error(
+                "namespace_unavailable",
+                extra={
+                    "extra_fields": {
+                        "namespace": namespace,
+                        "user_id": getattr(current_user, "id", None),
+                        "deployment_name": deployment_name,
+                    }
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Impossible d'assurer le namespace '{namespace}'. "
+                    f"Vérifiez les droits RBAC et la configuration Kubernetes."
+                ),
+            )
+        # Best-effort: logs and returns False on failure.
+        ensure_namespace_baseline(namespace, self._role_value(current_user))
+        return namespace
+
+    @staticmethod
+    def _validate_service_and_resources(
+        service_type: str,
+        cpu_request: str,
+        cpu_limit: str,
+        memory_request: str,
+        memory_limit: str,
+    ) -> None:
+        valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
+        if service_type not in valid_service_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}",
+            )
+        try:
+            validate_resource_format(cpu_request, cpu_limit, memory_request, memory_limit)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    # ------------------------------------------------------------------
+    # Creation entry point
+    # ------------------------------------------------------------------
+
+    def create_deployment(
         self,
         name: str,
         image: str,
         replicas: int,
-        namespace: Optional[str],  # ignoré volontairement, conservation pour compat
+        namespace: Optional[str],  # ignored: every lab goes to the user's namespace
         create_service: bool,
         service_port: int,
         service_target_port: int,
@@ -1541,13 +1926,13 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
         memory_limit: str,
         additional_labels: Optional[Dict[str, str]],
         current_user: User,
-        storage_mode: str = "auto",
         existing_pvc_name: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Create a lab (single deployment or multi-component stack).
+
+        Blocking (Kubernetes + DB calls): call it from a plain ``def`` route or
+        through ``asyncio.to_thread``.
         """
-        Méthode principale pour créer un déploiement
-        """
-        # Validation et formatage
         name = validate_k8s_name(name)
         logger.info(
             "deployment_request_received",
@@ -1563,338 +1948,171 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 }
             },
         )
-        # Politique d'isolation: namespace par utilisateur, aucun choix client
-        effective_namespace = build_user_namespace(current_user)
-
-        # S'assurer que le namespace existe (idempotent)
-        ns_ok = await ensure_namespace_exists(effective_namespace)
-        if not ns_ok:
-            logger.error(
-                "namespace_unavailable",
-                extra={
-                    "extra_fields": {
-                        "namespace": effective_namespace,
-                        "user_id": getattr(current_user, "id", None),
-                        "deployment_name": name,
-                    }
-                },
-            )
-            # Échec explicite si on ne peut pas assurer le namespace
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"Impossible d'assurer le namespace '{effective_namespace}'. "
-                    f"Vérifiez les droits RBAC et la configuration Kubernetes."
-                ),
-            )
-        # Appliquer des garde-fous de base (idempotent, best-effort)
-        try:
-            role_val = getattr(current_user.role, "value", str(current_user.role))
-            ensure_namespace_baseline(effective_namespace, str(role_val))
-        except Exception:
-            pass
-
-        # Valider les permissions
+        effective_namespace = self._prepare_user_namespace(current_user, name)
         self.validate_permissions(current_user, deployment_type)
-
-        # Valider les types de service
-        valid_service_types = ["ClusterIP", "NodePort", "LoadBalancer"]
-        if service_type not in valid_service_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Type de service invalide. Types valides: {', '.join(valid_service_types)}",
-            )
-
-        # Valider les formats de ressources
-        try:
-            validate_resource_format(
-                cpu_request, cpu_limit, memory_request, memory_limit
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-        # Cas spécial: application multi-composants (WordPress)
-        if deployment_type == "wordpress":
-            # Estimation des ressources planifiées (2 pods: DB + WP)
-            role_val = getattr(current_user.role, "value", str(current_user.role))
-            db_res = clamp_resources_for_role(
-                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
-            )
-            wp_res = clamp_resources_for_role(
-                str(role_val), "250m", "1000m", "512Mi", "1Gi", 1
-            )
-            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(
-                parse_cpu_to_millicores(wp_res["cpu_request"])
-            )
-            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(
-                parse_memory_to_mi(wp_res["memory_request"])
-            )
-            self._assert_user_quota(
-                current_user,
-                planned_apps=1,
-                planned_pods=2,
-                planned_cpu_request_m=planned_cpu_m,
-                planned_memory_request_mi=planned_mem_mi,
-            )
-
-            # Préflight contre ResourceQuota Kubernetes (requests+limits et pods/deployments)
-            planned_limits_cpu_m = int(
-                parse_cpu_to_millicores(db_res["cpu_limit"])
-            ) + int(parse_cpu_to_millicores(wp_res["cpu_limit"]))
-            planned_limits_mem_mi = int(
-                parse_memory_to_mi(db_res["memory_limit"])
-            ) + int(parse_memory_to_mi(wp_res["memory_limit"]))
-            self._preflight_k8s_quota(
-                effective_namespace,
-                planned_requests_cpu_m=planned_cpu_m,
-                planned_limits_cpu_m=planned_limits_cpu_m,
-                planned_requests_mem_mi=planned_mem_mi,
-                planned_limits_mem_mi=planned_limits_mem_mi,
-                planned_pods=2,
-                planned_deployments=2,
-            )
-            result = await self._create_wordpress_stack(
-                name=name,
-                effective_namespace=effective_namespace,
-                service_type=service_type,
-                service_port=service_port or 8080,
-                current_user=current_user,
-                additional_labels=additional_labels or {},
-            )
-            audit_logger.info(
-                "deployment_created",
-                extra={
-                    "extra_fields": {
-                        "deployment_name": name,
-                        "deployment_type": "wordpress",
-                        "namespace": effective_namespace,
-                        "user_id": getattr(current_user, "id", None),
-                        "username": getattr(current_user, "username", None),
-                        "resource_summary": list(
-                            (result.get("created_objects") or {}).keys()
-                        ),
-                        "service_type": result.get("service_info", {}).get("type"),
-                    }
-                },
-            )
-            self._track_deployment_in_db(
-                user=current_user,
-                name=name,
-                deployment_type="wordpress",
-                namespace=effective_namespace,
-                stack_name=name,
-            )
-            return result
-
-        # Cas spécial: stack MySQL + phpMyAdmin (DB interne + UI exposée)
-        if deployment_type == "mysql":
-            role_val = getattr(current_user.role, "value", str(current_user.role))
-            # Estimation des ressources planifiées (2 pods: MySQL + phpMyAdmin)
-            db_res = clamp_resources_for_role(
-                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
-            )
-            pma_res = clamp_resources_for_role(
-                str(role_val), "150m", "300m", "128Mi", "256Mi", 1
-            )
-            planned_cpu_m = int(parse_cpu_to_millicores(db_res["cpu_request"])) + int(
-                parse_cpu_to_millicores(pma_res["cpu_request"])
-            )
-            planned_mem_mi = int(parse_memory_to_mi(db_res["memory_request"])) + int(
-                parse_memory_to_mi(pma_res["memory_request"])
-            )
-            self._assert_user_quota(
-                current_user,
-                planned_apps=1,
-                planned_pods=2,
-                planned_cpu_request_m=planned_cpu_m,
-                planned_memory_request_mi=planned_mem_mi,
-            )
-
-            planned_limits_cpu_m = int(
-                parse_cpu_to_millicores(db_res["cpu_limit"])
-            ) + int(parse_cpu_to_millicores(pma_res["cpu_limit"]))
-            planned_limits_mem_mi = int(
-                parse_memory_to_mi(db_res["memory_limit"])
-            ) + int(parse_memory_to_mi(pma_res["memory_limit"]))
-            self._preflight_k8s_quota(
-                effective_namespace,
-                planned_requests_cpu_m=planned_cpu_m,
-                planned_limits_cpu_m=planned_limits_cpu_m,
-                planned_requests_mem_mi=planned_mem_mi,
-                planned_limits_mem_mi=planned_limits_mem_mi,
-                planned_pods=2,
-                planned_deployments=2,
-            )
-
-            result = await self._create_mysql_pma_stack(
-                name=name,
-                effective_namespace=effective_namespace,
-                service_type=service_type,
-                service_port=service_port or 8080,
-                current_user=current_user,
-                additional_labels=additional_labels or {},
-            )
-            audit_logger.info(
-                "deployment_created",
-                extra={
-                    "extra_fields": {
-                        "deployment_name": name,
-                        "deployment_type": "mysql",
-                        "namespace": effective_namespace,
-                        "user_id": getattr(current_user, "id", None),
-                        "username": getattr(current_user, "username", None),
-                        "resource_summary": list(
-                            (result.get("created_objects") or {}).keys()
-                        ),
-                        "service_type": result.get("service_info", {}).get("type"),
-                    }
-                },
-            )
-            self._track_deployment_in_db(
-                user=current_user,
-                name=name,
-                deployment_type="mysql",
-                namespace=effective_namespace,
-                stack_name=name,
-            )
-            return result
-
-        # Cas spécial: stack LAMP (Apache+PHP, MySQL, phpMyAdmin)
-        if deployment_type == "lamp":
-            role_val = getattr(current_user.role, "value", str(current_user.role))
-            # 3 pods: web + db + pma
-            web_res = clamp_resources_for_role(
-                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
-            )
-            db_res = clamp_resources_for_role(
-                str(role_val), "250m", "500m", "256Mi", "512Mi", 1
-            )
-            pma_res = clamp_resources_for_role(
-                str(role_val), "150m", "300m", "128Mi", "256Mi", 1
-            )
-
-            planned_cpu_m = (
-                int(parse_cpu_to_millicores(web_res["cpu_request"]))
-                + int(parse_cpu_to_millicores(db_res["cpu_request"]))
-                + int(parse_cpu_to_millicores(pma_res["cpu_request"]))
-            )
-            planned_mem_mi = (
-                int(parse_memory_to_mi(web_res["memory_request"]))
-                + int(parse_memory_to_mi(db_res["memory_request"]))
-                + int(parse_memory_to_mi(pma_res["memory_request"]))
-            )
-            self._assert_user_quota(
-                current_user,
-                planned_apps=1,
-                planned_pods=3,
-                planned_cpu_request_m=planned_cpu_m,
-                planned_memory_request_mi=planned_mem_mi,
-            )
-
-            planned_limits_cpu_m = (
-                int(parse_cpu_to_millicores(web_res["cpu_limit"]))
-                + int(parse_cpu_to_millicores(db_res["cpu_limit"]))
-                + int(parse_cpu_to_millicores(pma_res["cpu_limit"]))
-            )
-            planned_limits_mem_mi = (
-                int(parse_memory_to_mi(web_res["memory_limit"]))
-                + int(parse_memory_to_mi(db_res["memory_limit"]))
-                + int(parse_memory_to_mi(pma_res["memory_limit"]))
-            )
-            self._preflight_k8s_quota(
-                effective_namespace,
-                planned_requests_cpu_m=planned_cpu_m,
-                planned_limits_cpu_m=planned_limits_cpu_m,
-                planned_requests_mem_mi=planned_mem_mi,
-                planned_limits_mem_mi=planned_limits_mem_mi,
-                planned_pods=3,
-                planned_deployments=3,
-            )
-
-            result = await self._create_lamp_stack(
-                name=name,
-                effective_namespace=effective_namespace,
-                service_type=service_type,
-                service_port=service_port or 8080,
-                current_user=current_user,
-                additional_labels=additional_labels or {},
-            )
-            audit_logger.info(
-                "deployment_created",
-                extra={
-                    "extra_fields": {
-                        "deployment_name": name,
-                        "deployment_type": "lamp",
-                        "namespace": effective_namespace,
-                        "user_id": getattr(current_user, "id", None),
-                        "username": getattr(current_user, "username", None),
-                        "resource_summary": list(
-                            (result.get("created_objects") or {}).keys()
-                        ),
-                        "service_type": result.get("service_info", {}).get("type"),
-                    }
-                },
-            )
-            self._track_deployment_in_db(
-                user=current_user,
-                name=name,
-                deployment_type="lamp",
-                namespace=effective_namespace,
-                stack_name=name,
-            )
-            return result
-
-        # Appliquer la configuration du déploiement
-        config = self.apply_deployment_config(
-            deployment_type,
-            image,
-            cpu_request,
-            cpu_limit,
-            memory_request,
-            memory_limit,
-            service_target_port,
-            create_service,
-            service_type,
+        self._validate_service_and_resources(
+            service_type, cpu_request, cpu_limit, memory_request, memory_limit
         )
 
-        use_ingress = self._should_attach_ingress(deployment_type)
-        if use_ingress and config["create_service"]:
-            if config["service_type"] in ["NodePort", "LoadBalancer"]:
-                config["service_type"] = "ClusterIP"
-            if service_port is None:
-                service_port = config.get("service_target_port") or 80
+        # From the quota check to the DB row, nothing else may change this
+        # user's labs: concurrent creations (double click, class-wide spawn,
+        # resume) would all pass the check against the same old usage, and a
+        # concurrent lab list would insert a second row for the new lab.
+        with user_lab_lock(current_user.id):
+            return self._create_locked(
+                name=name,
+                image=image,
+                replicas=replicas,
+                create_service=create_service,
+                service_port=service_port,
+                service_target_port=service_target_port,
+                service_type=service_type,
+                deployment_type=deployment_type,
+                cpu_request=cpu_request,
+                cpu_limit=cpu_limit,
+                memory_request=memory_request,
+                memory_limit=memory_limit,
+                additional_labels=additional_labels or {},
+                current_user=current_user,
+                namespace=effective_namespace,
+                existing_pvc_name=existing_pvc_name,
+            )
 
-        # Auto-détermination des ports pour les runtimes configurés (DB) ou connus (fallback):
-        # - Si has_runtime_config est vrai OU runtime est vscode/jupyter, alors service_port = target_port
-        if config.get("has_runtime_config") or deployment_type in {
-            "vscode",
-            "jupyter",
-            *VNC_DESKTOP_TYPES,
-        }:
-            service_port = config["service_target_port"]
+    def _create_locked(
+        self,
+        *,
+        name: str,
+        image: str,
+        replicas: int,
+        create_service: bool,
+        service_port: int,
+        service_target_port: int,
+        service_type: str,
+        deployment_type: str,
+        cpu_request: str,
+        cpu_limit: str,
+        memory_request: str,
+        memory_limit: str,
+        additional_labels: Dict[str, str],
+        current_user: User,
+        namespace: str,
+        existing_pvc_name: Optional[str],
+    ) -> Dict[str, Any]:
+        """Quota checks, Kubernetes objects and DB row (caller holds the lab lock)."""
+        stack = STACK_SPECS.get(deployment_type)
+        if stack is not None:
+            return self._create_stack(
+                stack,
+                name=name,
+                namespace=namespace,
+                service_type=service_type,
+                service_port=service_port,
+                current_user=current_user,
+                additional_labels=additional_labels,
+            )
 
-        # Plafonner selon le rôle (sécurité)
-        role_val = getattr(current_user.role, "value", str(current_user.role))
+        return self._create_single_deployment(
+            name=name,
+            image=image,
+            replicas=replicas,
+            create_service=create_service,
+            service_port=service_port,
+            service_target_port=service_target_port,
+            service_type=service_type,
+            deployment_type=deployment_type,
+            cpu_request=cpu_request,
+            cpu_limit=cpu_limit,
+            memory_request=memory_request,
+            memory_limit=memory_limit,
+            additional_labels=additional_labels,
+            current_user=current_user,
+            namespace=namespace,
+            existing_pvc_name=existing_pvc_name,
+        )
+
+    def _create_stack(
+        self,
+        spec: StackSpec,
+        *,
+        name: str,
+        namespace: str,
+        service_type: str,
+        service_port: Optional[int],
+        current_user: User,
+        additional_labels: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Quota checks, stack builder, audit log and DB tracking of a stack."""
+        role = self._role_value(current_user)
+        plan = plan_resources(
+            [component.clamp(role) for component in spec.components],
+            replicas=1,
+            deployments=len(spec.components),
+        )
+        self._enforce_quotas(current_user, namespace, plan)
+
+        builder = getattr(self, spec.builder)
+        result = builder(
+            name=name,
+            effective_namespace=namespace,
+            service_type=service_type,
+            service_port=service_port or 8080,
+            current_user=current_user,
+            additional_labels=additional_labels,
+        )
+        audit_logger.info(
+            "deployment_created",
+            extra={
+                "extra_fields": {
+                    "deployment_name": name,
+                    "deployment_type": spec.deployment_type,
+                    "namespace": namespace,
+                    "user_id": getattr(current_user, "id", None),
+                    "username": getattr(current_user, "username", None),
+                    "resource_summary": list((result.get("created_objects") or {}).keys()),
+                    "service_type": result.get("service_info", {}).get("type"),
+                }
+            },
+        )
+        result["deployment_db_id"] = self._track_deployment_in_db(
+            user=current_user,
+            name=name,
+            deployment_type=spec.deployment_type,
+            namespace=namespace,
+            stack_name=name,
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Single-deployment path
+    # ------------------------------------------------------------------
+
+    def _clamp_with_runtime_floors(
+        self,
+        role: str,
+        config: Dict[str, Any],
+        replicas: int,
+        deployment_type: str,
+    ) -> Dict[str, Any]:
+        """Cap resources by role, then let the runtime's declared floors win.
+
+        A lab that starts OOMKilled is worse than a pod above the role ceiling
+        (e.g. Eclipse needs 2Gi); namespace ResourceQuota and the preflight
+        stay the hard limits. Finally keep request <= limit so a badly tuned
+        floor never yields a manifest the API server rejects.
+        """
         clamped = clamp_resources_for_role(
-            str(role_val),
+            role,
             config["cpu_request"],
             config["cpu_limit"],
             config["memory_request"],
             config["memory_limit"],
             replicas,
         )
-
-        # Les planchers déclarés par la config (ex: Eclipse = 2Gi mini) priment sur le
-        # plafond de rôle : un lab qui démarre en OOMKilled est pire qu'un pod au-dessus
-        # du plafond. La ResourceQuota du namespace et le preflight restent les limites
-        # dures du cluster.
         for res_key, floor in (config.get("floors") or {}).items():
             if not floor:
                 continue
             to_units = (
-                parse_memory_to_mi
-                if res_key.startswith("memory")
-                else parse_cpu_to_millicores
+                parse_memory_to_mi if res_key.startswith("memory") else parse_cpu_to_millicores
             )
             if to_units(clamped[res_key]) >= to_units(floor):
                 continue
@@ -1906,75 +2124,24 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                         "role_ceiling": clamped[res_key],
                         "runtime_floor": floor,
                         "deployment_type": deployment_type,
-                        "role": str(role_val),
+                        "role": role,
                     }
                 },
             )
             clamped[res_key] = floor
 
-        # Cohérence requête <= limite : un plancher mal réglé ne doit pas produire de
-        # manifeste refusé par l'API server.
         for req_key, lim_key in (
             ("cpu_request", "cpu_limit"),
             ("memory_request", "memory_limit"),
         ):
             clamped[lim_key] = max_resource(clamped[lim_key], clamped[req_key])
+        return clamped
 
-        # Vérification des quotas logiques (apps, CPU requests, RAM requests, pods) avant création
-        planned_cpu_m = int(
-            parse_cpu_to_millicores(clamped["cpu_request"]) * clamped["replicas"]
-        )
-        planned_mem_mi = int(
-            parse_memory_to_mi(clamped["memory_request"]) * clamped["replicas"]
-        )
-        self._assert_user_quota(
-            current_user,
-            planned_apps=1,
-            planned_pods=int(clamped["replicas"]),
-            planned_cpu_request_m=planned_cpu_m,
-            planned_memory_request_mi=planned_mem_mi,
-        )
-
-        # Vérifier aussi les ResourceQuota Kubernetes du namespace
-        planned_limits_cpu_m = int(
-            parse_cpu_to_millicores(clamped["cpu_limit"]) * clamped["replicas"]
-        )
-        planned_limits_mem_mi = int(
-            parse_memory_to_mi(clamped["memory_limit"]) * clamped["replicas"]
-        )
-        self._preflight_k8s_quota(
-            effective_namespace,
-            planned_requests_cpu_m=planned_cpu_m,
-            planned_limits_cpu_m=planned_limits_cpu_m,
-            planned_requests_mem_mi=planned_mem_mi,
-            planned_limits_mem_mi=planned_limits_mem_mi,
-            planned_pods=int(clamped["replicas"]),
-            planned_deployments=1,
-        )
-
-        # Créer les labels
-        if additional_labels is None:
-            additional_labels = {}
-
-        labels = create_labondemand_labels(
-            deployment_type,
-            str(current_user.id),
-            current_user.role.value,
-            additional_labels,
-        )
-
-        main_port_name: Optional[str] = None
-        extra_container_ports: Optional[List[Dict[str, Any]]] = None
-        additional_service_ports: Optional[List[Dict[str, Any]]] = None
-        container_env: Optional[List[Dict[str, Any]]] = None
-        container_env_from: Optional[List[Dict[str, Any]]] = None
-        container_command: Optional[List[str]] = None
-        container_args: Optional[List[str]] = None
-        generated_credentials: Optional[Dict[str, Dict[str, str]]] = None
-        generated_secret_name: Optional[str] = None
-        generated_secret_data: Optional[Dict[str, str]] = None
+    @staticmethod
+    def _runtime_extras(deployment_type: str, name: str) -> _RuntimeExtras:
+        """Ports, environment and generated credentials specific to a runtime."""
+        secret_name = f"{name}-secret"
         if deployment_type in VNC_DESKTOP_TYPES:
-            main_port_name = "novnc"
             vnc_password = secrets.token_urlsafe(18)
             view_only_password = secrets.token_urlsafe(18)
             extra_container_ports = [
@@ -1985,93 +2152,384 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 {"name": "vnc", "port": 5901, "targetPort": 5901, "protocol": "TCP"},
                 {"name": "audio", "port": 4901, "targetPort": 4901, "protocol": "TCP"},
             ]
-            # Eclipse Java EE : exposer Tomcat (8080) pour tester l'application
-            # web déployée depuis Eclipse (WTP) depuis n'importe quel navigateur.
+            # Eclipse Java EE: expose Tomcat (8080) to test the web app
+            # deployed from Eclipse (WTP) from any browser.
             if deployment_type == "eclipse":
-                extra_container_ports.append(
-                    {"containerPort": 8080, "name": "tomcat"}
-                )
+                extra_container_ports.append({"containerPort": 8080, "name": "tomcat"})
                 additional_service_ports.append(
-                    {
-                        "name": "tomcat",
-                        "port": 8080,
-                        "targetPort": 8080,
-                        "protocol": "TCP",
+                    {"name": "tomcat", "port": 8080, "targetPort": 8080, "protocol": "TCP"}
+                )
+            return _RuntimeExtras(
+                main_port_name="novnc",
+                extra_container_ports=extra_container_ports,
+                additional_service_ports=additional_service_ports,
+                env=[
+                    {"name": "SECURE_CONNECTION", "value": "false"},
+                    {"name": "KASM_ENABLE_SSL", "value": "false"},
+                    {"name": "KASM_NO_VNC_SSL", "value": "1"},
+                    {"name": "KASM_REQUIRE_SSL", "value": "false"},
+                ],
+                env_from=[{"secretRef": {"name": secret_name}}],
+                secret_name=secret_name,
+                secret_data={
+                    "VNC_USERNAME": "kasm_user",
+                    "VNC_PW": vnc_password,
+                    "VNC_VIEW_ONLY_PW": view_only_password,
+                },
+                credentials={
+                    deployment_type: {
+                        "username": "kasm_user",
+                        "password": vnc_password,
+                        "view_only_password": view_only_password,
                     }
-                )
-            container_env = [
-                {"name": "SECURE_CONNECTION", "value": "false"},
-                {"name": "KASM_ENABLE_SSL", "value": "false"},
-                {"name": "KASM_NO_VNC_SSL", "value": "1"},
-                {"name": "KASM_REQUIRE_SSL", "value": "false"},
-            ]
-            generated_secret_name = f"{name}-secret"
-            generated_secret_data = {
-                "VNC_USERNAME": "kasm_user",
-                "VNC_PW": vnc_password,
-                "VNC_VIEW_ONLY_PW": view_only_password,
-            }
-            generated_credentials = {
-                deployment_type: {
-                    "username": "kasm_user",
-                    "password": vnc_password,
-                    "view_only_password": view_only_password,
-                }
-            }
-            container_env_from = [{"secretRef": {"name": generated_secret_name}}]
-        elif deployment_type == "jupyter":
+                },
+            )
+        if deployment_type == "jupyter":
             jupyter_token = secrets.token_urlsafe(24)
-            generated_secret_name = f"{name}-secret"
-            generated_secret_data = {"JUPYTER_TOKEN": jupyter_token}
-            generated_credentials = {"jupyter": {"token": jupyter_token}}
-            container_env = [{"name": "JUPYTER_ENABLE_LAB", "value": "yes"}]
-            container_env_from = [{"secretRef": {"name": generated_secret_name}}]
-            container_command = ["/bin/sh", "-lc"]
-            container_args = [
-                (
-                    "exec start-notebook.sh "
-                    "--ServerApp.token=\"${JUPYTER_TOKEN}\" "
-                    "--ServerApp.password='' "
-                    "--NotebookApp.token=\"${JUPYTER_TOKEN}\" "
-                    "--NotebookApp.password=''"
-                )
-            ]
-        elif deployment_type == "vscode":
-            generated_secret_name = f"{name}-secret"
-            generated_secret_data = {
-                "CODE_SERVER_USERNAME": "coder",
-                "PASSWORD": secrets.token_urlsafe(18),
-            }
-            generated_credentials = {
-                "vscode": {
-                    "username": generated_secret_data["CODE_SERVER_USERNAME"],
-                    "password": generated_secret_data["PASSWORD"],
-                }
-            }
-            container_env_from = [{"secretRef": {"name": generated_secret_name}}]
+            return _RuntimeExtras(
+                env=[{"name": "JUPYTER_ENABLE_LAB", "value": "yes"}],
+                env_from=[{"secretRef": {"name": secret_name}}],
+                command=["/bin/sh", "-lc"],
+                args=[
+                    (
+                        "exec start-notebook.sh "
+                        "--ServerApp.token=\"${JUPYTER_TOKEN}\" "
+                        "--ServerApp.password='' "
+                        "--NotebookApp.token=\"${JUPYTER_TOKEN}\" "
+                        "--NotebookApp.password=''"
+                    )
+                ],
+                secret_name=secret_name,
+                secret_data={"JUPYTER_TOKEN": jupyter_token},
+                credentials={"jupyter": {"token": jupyter_token}},
+            )
+        if deployment_type == "vscode":
+            password = secrets.token_urlsafe(18)
+            return _RuntimeExtras(
+                env_from=[{"secretRef": {"name": secret_name}}],
+                secret_name=secret_name,
+                secret_data={"CODE_SERVER_USERNAME": "coder", "PASSWORD": password},
+                credentials={"vscode": {"username": "coder", "password": password}},
+            )
+        return _RuntimeExtras()
 
-        created_objects: List[Tuple[str, str]] = []
+    def _create_credentials_secret(
+        self,
+        namespace: str,
+        name: str,
+        labels: Dict[str, str],
+        extras: _RuntimeExtras,
+        created: List[Tuple[str, str]],
+    ) -> None:
+        secret_labels = {**labels, "app": name, "stack-name": name, "component": "credentials"}
+        self.core_v1.create_namespaced_secret(
+            namespace,
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": extras.secret_name, "labels": secret_labels},
+                "type": "Opaque",
+                "stringData": extras.secret_data,
+            },
+        )
+        created.append(("secret", extras.secret_name))
+
+    def _relabel_reused_pvc(
+        self,
+        namespace: str,
+        pvc: client.V1PersistentVolumeClaim,
+        deployment_type: str,
+        app_name: str,
+        current_user: User,
+    ) -> None:
+        """Point a reused PVC at the new app (best-effort)."""
+        merged_labels = dict(pvc.metadata.labels or {})
+        merged_labels.update(
+            {
+                "managed-by": "labondemand",
+                "user-id": str(current_user.id),
+                "user-role": current_user.role.value,
+                "app-type": deployment_type,
+                "labondemand/last-bound-app": app_name,
+            }
+        )
         try:
-            if generated_secret_name and generated_secret_data:
-                secret_labels = {
-                    **labels,
-                    "app": name,
-                    "stack-name": name,
-                    "component": "credentials",
-                }
-                secret_manifest = {
-                    "apiVersion": "v1",
-                    "kind": "Secret",
-                    "metadata": {"name": generated_secret_name, "labels": secret_labels},
-                    "type": "Opaque",
-                    "stringData": generated_secret_data,
-                }
-                self.core_v1.create_namespaced_secret(
-                    effective_namespace, secret_manifest
-                )
-                created_objects.append(("secret", generated_secret_name))
+            self.core_v1.patch_namespaced_persistent_volume_claim(
+                pvc.metadata.name, namespace, {"metadata": {"labels": merged_labels}}
+            )
+        except Exception as exc:
+            logger.warning(
+                "deployment_pvc_label_update_failed",
+                extra={
+                    "extra_fields": {
+                        "pvc_name": pvc.metadata.name,
+                        "namespace": namespace,
+                        "deployment": app_name,
+                        "error": str(exc),
+                    }
+                },
+            )
 
-            # Créer le déploiement
+    def _attach_persistent_home(
+        self,
+        manifest: Dict[str, Any],
+        *,
+        deployment_type: str,
+        name: str,
+        labels: Dict[str, str],
+        image: str,
+        namespace: str,
+        current_user: User,
+        existing_pvc_name: Optional[str],
+        created: List[Tuple[str, str]],
+    ) -> None:
+        """Mount the runtime's work directory on a PVC (emptyDir fallback)."""
+        mount_path = PERSISTENT_HOME_MOUNTS.get(deployment_type)
+        if not mount_path:
+            return
+
+        pvc_name = f"{name}-pvc"
+        use_pvc = True
+        reused_pvc: Optional[client.V1PersistentVolumeClaim] = None
+        if existing_pvc_name:
+            reused_pvc = self._validate_existing_pvc(namespace, existing_pvc_name, current_user)
+        else:
+            pvc_manifest = {
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "metadata": {
+                    "name": pvc_name,
+                    "labels": {**labels, "labondemand/last-bound-app": name},
+                },
+                "spec": {
+                    "accessModes": ["ReadWriteOnce"],
+                    "resources": {"requests": {"storage": settings.LAB_PVC_SIZE}},
+                },
+            }
+            try:
+                use_pvc = self._create_pvc_or_fallback(namespace, pvc_manifest, created)
+            except client.exceptions.ApiException as exc:
+                if exc.status != 409:
+                    raise
+                # Name collision: reuse the existing PVC once ownership is checked.
+                reused_pvc = self._validate_existing_pvc(namespace, pvc_name, current_user)
+
+        if reused_pvc is not None:
+            pvc_name = reused_pvc.metadata.name
+            self._relabel_reused_pvc(namespace, reused_pvc, deployment_type, name, current_user)
+
+        pod_spec = manifest["spec"]["template"]["spec"]
+        pod_spec["securityContext"] = {
+            **(pod_spec.get("securityContext") or {}),
+            "fsGroup": 1000,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        }
+        container = pod_spec["containers"][0]
+        container.setdefault("volumeMounts", []).append({"name": "data", "mountPath": mount_path})
+        pod_spec["volumes"] = (
+            [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}]
+            if use_pvc
+            else [{"name": "data", "emptyDir": {}}]
+        )
+        # VNC desktop: the home lives on the volume. Copy the image's default
+        # profile (XFCE config, wallpaper, shortcuts) on first start without
+        # overwriting the student's files.
+        if deployment_type in VNC_DESKTOP_TYPES:
+            pod_spec["initContainers"] = [
+                {
+                    "name": "seed-home",
+                    "image": image,
+                    "command": ["/bin/sh", "-c"],
+                    "args": [
+                        "test -f /mnt/home/.labondemand-seeded || "
+                        "(cp -R /home/lod-user/. /mnt/home/ && "
+                        "touch /mnt/home/.labondemand-seeded) || true"
+                    ],
+                    "resources": container.get("resources", {}),
+                    "volumeMounts": [{"name": "data", "mountPath": "/mnt/home"}],
+                }
+            ]
+
+    def _create_service_and_ingress(
+        self,
+        *,
+        name: str,
+        deployment_type: str,
+        config: Dict[str, Any],
+        service_port: Optional[int],
+        labels: Dict[str, str],
+        extras: _RuntimeExtras,
+        use_ingress: bool,
+        current_user: User,
+        namespace: str,
+        created: List[Tuple[str, str]],
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], str]:
+        """Create the lab's Service (+ Ingress). Returns (service_info,
+        connection_hints, message suffix)."""
+        if not config["create_service"]:
+            service_info = {
+                "created": False,
+                "type": None,
+                "port": None,
+                "node_port": None,
+                "ports_detail": [],
+                "ingress": None,
+            }
+            return service_info, None, ""
+
+        service_type = config["service_type"]
+        created_service = self.core_v1.create_namespaced_service(
+            namespace,
+            self.create_service_manifest(
+                name,
+                service_port,
+                config["service_target_port"],
+                service_type,
+                labels,
+                port_name=extras.main_port_name,
+                additional_ports=extras.additional_service_ports,
+            ),
+        )
+        created.append(("service", f"{name}-service"))
+
+        ports_details = [
+            {
+                "name": getattr(svc_port, "name", None),
+                "protocol": getattr(svc_port, "protocol", None),
+                "port": getattr(svc_port, "port", None),
+                "target_port": getattr(svc_port, "target_port", None),
+                "node_port": getattr(svc_port, "node_port", None),
+            }
+            for svc_port in (getattr(getattr(created_service, "spec", None), "ports", []) or [])
+        ]
+
+        node_port = None
+        if service_type in ["NodePort", "LoadBalancer"]:
+            # First NodePort, kept for backward compatibility.
+            node_port = next(
+                (d["node_port"] for d in ports_details if d.get("node_port")), None
+            )
+            ports_desc = ", ".join(_format_port(d) for d in ports_details)
+            message = (
+                f". Service {name}-service créé (type: {service_type}, ports: {ports_desc})"
+            )
+        else:
+            message = f". Service {name}-service créé (type: {service_type}, port: {service_port})"
+
+        ingress_details: Optional[Dict[str, Any]] = None
+        if use_ingress:
+            ingress_details = self._expose_via_ingress(
+                namespace,
+                f"{name}-ingress",
+                self._build_ingress_host(name, current_user),
+                f"{name}-service",
+                service_port,
+                labels,
+                created,
+            )
+            message += f" Ingress disponible sur {ingress_details['url']}"
+
+        if deployment_type == "vscode" and service_type == "NodePort" and node_port:
+            message += (
+                f" VS Code Online sera accessible à l'adresse "
+                f"http://<IP_DU_NOEUD>:{node_port}/"
+            )
+
+        connection_hints = None
+        if deployment_type in VNC_DESKTOP_TYPES:
+            connection_hints = _vnc_connection_hints(
+                deployment_type,
+                ports_details,
+                config["service_target_port"],
+                extras.credentials,
+            )
+
+        service_info = {
+            "created": True,
+            "type": service_type,
+            "port": service_port,
+            "node_port": node_port,
+            "ports_detail": ports_details,
+            "ingress": ingress_details,
+        }
+        return service_info, connection_hints, message
+
+    def _create_single_deployment(
+        self,
+        *,
+        name: str,
+        image: str,
+        replicas: int,
+        create_service: bool,
+        service_port: Optional[int],
+        service_target_port: int,
+        service_type: str,
+        deployment_type: str,
+        cpu_request: str,
+        cpu_limit: str,
+        memory_request: str,
+        memory_limit: str,
+        additional_labels: Dict[str, str],
+        current_user: User,
+        namespace: str,
+        existing_pvc_name: Optional[str],
+    ) -> Dict[str, Any]:
+        config = self.apply_deployment_config(
+            deployment_type,
+            image,
+            cpu_request,
+            cpu_limit,
+            memory_request,
+            memory_limit,
+            service_target_port,
+            create_service,
+            service_type,
+            session_owner=current_user,
+        )
+
+        use_ingress = self._should_attach_ingress(deployment_type)
+        if use_ingress and config["create_service"]:
+            if config["service_type"] in ["NodePort", "LoadBalancer"]:
+                config["service_type"] = "ClusterIP"
+            if service_port is None:
+                service_port = config.get("service_target_port") or 80
+
+        # Runtimes configured in DB or known ones expose their target port as is.
+        if config.get("has_runtime_config") or deployment_type in {
+            "vscode",
+            "jupyter",
+            *VNC_DESKTOP_TYPES,
+        }:
+            service_port = config["service_target_port"]
+
+        role = self._role_value(current_user)
+        clamped = self._clamp_with_runtime_floors(role, config, replicas, deployment_type)
+        self._enforce_quotas(
+            current_user,
+            namespace,
+            plan_resources([clamped], replicas=int(clamped["replicas"]), deployments=1),
+        )
+
+        labels = create_labondemand_labels(
+            deployment_type,
+            str(current_user.id),
+            current_user.role.value,
+            additional_labels,
+        )
+        extras = self._runtime_extras(deployment_type, name)
+
+        created: List[Tuple[str, str]] = []
+        with self._rollback_on_failure(
+            namespace,
+            created,
+            "Erreur lors de la création",
+            "Erreur lors de la création",
+            deployment_name=name,
+            deployment_type=deployment_type,
+        ):
+            if extras.secret_name and extras.secret_data:
+                self._create_credentials_secret(namespace, name, labels, extras, created)
+
             deployment_manifest = self.create_deployment_manifest(
                 name,
                 config["image"],
@@ -2082,356 +2540,61 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                 clamped["memory_limit"],
                 config["service_target_port"],
                 labels,
-                main_port_name=main_port_name,
-                extra_container_ports=extra_container_ports,
-                env_vars=container_env,
-                env_from=container_env_from,
-                command=container_command,
-                args=container_args,
+                main_port_name=extras.main_port_name,
+                extra_container_ports=extras.extra_container_ports,
+                env_vars=extras.env,
+                env_from=extras.env_from,
+                command=extras.command,
+                args=extras.args,
+            )
+            self._attach_persistent_home(
+                deployment_manifest,
+                deployment_type=deployment_type,
+                name=name,
+                labels=labels,
+                image=config["image"],
+                namespace=namespace,
+                current_user=current_user,
+                existing_pvc_name=existing_pvc_name,
+                created=created,
+            )
+            self.apps_v1.create_namespaced_deployment(namespace, deployment_manifest)
+            created.append(("deployment", name))
+
+            service_info, connection_hints, service_message = self._create_service_and_ingress(
+                name=name,
+                deployment_type=deployment_type,
+                config=config,
+                service_port=service_port,
+                labels=labels,
+                extras=extras,
+                use_ingress=use_ingress,
+                current_user=current_user,
+                namespace=namespace,
+                created=created,
             )
 
-            # Persistance best-effort du home/workspace (PVC, fallback emptyDir)
-            persistent_mount = {
-                "vscode": "/home/coder/project",
-                "jupyter": "/home/jovyan/work",
-                # Bureau VNC: tout le home de l'utilisateur (projets, config XFCE…)
-                "netbeans": "/home/lod-user",
-                "eclipse": "/home/lod-user",
-            }.get(deployment_type)
-            if persistent_mount:
-                pvc_name = f"{name}-pvc"
-                use_pvc = True
-                pvc_obj: Optional[client.V1PersistentVolumeClaim] = None
-                # Permettre la réutilisation d'un PVC existant lorsqu'un nom identique est fourni
-                if existing_pvc_name:
-                    pvc_obj = self._validate_existing_pvc(
-                        effective_namespace, existing_pvc_name, current_user
-                    )
-                    pvc_name = pvc_obj.metadata.name
-                else:
-                    pvc_labels = dict(labels)
-                    pvc_labels["labondemand/last-bound-app"] = name
-                    pvc_manifest = {
-                        "apiVersion": "v1",
-                        "kind": "PersistentVolumeClaim",
-                        "metadata": {"name": pvc_name, "labels": pvc_labels},
-                        "spec": {
-                            "accessModes": ["ReadWriteOnce"],
-                            "resources": {
-                                "requests": {"storage": settings.LAB_PVC_SIZE}
-                            },
-                        },
-                    }
-                    try:
-                        self.core_v1.create_namespaced_persistent_volume_claim(
-                            effective_namespace, pvc_manifest
-                        )
-                        created_objects.append(("pvc", pvc_name))
-                    except client.exceptions.ApiException as e:
-                        msg = (getattr(e, "body", "") or "").lower()
-                        if e.status == 409:
-                            # Collision de nom: réutiliser le PVC existant après validation
-                            pvc_obj = self._validate_existing_pvc(
-                                effective_namespace, pvc_name, current_user
-                            )
-                            pvc_name = pvc_obj.metadata.name
-                        elif (
-                            e.status in (403, 422)
-                            or "no persistent volumes" in msg
-                            or "storageclass" in msg
-                            or "forbidden" in msg
-                        ):
-                            use_pvc = False
-                            logger.warning(
-                                "deployment_pvc_fallback_empty_dir",
-                                extra={
-                                    "extra_fields": {
-                                        "pvc_name": pvc_name,
-                                        "namespace": effective_namespace,
-                                        "deployment": name,
-                                        "status": e.status,
-                                        "reason": getattr(e, "reason", None),
-                                    }
-                                },
-                            )
-                        else:
-                            raise
-
-                if use_pvc:
-                    if pvc_obj is None:
-                        try:
-                            pvc_obj = (
-                                self.core_v1.read_namespaced_persistent_volume_claim(
-                                    pvc_name, effective_namespace
-                                )
-                            )
-                        except Exception:
-                            pvc_obj = None
-
-                    if pvc_obj is not None:
-                        merged_labels = dict(pvc_obj.metadata.labels or {})
-                        merged_labels.update(
-                            {
-                                "managed-by": "labondemand",
-                                "user-id": str(current_user.id),
-                                "user-role": current_user.role.value,
-                                "app-type": deployment_type,
-                                "labondemand/last-bound-app": name,
-                            }
-                        )
-                        try:
-                            self.core_v1.patch_namespaced_persistent_volume_claim(
-                                pvc_name,
-                                effective_namespace,
-                                {"metadata": {"labels": merged_labels}},
-                            )
-                        except Exception:
-                            logger.warning(
-                                "deployment_pvc_label_update_failed",
-                                extra={
-                                    "extra_fields": {
-                                        "pvc_name": pvc_name,
-                                        "namespace": effective_namespace,
-                                        "deployment": name,
-                                    }
-                                },
-                            )
-
-                # Monter sur le chemin de travail usuel
-                mount_path = persistent_mount
-                pod_spec = deployment_manifest["spec"]["template"]["spec"]
-                # Pod security context pour permissions
-                pod_spec["securityContext"] = {
-                    **(pod_spec.get("securityContext") or {}),
-                    "fsGroup": 1000,
-                    "seccompProfile": {"type": "RuntimeDefault"},
-                }
-                # VolumeMounts conteneur
-                container = pod_spec["containers"][0]
-                container.setdefault("volumeMounts", []).append(
-                    {"name": "data", "mountPath": mount_path}
-                )
-                # Volumes pod
-                pod_spec["volumes"] = (
-                    [{"name": "data", "persistentVolumeClaim": {"claimName": pvc_name}}]
-                    if use_pvc
-                    else [{"name": "data", "emptyDir": {}}]
-                )
-                # Bureau VNC : le home est monté sur le volume. Copier le profil
-                # par défaut de l'image au premier démarrage (config XFCE, fond
-                # d'écran, raccourcis) sans écraser les fichiers de l'élève.
-                if deployment_type in VNC_DESKTOP_TYPES:
-                    pod_spec["initContainers"] = [
-                        {
-                            "name": "seed-home",
-                            "image": config["image"],
-                            "command": ["/bin/sh", "-c"],
-                            "args": [
-                                "test -f /mnt/home/.labondemand-seeded || "
-                                "(cp -R /home/lod-user/. /mnt/home/ && "
-                                "touch /mnt/home/.labondemand-seeded) || true"
-                            ],
-                            "resources": container.get("resources", {}),
-                            "volumeMounts": [
-                                {"name": "data", "mountPath": "/mnt/home"}
-                            ],
-                        }
-                    ]
-
-            self.apps_v1.create_namespaced_deployment(
-                effective_namespace, deployment_manifest
-            )
-            created_objects.append(("deployment", name))
-
-            result_message = (
-                f"Deployment {name} créé dans le namespace {effective_namespace} "
-                f"avec l'image {config['image']} "
-                f"(CPU: {config['cpu_request']}-{config['cpu_limit']}, "
-                f"RAM: {config['memory_request']}-{config['memory_limit']})"
-            )
-
-            # Créer le service si nécessaire
-            node_port = None
-            ports_details: List[Dict[str, Any]] = []
-            connection_hints: Optional[Dict[str, Any]] = None
-            ingress_details: Optional[Dict[str, Any]] = None
-            if config["create_service"]:
-                service_manifest = self.create_service_manifest(
-                    name,
-                    service_port,
-                    config["service_target_port"],
-                    config["service_type"],
-                    labels,
-                    port_name=main_port_name,
-                    additional_ports=additional_service_ports,
-                )
-
-                created_service = self.core_v1.create_namespaced_service(
-                    effective_namespace, service_manifest
-                )
-                created_objects.append(("service", f"{name}-service"))
-
-                svc_ports = list(
-                    getattr(getattr(created_service, "spec", None), "ports", []) or []
-                )
-                for svc_port in svc_ports:
-                    ports_details.append(
-                        {
-                            "name": getattr(svc_port, "name", None),
-                            "protocol": getattr(svc_port, "protocol", None),
-                            "port": getattr(svc_port, "port", None),
-                            "target_port": getattr(svc_port, "target_port", None),
-                            "node_port": getattr(svc_port, "node_port", None),
-                        }
-                    )
-
-                if config["service_type"] in ["NodePort", "LoadBalancer"]:
-                    # Premier NodePort disponible pour compat rétro
-                    for detail in ports_details:
-                        if detail.get("node_port"):
-                            node_port = detail["node_port"]
-                            break
-
-                    def _format_port(detail: Dict[str, Any]) -> str:
-                        name = detail.get("name")
-                        base = f"{detail.get('port')}->{detail.get('target_port')}"
-                        if detail.get("node_port"):
-                            base += f" (NodePort {detail['node_port']})"
-                        return f"{name}:{base}" if name else base
-
-                    ports_desc = ", ".join(_format_port(d) for d in ports_details)
-                    result_message += (
-                        f". Service {name}-service créé (type: {config['service_type']}, "
-                        f"ports: {ports_desc})"
-                    )
-                else:
-                    result_message += (
-                        f". Service {name}-service créé (type: {config['service_type']}, "
-                        f"port: {service_port})"
-                    )
-
-                if use_ingress:
-                    ingress_name = f"{name}-ingress"
-                    host = self._build_ingress_host(name, current_user)
-                    ingress_manifest = self.create_ingress_manifest(
-                        ingress_name,
-                        host,
-                        f"{name}-service",
-                        service_port,
-                        labels,
-                    )
-                    ingress_obj, created_flag = self._apply_ingress(
-                        effective_namespace, ingress_manifest
-                    )
-                    if created_flag:
-                        created_objects.append(("ingress", ingress_name))
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    ingress_details = {
-                        "name": getattr(
-                            getattr(ingress_obj, "metadata", None), "name", ingress_name
-                        ),
-                        "host": host,
-                        "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
-                        "class": settings.INGRESS_CLASS_NAME,
-                        "tls": bool(settings.INGRESS_TLS_SECRET),
-                        "created": created_flag,
-                    }
-                    result_message += (
-                        f" Ingress disponible sur {ingress_details['url']}"
-                    )
-
-                # Instructions d'accès spécifiques
-                if (
-                    deployment_type == "vscode"
-                    and config["service_type"] == "NodePort"
-                    and node_port
-                ):
-                    result_message += (
-                        f" VS Code Online sera accessible à l'adresse "
-                        f"http://<IP_DU_NOEUD>:{node_port}/"
-                    )
-
-                if deployment_type in VNC_DESKTOP_TYPES:
-
-                    def _find_node_port(
-                        target_name: str, fallback_port: int
-                    ) -> Optional[int]:
-                        for detail in ports_details:
-                            if detail.get("name") == target_name:
-                                return detail.get("node_port")
-                            if detail.get("target_port") == fallback_port:
-                                return detail.get("node_port")
-                        return None
-
-                    connection_hints = {
-                        "novnc": {
-                            "description": "Bureau distant via navigateur (NoVNC)",
-                            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
-                            "target_port": config["service_target_port"],
-                            "node_port": _find_node_port(
-                                "novnc", config["service_target_port"]
-                            ),
-                            "protocol": "http",
-                            "secure": False,
-                            "username": "kasm_user",
-                            "password": generated_credentials[deployment_type]["password"]
-                            if generated_credentials
-                            else None,
-                        },
-                        "vnc": {
-                            "description": "Client VNC classique (optionnel)",
-                            "target_port": 5901,
-                            "node_port": _find_node_port("vnc", 5901),
-                            "username": "kasm_user",
-                            "password": generated_credentials[deployment_type]["password"]
-                            if generated_credentials
-                            else None,
-                        },
-                        "audio": {
-                            "description": "Flux audio (Websocket Kasm)",
-                            "target_port": 4901,
-                            "node_port": _find_node_port("audio", 4901),
-                        },
-                    }
-
-                    # Eclipse Java EE : URL publique de l'application Tomcat.
-                    if deployment_type == "eclipse":
-                        connection_hints["tomcat"] = {
-                            "description": (
-                                "Application web Java EE déployée sur Tomcat "
-                                "(doit être démarrée dans Eclipse via « Run on Server »)"
-                            ),
-                            "url_template": "http://<IP_DU_NOEUD>:<NODE_PORT>",
-                            "target_port": 8080,
-                            "node_port": _find_node_port("tomcat", 8080),
-                            "protocol": "http",
-                            "secure": False,
-                        }
-
-            result = {
-                "message": result_message,
+            result: Dict[str, Any] = {
+                "message": (
+                    f"Deployment {name} créé dans le namespace {namespace} "
+                    f"avec l'image {config['image']} "
+                    f"(CPU: {config['cpu_request']}-{config['cpu_limit']}, "
+                    f"RAM: {config['memory_request']}-{config['memory_limit']})"
+                    + service_message
+                ),
                 "deployment_type": deployment_type,
-                "namespace": effective_namespace,
+                "namespace": namespace,
                 "resources": {
                     "cpu_request": clamped["cpu_request"],
                     "cpu_limit": clamped["cpu_limit"],
                     "memory_request": clamped["memory_request"],
                     "memory_limit": clamped["memory_limit"],
                 },
-                "service_info": {
-                    "created": config["create_service"],
-                    "type": config["service_type"]
-                    if config["create_service"]
-                    else None,
-                    "port": service_port if config["create_service"] else None,
-                    "node_port": node_port,
-                    "ports_detail": ports_details if config["create_service"] else [],
-                    "ingress": ingress_details,
-                },
+                "service_info": service_info,
                 "connection_hints": connection_hints,
             }
-            if generated_credentials:
-                result["credentials"] = generated_credentials
+            if extras.credentials:
+                result["credentials"] = extras.credentials
 
             audit_logger.info(
                 "deployment_created",
@@ -2439,60 +2602,24 @@ class DeploymentService(WordPressDeployMixin, MySQLDeployMixin, LAMPDeployMixin)
                     "extra_fields": {
                         "deployment_name": name,
                         "deployment_type": deployment_type,
-                        "namespace": effective_namespace,
+                        "namespace": namespace,
                         "user_id": getattr(current_user, "id", None),
                         "username": getattr(current_user, "username", None),
-                        "service_type": result["service_info"]["type"],
-                        "node_port": node_port,
+                        "service_type": service_info["type"],
+                        "node_port": service_info["node_port"],
                         "replicas": clamped["replicas"],
                     }
                 },
             )
-
-            self._track_deployment_in_db(
+            result["deployment_db_id"] = self._track_deployment_in_db(
                 user=current_user,
                 name=name,
                 deployment_type=deployment_type,
-                namespace=effective_namespace,
+                namespace=namespace,
                 cpu_requested=clamped["cpu_request"],
                 mem_requested=clamped["memory_request"],
             )
-
             return result
-
-        except client.exceptions.ApiException as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            logger.exception(
-                "deployment_k8s_error",
-                extra={
-                    "extra_fields": {
-                        "deployment_name": name,
-                        "deployment_type": deployment_type,
-                        "namespace": effective_namespace,
-                        "status": getattr(e, "status", None),
-                        "reason": getattr(e, "reason", None),
-                    }
-                },
-            )
-            raise HTTPException(
-                status_code=e.status,
-                detail=f"Erreur lors de la création: {e.reason} - {e.body}",
-            )
-        except Exception as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            logger.exception(
-                "deployment_unexpected_error",
-                extra={
-                    "extra_fields": {
-                        "deployment_name": name,
-                        "deployment_type": deployment_type,
-                        "namespace": effective_namespace,
-                    }
-                },
-            )
-            raise HTTPException(
-                status_code=500, detail=f"Erreur lors de la création: {str(e)}"
-            )
 
     def cleanup_user_namespace(self, user_id: int) -> Dict[str, Any]:
         """Supprime le namespace Kubernetes d'un utilisateur et toutes ses ressources.

@@ -14,7 +14,9 @@ async def test_login_success(client, admin_user):
     body = r.json()
     assert body["user"]["username"] == "testadmin"
     assert body["user"]["role"] == "admin"
-    assert "session_id" in body
+    # The token must only be delivered through the HttpOnly cookie, never to JS.
+    assert "session_id" not in body
+    assert "session_id" not in r.headers
     assert "session_id" in r.cookies
 
 

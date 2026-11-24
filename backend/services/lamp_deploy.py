@@ -1,13 +1,10 @@
 """Mixin pour la création de stacks LAMP (Apache+PHP, MySQL, phpMyAdmin)."""
 import secrets
-from typing import Dict, Any, Optional
-
-from fastapi import HTTPException
-from kubernetes import client
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import User
-from ..config import settings
-from ..k8s_utils import create_labondemand_labels, clamp_resources_for_role
+from ..k8s_utils import create_labondemand_labels
+from .stacks import DATABASE_RESOURCES, LAMP_WEB_RESOURCES, PHPMYADMIN_RESOURCES
 
 
 # Page index.php par défaut pour le init-container
@@ -58,7 +55,7 @@ chmod 644 /workdir/index.php
 class LAMPDeployMixin:
     """Fournit _create_lamp_stack() pour DeploymentService."""
 
-    async def _create_lamp_stack(
+    def _create_lamp_stack(
         self,
         name: str,
         effective_namespace: str,
@@ -121,9 +118,9 @@ class LAMPDeployMixin:
         }
 
         role_val = getattr(current_user.role, "value", str(current_user.role))
-        web_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-        db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-        pma_res = clamp_resources_for_role(str(role_val), "150m", "300m", "128Mi", "256Mi", 1)
+        web_res = LAMP_WEB_RESOURCES.clamp(str(role_val))
+        db_res = DATABASE_RESOURCES.clamp(str(role_val))
+        pma_res = PHPMYADMIN_RESOURCES.clamp(str(role_val))
 
         dep_db_manifest = {
             "apiVersion": "apps/v1", "kind": "Deployment",
@@ -209,31 +206,18 @@ class LAMPDeployMixin:
             },
         }
 
-        created_objects = []
-        try:
-            # Secret idempotent
-            try:
-                self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
-                created_objects.append(("secret", secret_name))
-            except client.exceptions.ApiException as e:
-                if e.status == 409:
-                    try:
-                        self.core_v1.patch_namespaced_secret(name=secret_manifest["metadata"]["name"], namespace=effective_namespace, body={"metadata": {"labels": secret_manifest["metadata"].get("labels", {})}})
-                    except Exception:
-                        pass
-                else:
-                    raise
-
-            use_pvc = True
-            try:
-                self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
-                created_objects.append(("pvc", pvc_db))
-            except client.exceptions.ApiException as e:
-                msg = (getattr(e, "body", "") or "").lower()
-                if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
-                    use_pvc = False
-                else:
-                    raise
+        created_objects: List[Tuple[str, str]] = []
+        with self._rollback_on_failure(
+            effective_namespace, created_objects, "Erreur LAMP", "Erreur LAMP inattendue"
+        ):
+            # Credentials the pods really use (an existing secret is kept).
+            secret_values = self._create_or_relabel_secret(
+                effective_namespace, secret_manifest, created_objects
+            )
+            db_user = secret_values.get("MYSQL_USER")
+            db_pass = secret_values.get("MYSQL_PASSWORD")
+            db_default = secret_values.get("MYSQL_DATABASE")
+            use_pvc = self._create_pvc_or_fallback(effective_namespace, pvc_manifest, created_objects)
 
             self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
             created_objects.append(("service", svc_db))
@@ -255,17 +239,7 @@ class LAMPDeployMixin:
                 "metadata": {"name": pvc_web, "labels": labels_web},
                 "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}},
             }
-            use_web_pvc = True
-            try:
-                self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_web_manifest)
-                created_objects.append(("pvc", pvc_web))
-            except client.exceptions.ApiException as e:
-                msg = (getattr(e, "body", "") or "").lower()
-                if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
-                    use_web_pvc = False
-                else:
-                    raise
-            if not use_web_pvc:
+            if not self._create_pvc_or_fallback(effective_namespace, pvc_web_manifest, created_objects):
                 dep_web_manifest["spec"]["template"]["spec"]["volumes"] = [{"name": "www", "emptyDir": {}}]
 
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_web_manifest)
@@ -277,14 +251,8 @@ class LAMPDeployMixin:
             node_port_pma = None
             ingress_details: Dict[str, Optional[Dict[str, Any]]] = {"web": None, "phpmyadmin": None}
             if service_type in ["NodePort", "LoadBalancer"]:
-                try:
-                    node_port_web = created_web_svc.spec.ports[0].node_port
-                except Exception:
-                    node_port_web = None
-                try:
-                    node_port_pma = created_pma_svc.spec.ports[0].node_port
-                except Exception:
-                    node_port_pma = None
+                node_port_web = _first_node_port(created_web_svc)
+                node_port_pma = _first_node_port(created_pma_svc)
 
             result_msg = (
                 f"Stack LAMP créée: WEB={web_name}, DB={db_name}, PMA={pma_name} dans {effective_namespace}. "
@@ -292,32 +260,24 @@ class LAMPDeployMixin:
             )
 
             if use_ingress:
-                scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-
-                ingress_web_name = f"{web_name}-ingress"
-                host_web = self._build_ingress_host(name, current_user, component="web")
-                ingress_web_manifest = self.create_ingress_manifest(ingress_web_name, host_web, svc_web, service_port, labels_web)
-                ingress_web_obj, created_web = self._apply_ingress(effective_namespace, ingress_web_manifest)
-                if created_web:
-                    created_objects.append(("ingress", ingress_web_name))
-                ingress_details["web"] = {
-                    "name": getattr(getattr(ingress_web_obj, "metadata", None), "name", ingress_web_name),
-                    "host": host_web, "url": f"{scheme}://{host_web}{settings.INGRESS_DEFAULT_PATH}",
-                    "class": settings.INGRESS_CLASS_NAME, "tls": bool(settings.INGRESS_TLS_SECRET), "created": created_web,
-                }
-
-                ingress_pma_name = f"{pma_name}-ingress"
-                host_pma = self._build_ingress_host(name, current_user, component="pma")
-                ingress_pma_manifest = self.create_ingress_manifest(ingress_pma_name, host_pma, svc_pma, 8081, labels_pma)
-                ingress_pma_obj, created_pma = self._apply_ingress(effective_namespace, ingress_pma_manifest)
-                if created_pma:
-                    created_objects.append(("ingress", ingress_pma_name))
-                ingress_details["phpmyadmin"] = {
-                    "name": getattr(getattr(ingress_pma_obj, "metadata", None), "name", ingress_pma_name),
-                    "host": host_pma, "url": f"{scheme}://{host_pma}{settings.INGRESS_DEFAULT_PATH}",
-                    "class": settings.INGRESS_CLASS_NAME, "tls": bool(settings.INGRESS_TLS_SECRET), "created": created_pma,
-                }
-
+                ingress_details["web"] = self._expose_via_ingress(
+                    effective_namespace,
+                    f"{web_name}-ingress",
+                    self._build_ingress_host(name, current_user, component="web"),
+                    svc_web,
+                    service_port,
+                    labels_web,
+                    created_objects,
+                )
+                ingress_details["phpmyadmin"] = self._expose_via_ingress(
+                    effective_namespace,
+                    f"{pma_name}-ingress",
+                    self._build_ingress_host(name, current_user, component="pma"),
+                    svc_pma,
+                    8081,
+                    labels_pma,
+                    created_objects,
+                )
                 result_msg += f" Web: {ingress_details['web']['url']} – phpMyAdmin: {ingress_details['phpmyadmin']['url']}."
             else:
                 result_msg += f" NodePorts: web={node_port_web}, phpMyAdmin={node_port_pma}."
@@ -333,9 +293,10 @@ class LAMPDeployMixin:
                 "created_objects": {"secret": secret_name, "pvc": pvc_db, "services": [svc_db, svc_web, svc_pma], "deployments": [db_name, web_name, pma_name]},
                 "credentials": {"database": {"host": svc_db, "port": 3306, "username": db_user, "password": db_pass, "database": db_default}},
             }
-        except client.exceptions.ApiException as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            raise HTTPException(status_code=e.status or 500, detail=f"Erreur LAMP: {e.reason} - {e.body}")
-        except Exception as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            raise HTTPException(status_code=500, detail=f"Erreur LAMP inattendue: {e}")
+
+
+def _first_node_port(service: Any) -> Optional[int]:
+    try:
+        return service.spec.ports[0].node_port
+    except (AttributeError, IndexError, TypeError):
+        return None

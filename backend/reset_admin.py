@@ -1,90 +1,92 @@
-#!/usr/bin/env python3
-# filepath: c:\Users\zhiri\Nextcloud\mo\Projects\LabOnDemand\backend\reset_admin.py
+"""Reset (or create) a local administrator account.
+
+Supported way to recover admin access; runs inside the API container so it uses the
+same database settings as the application:
+
+    docker compose exec api python -m backend.reset_admin            # prompts for the password
+    docker compose exec -T api python -m backend.reset_admin --from-env  # uses ADMIN_DEFAULT_PASSWORD
+
+The password must satisfy the application's password policy (12+ characters, upper and
+lower case, digit, special character). It is never printed.
 """
-Script pour réinitialiser le compte administrateur
-Ce script supprime l'admin existant et en crée un nouveau avec des identifiants connus
-"""
-from sqlalchemy.orm import sessionmaker
+
+from __future__ import annotations
+
+import argparse
+import getpass
 import os
 import sys
-from pathlib import Path
 
-# Ajout du répertoire parent au path
-sys.path.insert(0, str(Path(__file__).parent))
+from .database import SessionLocal
+from .models import User, UserRole
+from .security import get_password_hash, validate_password_strength
 
-from database import engine
-from models import User, UserRole
-from security import get_password_hash
-from config import settings
 
-def reset_admin_account():
+def _read_password(from_env: bool) -> str:
+    """Return the new password from the environment or an interactive prompt."""
+    if from_env:
+        password = os.getenv("ADMIN_DEFAULT_PASSWORD", "")
+        if not password:
+            raise SystemExit("ADMIN_DEFAULT_PASSWORD is not set.")
+        return password
+    if not sys.stdin.isatty():
+        raise SystemExit("No TTY: run with `docker compose exec` (without -T) or use --from-env.")
+    password = getpass.getpass("New password: ")
+    if password != getpass.getpass("Confirm password: "):
+        raise SystemExit("Passwords do not match.")
+    return password
+
+
+def reset_admin(username: str, password: str) -> str:
+    """Set the password of ``username`` (created as a local admin if missing).
+
+    The account is re-activated and forced to the admin role. Returns a short
+    description of what was done.
     """
-    Réinitialise le compte administrateur avec des identifiants connus
-    """
-    # Créer une session
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
-    
     try:
-        # Définir les identifiants administrateur
-        admin_username = "admin"
-        admin_email = "admin@labondemand.local"
-        admin_password = settings.ADMIN_DEFAULT_PASSWORD
-        if not admin_password:
-            # Fallback si non défini, mais avertissement pour la sécurité
-            import secrets
-            admin_password = secrets.token_urlsafe(24)
-            print("[reset_admin] ADMIN_DEFAULT_PASSWORD non défini. Génération d'un mot de passe aléatoire (affiché ci-dessous).")
-        
-        print(f"Recherche d'un utilisateur admin existant avec le nom d'utilisateur '{admin_username}'...")
-        
-        # Vérifier si un utilisateur admin existe déjà avec ce nom d'utilisateur
-        existing_admin = db.query(User).filter(User.username == admin_username).first()
-        
-        if existing_admin:
-            print(f"Utilisateur admin trouvé (ID: {existing_admin.id})")
-            print("Mise à jour du mot de passe...")
-            
-            # Mettre à jour le mot de passe
-            existing_admin.hashed_password = get_password_hash(admin_password)
-            db.commit()
-            
-            print(f"Mot de passe de l'administrateur réinitialisé à : {admin_password}")
-        else:
-            print("Aucun utilisateur admin trouvé avec ce nom d'utilisateur.")
-            print("Création d'un nouvel utilisateur admin...")
-            
-            # Créer un nouvel utilisateur admin
-            new_admin = User(
-                username=admin_username,
-                email=admin_email,
-                hashed_password=get_password_hash(admin_password),
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            user = User(
+                username=username,
+                email=f"{username}@labondemand.local",
                 full_name="Administrateur",
-                role=UserRole.admin,
-                is_active=True
+                auth_provider="local",
             )
-            
-            db.add(new_admin)
-            db.commit()
-            db.refresh(new_admin)
-            
-            print(f"Nouvel utilisateur admin créé (ID: {new_admin.id})")
-            print(f"Nom d'utilisateur: {admin_username}")
-            print(f"Mot de passe: {admin_password}")
-        
-        # Afficher tous les utilisateurs pour déboguer
-        print("\nListe de tous les utilisateurs dans la base de données:")
-        users = db.query(User).all()
-        for user in users:
-            print(f"ID: {user.id}, Nom: {user.username}, Email: {user.email}, Rôle: {user.role.name}, Actif: {user.is_active}")
-        
-    except Exception as e:
-        print(f"Erreur lors de la réinitialisation du compte admin: {e}")
+            db.add(user)
+            action = "created"
+        else:
+            action = "updated"
+        user.hashed_password = get_password_hash(password)
+        user.role = UserRole.admin
+        user.is_active = True
+        db.commit()
+        return f"Admin account '{username}' {action}."
+    except Exception:
         db.rollback()
+        raise
     finally:
         db.close()
 
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Reset or create a LabOnDemand admin account.")
+    parser.add_argument("--username", default="admin", help="account to reset (default: admin)")
+    parser.add_argument(
+        "--from-env",
+        action="store_true",
+        help="use ADMIN_DEFAULT_PASSWORD instead of prompting",
+    )
+    args = parser.parse_args(argv)
+
+    password = _read_password(args.from_env)
+    if not validate_password_strength(password):
+        raise SystemExit(
+            "Password rejected: 12+ characters with upper case, lower case, digit and special character."
+        )
+    print(reset_admin(args.username, password))
+    return 0
+
+
 if __name__ == "__main__":
-    print("=== Réinitialisation du compte administrateur ===")
-    reset_admin_account()
-    print("=== Opération terminée ===")
+    raise SystemExit(main())

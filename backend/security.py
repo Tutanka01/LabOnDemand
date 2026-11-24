@@ -3,16 +3,44 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import APIKeyCookie
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
 import secrets
-import os
 import json
-import base64
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+import ipaddress
+from typing import Optional
 
-# Limiteur de débit pour l'API
-limiter = Limiter(key_func=get_remote_address)
+from slowapi import Limiter
+
+
+def client_ip(request: Request) -> Optional[str]:
+    """Return the address of the real client behind the bundled nginx proxy.
+
+    The API is reached through nginx on the internal Compose network, so the
+    socket peer is the nginx container for every user. nginx sets
+    ``X-Real-IP`` to the address it accepted the connection from (overwriting
+    any value sent by the browser), so that header is trusted only when the
+    peer itself is a private/loopback address, i.e. a local proxy. A client
+    hitting the API directly from a public address cannot spoof its identity.
+    """
+    peer = getattr(request.client, "host", None)
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if not real_ip or not peer:
+        return peer
+    try:
+        peer_address = ipaddress.ip_address(peer)
+        ipaddress.ip_address(real_ip)
+    except ValueError:
+        return peer
+    if peer_address.is_private or peer_address.is_loopback:
+        return real_ip
+    return peer
+
+
+def _rate_limit_key(request: Request) -> str:
+    return client_ip(request) or "unknown"
+
+
+# Rate limiter keyed by the real client address (not the proxy's)
+limiter = Limiter(key_func=_rate_limit_key)
 
 # Gestion des importations pour fonctionner à la fois comme module et comme script
 try:
@@ -132,7 +160,7 @@ def get_session_data(
     if not session_id:
         logger.warning(
             "session_cookie_missing",
-            extra={"extra_fields": {"path": request.url.path, "client_ip": getattr(request.client, "host", None)}},
+            extra={"extra_fields": {"path": request.url.path, "client_ip": client_ip(request)}},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -149,7 +177,7 @@ def get_session_data(
                 "extra_fields": {
                     "session_id": session_preview,
                     "path": request.url.path,
-                    "client_ip": getattr(request.client, "host", None),
+                    "client_ip": client_ip(request),
                 }
             },
         )
@@ -209,20 +237,19 @@ def delete_user_sessions(user_id: int) -> int:
         while True:
             cursor, keys = r.scan(cursor, match=pattern, count=200)
             for key in keys:
-                try:
-                    raw = r.get(key)
-                    if not raw:
-                        continue
-                    import json
-                    data = json.loads(raw)
-                    if data.get("user_id") == user_id:
-                        r.delete(key)
-                        deleted_count += 1
-                except Exception:
+                raw = r.get(key)
+                if not raw:
                     continue
+                try:
+                    data = json.loads(raw)
+                except ValueError:
+                    continue  # corrupted entry: not ours to judge here
+                if isinstance(data, dict) and data.get("user_id") == user_id:
+                    r.delete(key)
+                    deleted_count += 1
             if cursor == 0:
                 break
-    except Exception as exc:
+    except Exception as exc:  # best effort: Redis trouble must not block the user deletion
         logger.warning(
             "delete_user_sessions_error",
             extra={"extra_fields": {"user_id": user_id, "error": str(exc)}},

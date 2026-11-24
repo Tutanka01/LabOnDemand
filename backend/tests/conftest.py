@@ -2,9 +2,10 @@
 Test configuration for LabOnDemand.
 
 All external patches (Redis, Kubernetes, database) are applied at MODULE LEVEL,
-before any backend package is imported, so the backends's own module-level code
-(settings.init_kubernetes(), Base.metadata.create_all(), session_store creation)
-uses our test doubles.
+before any backend package is imported, so the backend's own module-level code
+(settings.init_kubernetes(), session_store creation) uses our test doubles.
+The app's lifespan (DB bootstrap, background loops) is not run by httpx's
+ASGITransport; the schema is created below instead.
 
 Import order matters:
   1. Env vars
@@ -88,7 +89,7 @@ _db_mod.SessionLocal = _TestSession
 # 5. Import backend — all patches are in place
 # ============================================================
 from backend.database import Base, get_db  # noqa: E402
-from backend.main import app  # noqa: E402  ← triggers init_kubernetes() + create_all()
+from backend.main import app  # noqa: E402  ← triggers init_kubernetes()
 from backend.models import User, UserRole, Template, RuntimeConfig  # noqa: E402
 from backend.security import get_password_hash, create_session  # noqa: E402
 
@@ -117,6 +118,27 @@ def _isolate():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     _test_sessions.clear()
+    # Rate limits (e.g. 10 creations / 5 min) are per client IP and would
+    # otherwise leak from one test to the next.
+    from backend.security import limiter
+    limiter.reset()
+    # Shared TTL caches (k8s ping, cluster stats) must not leak between tests.
+    from backend.routers import k8s_monitoring
+
+    k8s_monitoring.PING_CACHE.invalidate()
+    k8s_monitoring.CLUSTER_STATS_CACHE.invalidate()
+
+
+@pytest.fixture(autouse=True)
+def scheduled_gradings(monkeypatch) -> list:
+    """Record grading runs queued by the API instead of running them.
+
+    A real run would start a background thread that talks to Kubernetes and
+    shares the single SQLite connection with the test.
+    """
+    queued: list = []
+    monkeypatch.setattr("backend.grader_service.schedule_grading", queued.append)
+    return queued
 
 
 # ---------- Database session ----------
@@ -285,6 +307,9 @@ def mock_k8s():
     apps.list_deployment_for_all_namespaces.return_value = _empty
     apps.list_namespaced_deployment.return_value = _empty
     core.list_namespaced_service.return_value = _empty
+    core.list_service_for_all_namespaces.return_value = _empty
+    core.list_pod_for_all_namespaces.return_value = _empty
+    core.list_node.return_value = _empty
     core.list_namespaced_secret.return_value = _empty
     core.list_namespaced_persistent_volume_claim.return_value = _empty
     core.list_persistent_volume_claim_for_all_namespaces.return_value = _empty
@@ -335,6 +360,9 @@ def mock_k8s():
         patch("kubernetes.client.NetworkingV1Api", return_value=net),
         patch("kubernetes.client.BatchV1Api", return_value=batch),
     ):
+        # Node addresses are cached module-wide: start every test from scratch.
+        from backend.services.access_urls import invalidate_node_addresses
+        invalidate_node_addresses()
         # Also replace on the singleton DeploymentService instance
         from backend.deployment_service import deployment_service as _ds
         _orig = (_ds.apps_v1, _ds.core_v1, _ds.networking_v1)

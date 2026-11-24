@@ -1,23 +1,28 @@
-"""Endpoints CRUD déploiements, pause/resume, pods, détails, credentials."""
+"""Endpoints CRUD déploiements, pause/resume, pods, détails, credentials.
+
+Every handler is a plain ``def``: FastAPI runs it in its threadpool, so the
+blocking Kubernetes / SQLAlchemy calls never freeze the event loop.
+"""
 
 import base64
 import logging
-from typing import List, Dict, Any, Optional
-from urllib.parse import urlparse
+from typing import Dict, Optional
 
+import urllib3
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from kubernetes import client
 from sqlalchemy.orm import Session
 
-from ..security import get_current_user, is_admin, is_teacher_or_admin, limiter
+from ..config import settings
+from ..security import get_current_user, is_admin, limiter
 from ..models import User, UserRole, Deployment as DeploymentModel
 from ..database import get_db
 from ..k8s_utils import validate_k8s_name
 from ..deployment_service import deployment_service
+from ..services.access_urls import build_endpoints, get_node_addresses
+from ..services.lab_listing import list_user_labs, reconcile_lab_records, to_public_lab
 from ..templates import VNC_DESKTOP_TYPES
-from ..config import settings
 from ._helpers import raise_k8s_http, audit_logger
-from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(prefix="/api/v1/k8s", tags=["kubernetes"])
 logger = logging.getLogger("labondemand.k8s")
@@ -79,206 +84,56 @@ def list_all_deployments(
     return {"deployments": result, "total": len(result)}
 
 
-def _soft_delete_deployment(db: Session, user_id: int, name: str) -> None:
-    """Marque un enregistrement Deployment comme supprimé (soft delete).
-
-    Appelé après chaque suppression K8s réussie pour maintenir la cohérence
-    historique en base. Silencieux en cas d'erreur pour ne pas bloquer la réponse.
-    """
-    from datetime import datetime, timezone
-
-    try:
-        rec = (
-            db.query(DeploymentModel)
-            .filter(
-                DeploymentModel.user_id == user_id,
-                DeploymentModel.name == name,
-                DeploymentModel.deleted_at.is_(None),
-            )
-            .first()
-        )
-        if rec:
-            rec.status = "deleted"
-            rec.deleted_at = datetime.now(timezone.utc)
-            db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.warning(
-            "deployment_soft_delete_failed",
-            extra={
-                "extra_fields": {"name": name, "user_id": user_id, "error": str(exc)}
-            },
-        )
-
-
 # ============= LISTING DES DÉPLOIEMENTS LABONDEMAND =============
 
 
 @router.get("/deployments/labondemand")
-async def get_labondemand_deployments(
+def get_labondemand_deployments(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-):
-    """Récupérer uniquement les déploiements LabOnDemand."""
+) -> Dict[str, object]:
+    """Labs of the current user, each with its ``access_url`` (or ``null``).
+
+    Kubernetes failures answer 503 instead of an empty list.
+    """
     try:
-        v1 = client.AppsV1Api()
-        label_selector = f"managed-by=labondemand,user-id={current_user.id}"
-        ret = v1.list_deployment_for_all_namespaces(label_selector=label_selector)
-
-        stacks: Dict[str, Dict[str, Any]] = {}
-        singles: list = []
-
-        for dep in ret.items:
-            labels = dep.metadata.labels or {}
-            stack_name = labels.get("stack-name")
-            app_type = labels.get("app-type", "custom")
-            dep_name = dep.metadata.name or ""
-
-            if not stack_name and app_type == "wordpress":
-                if dep_name.endswith("-mariadb"):
-                    stack_name = dep_name[: -len("-mariadb")]
-                else:
-                    stack_name = dep_name
-
-            lifecycle = deployment_service.describe_component_lifecycle(dep)
-            # Conserver la date de création K8s pour calculer expires_at correctement
-            k8s_created_at = dep.metadata.creation_timestamp  # datetime ou None
-            entry = {
-                "name": dep.metadata.name,
-                "namespace": dep.metadata.namespace,
-                "type": app_type,
-                "labels": labels,
-                "replicas": dep.spec.replicas,
-                "ready_replicas": dep.status.ready_replicas or 0,
-                "image": dep.spec.template.spec.containers[0].image
-                if dep.spec.template.spec.containers
-                else "Unknown",
-                "lifecycle": lifecycle,
-                "is_paused": lifecycle.get("paused", False),
-                "k8s_created_at": k8s_created_at,
-            }
-
-            if stack_name:
-                agg = stacks.get(stack_name)
-                if not agg:
-                    stacks[stack_name] = {
-                        "name": stack_name,
-                        "namespace": dep.metadata.namespace,
-                        "type": app_type,
-                        "labels": labels,
-                        "replicas": dep.spec.replicas or 0,
-                        "ready_replicas": dep.status.ready_replicas or 0,
-                        "lifecycle": deployment_service.summarize_lifecycle(
-                            [lifecycle]
-                        ),
-                        "components": [entry],
-                        "is_paused": lifecycle.get("paused", False),
-                    }
-                else:
-                    agg["components"].append(entry)
-                    agg["replicas"] = (agg.get("replicas", 0) or 0) + (
-                        dep.spec.replicas or 0
-                    )
-                    agg["ready_replicas"] = (agg.get("ready_replicas", 0) or 0) + (
-                        dep.status.ready_replicas or 0
-                    )
-                    agg["lifecycle"] = deployment_service.summarize_lifecycle(
-                        [component.get("lifecycle") for component in agg["components"]]
-                    )
-                    agg["is_paused"] = agg["lifecycle"].get("paused", False)
-            else:
-                singles.append(entry)
-
-        deployments = list(stacks.values()) + singles
-
-        # Enrichir avec les métadonnées DB (expires_at, created_at)
-        # et créer les enregistrements manquants avec expires_at calculé selon le rôle
-        from ..tasks.cleanup import compute_expires_at
-
-        db_records = (
-            db.query(DeploymentModel)
-            .filter(
-                DeploymentModel.user_id == current_user.id,
-                DeploymentModel.deleted_at.is_(None),
-            )
-            .all()
+        labs = list_user_labs(current_user, deployment_service)
+    except HTTPException:
+        raise
+    except (client.exceptions.ApiException, urllib3.exceptions.HTTPError, OSError) as exc:
+        logger.error(
+            "api_list_deployments_k8s_unavailable",
+            extra={
+                "extra_fields": {
+                    "user_id": current_user.id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            },
         )
-        db_index = {r.name: r for r in db_records}
-        for dep in deployments:
-            dep_name = dep["name"]
-            rec = db_index.get(dep_name)
-            if rec is None:
-                # Créer l'enregistrement manquant avec expires_at
-                # On utilise la date de création K8s pour calculer expires_at correctement,
-                # afin d'éviter de réinitialiser le TTL à chaque auto-healing.
-                role_val = getattr(current_user.role, "value", str(current_user.role))
-                k8s_ts = dep.get("k8s_created_at")  # datetime K8s ou None
-                if k8s_ts is not None:
-                    from datetime import timezone as _tz
+        raise HTTPException(
+            status_code=503,
+            detail="Kubernetes est injoignable : impossible de lister vos labs pour le moment.",
+        )
 
-                    if k8s_ts.tzinfo is None:
-                        k8s_ts = k8s_ts.replace(tzinfo=_tz.utc)
-                    from ..tasks.cleanup import get_ttl_days_for_role
-                    from datetime import timedelta as _td
-
-                    ttl = get_ttl_days_for_role(role_val)
-                    expires_at = (k8s_ts + _td(days=ttl)) if ttl is not None else None
-                else:
-                    expires_at = compute_expires_at(role_val)
-                new_rec = DeploymentModel(
-                    user_id=current_user.id,
-                    name=dep_name,
-                    deployment_type=dep.get("type", "custom"),
-                    namespace=dep.get("namespace", ""),
-                    stack_name=dep.get("labels", {}).get("stack-name"),
-                    status="active",
-                    expires_at=expires_at,
-                )
-                try:
-                    db.add(new_rec)
-                    db.commit()
-                    db.refresh(new_rec)
-                    rec = new_rec
-                except IntegrityError:
-                    # Race condition : un autre processus a créé l'enregistrement entre-temps
-                    db.rollback()
-                    rec = (
-                        db.query(DeploymentModel)
-                        .filter(
-                            DeploymentModel.user_id == current_user.id,
-                            DeploymentModel.name == dep_name,
-                            DeploymentModel.deleted_at.is_(None),
-                        )
-                        .first()
-                    )
-            dep["expires_at"] = (
-                rec.expires_at.isoformat() if rec and rec.expires_at else None
-            )
-            dep["created_at"] = (
-                rec.created_at.isoformat() if rec and rec.created_at else None
-            )
-
-        return {"deployments": deployments, "k8s_available": True}
-    except Exception:
-        return {"deployments": [], "k8s_available": False}
+    records = reconcile_lab_records(db, current_user, labs)
+    return {
+        "deployments": [to_public_lab(lab, records.get(lab["name"])) for lab in labs],
+    }
 
 
 # ============= DÉTAILS D'UN DÉPLOIEMENT =============
 
 
 @router.get("/deployments/{namespace}/{name}/details")
-async def get_deployment_details(
+def get_deployment_details(
     namespace: str, name: str, current_user: User = Depends(get_current_user)
-):
-    """Obtenir les détails d'un déploiement."""
+) -> Dict[str, object]:
+    """Obtenir les détails d'un déploiement (polled by the UI)."""
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
 
     try:
-        apps_v1 = client.AppsV1Api()
         core_v1 = client.CoreV1Api()
-        networking_v1 = client.NetworkingV1Api()
-
         resolved = deployment_service._resolve_target_deployments(
             namespace, name, current_user
         )
@@ -292,9 +147,15 @@ async def get_deployment_details(
         name = deployment.metadata.name
         dep_labels = deployment.metadata.labels or {}
         stack_name = resolved["stack_name"] or dep_labels.get("stack-name")
-        owner_id = dep_labels.get("user-id")
         owner_selector = (
-            "" if current_user.role == UserRole.admin else f",user-id={owner_id}"
+            ""
+            if current_user.role == UserRole.admin
+            else f",user-id={dep_labels.get('user-id')}"
+        )
+        selector = (
+            f"managed-by=labondemand,stack-name={stack_name}{owner_selector}"
+            if stack_name
+            else f"managed-by=labondemand,app={name}{owner_selector}"
         )
 
         lifecycle_components = [
@@ -303,310 +164,27 @@ async def get_deployment_details(
         ]
         lifecycle_summary = deployment_service.summarize_lifecycle(lifecycle_components)
 
-        if stack_name:
-            pods = core_v1.list_namespaced_pod(
-                namespace,
-                label_selector=f"managed-by=labondemand,stack-name={stack_name}{owner_selector}",
-            )
-        else:
-            pods = core_v1.list_namespaced_pod(
-                namespace,
-                label_selector=f"managed-by=labondemand,app={name}{owner_selector}",
-            )
-
-        if stack_name:
-            services = core_v1.list_namespaced_service(
-                namespace,
-                label_selector=f"managed-by=labondemand,stack-name={stack_name}{owner_selector}",
-            )
-        else:
-            services = core_v1.list_namespaced_service(
-                namespace,
-                label_selector=f"managed-by=labondemand,app={name}{owner_selector}",
-            )
-
-        # Build node IP cache
-        node_ip_cache: Dict[str, str] = {}
+        pods = core_v1.list_namespaced_pod(namespace, label_selector=selector)
+        services = core_v1.list_namespaced_service(namespace, label_selector=selector)
         try:
-            nodes = core_v1.list_node()
-            for node in nodes.items:
-                node_name = node.metadata.name
-                if node.status and node.status.addresses:
-                    external_ip = None
-                    internal_ip = None
-                    for address in node.status.addresses:
-                        if address.type == "ExternalIP" and address.address:
-                            external_ip = address.address
-                        elif address.type == "InternalIP" and address.address:
-                            internal_ip = address.address
-                    if external_ip or internal_ip:
-                        node_ip_cache[node_name] = external_ip or internal_ip
-        except Exception as e:
+            ingresses = client.NetworkingV1Api().list_namespaced_ingress(
+                namespace, label_selector=selector
+            ).items or []
+        except Exception as exc:
+            # Best-effort: NodePort URLs remain usable without the Ingress view.
             logger.warning(
-                "node_list_failed", extra={"extra_fields": {"error": str(e)}}
+                "ingress_list_failed",
+                extra={"extra_fields": {"namespace": namespace, "error": str(exc)}},
             )
+            ingresses = []
 
-        def get_node_external_ip(node_name: str) -> Optional[str]:
-            if not node_name:
-                return None
-            try:
-                node = core_v1.read_node(node_name)
-                if node.status and node.status.addresses:
-                    external_ip = None
-                    internal_ip = None
-                    for address in node.status.addresses:
-                        if address.type == "ExternalIP" and address.address:
-                            external_ip = address.address
-                        elif address.type == "InternalIP" and address.address:
-                            internal_ip = address.address
-                    return external_ip or internal_ip
-            except Exception as e:
-                logger.warning(
-                    "node_ip_resolution_failed",
-                    extra={"extra_fields": {"node_name": node_name, "error": str(e)}},
-                )
-            return None
-
-        def get_cluster_external_ip():
-            try:
-                if settings.CLUSTER_EXTERNAL_IP:
-                    return settings.CLUSTER_EXTERNAL_IP
-
-                def _fallback_from_kubeconfig_host() -> Optional[str]:
-                    try:
-                        cfg = client.Configuration.get_default_copy()
-                        host = getattr(cfg, "host", None)
-                        if not host:
-                            return None
-                        parsed = (
-                            urlparse(host)
-                            if "://" in host
-                            else urlparse(f"https://{host}")
-                        )
-                        hostname = parsed.hostname
-                        if not hostname:
-                            return None
-                        if hostname in {"localhost", "127.0.0.1", "0.0.0.0"}:
-                            return None
-                        return hostname
-                    except Exception:
-                        return None
-
-                if node_ip_cache:
-                    return list(node_ip_cache.values())[0]
-
-                kube_host = _fallback_from_kubeconfig_host()
-                if kube_host:
-                    return kube_host
-
-                return "localhost"
-            except Exception:
-                return "localhost"
-
-        cluster_ip = get_cluster_external_ip()
-
-        def get_node_for_service(service_name: str) -> Optional[str]:
-            svc_labels = None
-            for svc in services.items:
-                if svc.metadata.name == service_name:
-                    svc_labels = svc.spec.selector
-                    break
-            if not svc_labels:
-                return None
-            for pod in pods.items:
-                pod_labels = pod.metadata.labels or {}
-                matches = all(
-                    pod_labels.get(k) == v for k, v in (svc_labels or {}).items()
-                )
-                if matches and pod.spec.node_name:
-                    pod_phase = pod.status.phase if pod.status else None
-                    if pod_phase == "Running":
-                        return pod.spec.node_name
-            for pod in pods.items:
-                pod_labels = pod.metadata.labels or {}
-                matches = all(
-                    pod_labels.get(k) == v for k, v in (svc_labels or {}).items()
-                )
-                if matches and pod.spec.node_name:
-                    return pod.spec.node_name
-            return None
-
-        def get_nodeport_ip(service_name: str) -> str:
-            if settings.NODEPORT_USE_POD_NODE_IP:
-                node_name = get_node_for_service(service_name)
-                if node_name and node_name in node_ip_cache:
-                    return node_ip_cache[node_name]
-                if node_name:
-                    node_ip = get_node_external_ip(node_name)
-                    if node_ip:
-                        return node_ip
-            return cluster_ip
-
-        # Ingress data
-        ingress_entries: List[Dict[str, Any]] = []
-        ingress_by_service: Dict[str, List[Dict[str, Any]]] = {}
-        ingress_access_entries: List[Dict[str, Any]] = []
-        try:
-            if stack_name:
-                ingress_selector = (
-                    f"managed-by=labondemand,stack-name={stack_name}{owner_selector}"
-                )
-            else:
-                ingress_selector = f"managed-by=labondemand,app={name}{owner_selector}"
-            ingress_list = networking_v1.list_namespaced_ingress(
-                namespace, label_selector=ingress_selector
-            )
-        except Exception:
-            ingress_list = client.V1IngressList(items=[])
-
-        for ingress in getattr(ingress_list, "items", []) or []:
-            ingress_meta = getattr(ingress, "metadata", None)
-            ingress_spec = getattr(ingress, "spec", None)
-            ingress_class = (
-                getattr(ingress_spec, "ingress_class_name", None)
-                if ingress_spec
-                else None
-            )
-            tls_hosts = set()
-            if ingress_spec and getattr(ingress_spec, "tls", None):
-                for tls_block in ingress_spec.tls:
-                    for host in getattr(tls_block, "hosts", []) or []:
-                        if host:
-                            tls_hosts.add(host)
-
-            for rule in getattr(ingress_spec, "rules", []) or []:
-                host = getattr(rule, "host", None)
-                http_block = getattr(rule, "http", None)
-                if not host or not http_block:
-                    continue
-                for path in getattr(http_block, "paths", []) or []:
-                    backend = getattr(path, "backend", None)
-                    service_ref = getattr(backend, "service", None) if backend else None
-                    service_name = (
-                        getattr(service_ref, "name", None) if service_ref else None
-                    )
-                    if not service_name:
-                        continue
-                    service_port_ref = (
-                        getattr(service_ref, "port", None) if service_ref else None
-                    )
-                    service_port = (
-                        getattr(service_port_ref, "number", None)
-                        if service_port_ref
-                        else None
-                    )
-                    if service_port is None:
-                        service_port = getattr(service_port_ref, "name", None)
-                    path_value = (
-                        getattr(path, "path", None) or settings.INGRESS_DEFAULT_PATH
-                    )
-                    tls_enabled = host in tls_hosts or bool(settings.INGRESS_TLS_SECRET)
-                    scheme = "https" if tls_enabled else "http"
-                    entry = {
-                        "ingress": getattr(ingress_meta, "name", None),
-                        "host": host,
-                        "path": path_value,
-                        "service": service_name,
-                        "service_port": service_port,
-                        "class": ingress_class,
-                        "tls": tls_enabled,
-                        "annotations": dict(
-                            getattr(ingress_meta, "annotations", {}) or {}
-                        ),
-                        "url": f"{scheme}://{host}{path_value}",
-                    }
-                    ingress_entries.append(entry)
-                    ingress_by_service.setdefault(service_name, []).append(entry)
-                    ingress_access_entries.append(
-                        {
-                            "url": entry["url"],
-                            "service": service_name,
-                            "ingress": entry["ingress"],
-                            "host": host,
-                            "protocol": scheme,
-                            "secure": tls_enabled,
-                            "path": path_value,
-                        }
-                    )
-
-        # Build access URLs
-        access_urls = []
-        service_data = []
-
-        for svc in services.items:
-            service_name = svc.metadata.name
-            service_info = {
-                "name": svc.metadata.name,
-                "type": svc.spec.type,
-                "cluster_ip": svc.spec.cluster_ip,
-                "ports": [],
-                "ingresses": ingress_by_service.get(service_name, []),
-            }
-
-            for port in svc.spec.ports or []:
-                port_info = {
-                    "name": port.name,
-                    "port": port.port,
-                    "target_port": str(port.target_port)
-                    if port.target_port
-                    else str(port.port),
-                    "protocol": port.protocol,
-                }
-
-                if port.node_port:
-                    port_info["node_port"] = port.node_port
-                    if svc.spec.type == "NodePort":
-                        label = ""
-                        try:
-                            lbls = svc.metadata.labels or {}
-                            comp = lbls.get("component", "")
-                            app_type = lbls.get("app-type", "")
-                            if app_type == "lamp":
-                                if comp == "web":
-                                    label = "Web (Apache/PHP)"
-                                elif comp == "phpmyadmin":
-                                    label = "phpMyAdmin"
-                            elif app_type == "eclipse" and port.name == "tomcat":
-                                label = "Application web (Tomcat)"
-                        except Exception:
-                            pass
-                        scheme = "http"
-                        nodeport_ip = get_nodeport_ip(svc.metadata.name)
-                        node_name_for_svc = get_node_for_service(svc.metadata.name)
-
-                        access_urls.append(
-                            {
-                                "url": f"{scheme}://{nodeport_ip}:{port.node_port}",
-                                "service": svc.metadata.name,
-                                "node_port": port.node_port,
-                                "node_ip": nodeport_ip,
-                                "node_name": node_name_for_svc,
-                                "cluster_ip": cluster_ip,
-                                "label": label or None,
-                                "protocol": scheme,
-                                "secure": False,
-                            }
-                        )
-
-                service_info["ports"].append(port_info)
-
-            service_data.append(service_info)
-
-        access_urls.extend(ingress_access_entries)
-
-        # Endpoint NoVNC: URL du service qui expose un port nommé "novnc"
-        novnc_service_names = {
-            svc["name"]
-            for svc in service_data
-            if any(port.get("name") == "novnc" for port in svc.get("ports", []))
-        }
-        novnc_endpoint = next(
-            (
-                url["url"]
-                for url in access_urls
-                if url.get("service") in novnc_service_names
-            ),
-            None,
+        pod_nodes = (
+            [pod.spec.node_name for pod in pods.items or []]
+            if settings.NODEPORT_USE_POD_NODE_IP
+            else []
+        )
+        endpoints = build_endpoints(
+            services.items or [], pods.items or [], ingresses, get_node_addresses(pod_nodes)
         )
 
         return {
@@ -639,12 +217,9 @@ async def get_deployment_details(
                     "pod_ip": pod.status.pod_ip,
                     "node_name": pod.spec.node_name,
                 }
-                for pod in pods.items
+                for pod in pods.items or []
             ],
-            "services": service_data,
-            "ingresses": ingress_entries,
-            "access_urls": access_urls,
-            "novnc_endpoint": novnc_endpoint,
+            **endpoints,
         }
 
     except HTTPException:
@@ -667,10 +242,30 @@ async def get_deployment_details(
 # ============= CREDENTIALS (SECRETS) =============
 
 
+def _ingress_url_for(
+    app_type: str, stack_name: str, user: User, component: Optional[str] = None
+) -> Optional[str]:
+    """Public Ingress URL of a lab, when Ingress is used for this app type."""
+    if not deployment_service._should_attach_ingress(app_type):
+        return None
+    host = deployment_service._build_ingress_host(stack_name, user, component=component)
+    return deployment_service.ingress_url(host)
+
+
+def _decode_secret_value(data: Dict[str, str], key: str) -> Optional[str]:
+    value = data.get(key)
+    if not value:
+        return None
+    try:
+        return base64.b64decode(value).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
 @router.get("/deployments/{namespace}/{name}/credentials")
-async def get_deployment_credentials(
+def get_deployment_credentials(
     namespace: str, name: str, current_user: User = Depends(get_current_user)
-):
+) -> Dict[str, object]:
     """Récupère les identifiants (secrets) associés à un déploiement LabOnDemand."""
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
@@ -678,38 +273,33 @@ async def get_deployment_credentials(
     try:
         core_v1 = client.CoreV1Api()
 
-        requested_name = name
         resolved = deployment_service._resolve_target_deployments(
             namespace, name, current_user
         )
         deployment = resolved["deployments"][0]
         labels = deployment.metadata.labels or {}
-        owner_id = labels.get("user-id")
         app_type = labels.get("app-type", "custom")
         stack_name = (
             resolved["stack_name"]
             or labels.get("stack-name")
-            or requested_name
+            or name
             or deployment.metadata.name
         )
 
         selector = f"managed-by=labondemand,stack-name={stack_name}"
         if current_user.role != UserRole.admin:
-            selector += f",user-id={owner_id}"
+            selector += f",user-id={labels.get('user-id')}"
         secrets_list = core_v1.list_namespaced_secret(
             namespace, label_selector=selector
         )
-        secret_obj = None
         if secrets_list.items:
             secret_obj = secrets_list.items[0]
         else:
-            wp_secret = f"{stack_name}-secret"
-            mysql_secret = f"{stack_name}-db-secret"
+            legacy_name = (
+                f"{stack_name}-db-secret" if app_type == "mysql" else f"{stack_name}-secret"
+            )
             try:
-                if app_type == "mysql":
-                    secret_obj = core_v1.read_namespaced_secret(mysql_secret, namespace)
-                else:
-                    secret_obj = core_v1.read_namespaced_secret(wp_secret, namespace)
+                secret_obj = core_v1.read_namespaced_secret(legacy_name, namespace)
             except client.exceptions.ApiException as e:
                 if e.status == 404:
                     raise HTTPException(
@@ -721,25 +311,9 @@ async def get_deployment_credentials(
         data = secret_obj.data or {}
 
         def dec(key: str) -> Optional[str]:
-            val = data.get(key)
-            if not val:
-                return None
-            try:
-                return base64.b64decode(val).decode("utf-8")
-            except Exception:
-                return None
+            return _decode_secret_value(data, key)
 
         if app_type == "wordpress":
-            wp_url = None
-            if deployment_service._should_attach_ingress("wordpress"):
-                try:
-                    host = deployment_service._build_ingress_host(
-                        stack_name, current_user
-                    )
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    wp_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
-                except Exception:
-                    pass
             response = {
                 "type": "wordpress",
                 "wordpress": {
@@ -757,21 +331,12 @@ async def get_deployment_credentials(
                     or dec("WORDPRESS_DATABASE_NAME"),
                 },
             }
+            wp_url = _ingress_url_for("wordpress", stack_name, current_user)
             if wp_url:
                 response["wordpress"]["url"] = wp_url
             return response
 
         if app_type == "vscode":
-            vscode_url = None
-            if deployment_service._should_attach_ingress("vscode"):
-                try:
-                    host = deployment_service._build_ingress_host(
-                        stack_name, current_user
-                    )
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    vscode_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
-                except Exception:
-                    pass
             response = {
                 "type": "vscode",
                 "vscode": {
@@ -779,40 +344,22 @@ async def get_deployment_credentials(
                     "password": dec("PASSWORD"),
                 },
             }
+            vscode_url = _ingress_url_for("vscode", stack_name, current_user)
             if vscode_url:
                 response["vscode"]["url"] = vscode_url
             return response
 
         if app_type == "jupyter":
-            jupyter_url = None
-            if deployment_service._should_attach_ingress("jupyter"):
-                try:
-                    host = deployment_service._build_ingress_host(
-                        stack_name, current_user
-                    )
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    jupyter_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
-                except Exception:
-                    pass
             response = {
                 "type": "jupyter",
                 "jupyter": {"token": dec("JUPYTER_TOKEN")},
             }
+            jupyter_url = _ingress_url_for("jupyter", stack_name, current_user)
             if jupyter_url:
                 response["jupyter"]["url"] = jupyter_url
             return response
 
         if app_type in VNC_DESKTOP_TYPES:
-            desktop_url = None
-            if deployment_service._should_attach_ingress(app_type):
-                try:
-                    host = deployment_service._build_ingress_host(
-                        stack_name, current_user
-                    )
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    desktop_url = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
-                except Exception:
-                    pass
             response = {
                 "type": app_type,
                 app_type: {
@@ -821,70 +368,40 @@ async def get_deployment_credentials(
                     "view_only_password": dec("VNC_VIEW_ONLY_PW"),
                 },
             }
+            desktop_url = _ingress_url_for(app_type, stack_name, current_user)
             if desktop_url:
                 response[app_type]["url"] = desktop_url
             return response
 
+        node_port_hint = "http://<NODE_IP>:<NODE_PORT>/"
+        database = {
+            "host": f"{stack_name}-mysql-service",
+            "port": 3306,
+            "username": dec("MYSQL_USER"),
+            "password": dec("MYSQL_PASSWORD"),
+            "database": dec("MYSQL_DATABASE"),
+        }
         if app_type == "mysql":
-            pma_url_hint = "http://<NODE_IP>:<NODE_PORT>/"
-            if deployment_service._should_attach_ingress("mysql"):
-                try:
-                    host = deployment_service._build_ingress_host(
-                        stack_name, current_user, component="pma"
-                    )
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    pma_url_hint = f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}"
-                except Exception:
-                    pass
+            pma_url = _ingress_url_for("mysql", stack_name, current_user, component="pma")
             return {
                 "type": "mysql",
-                "database": {
-                    "host": f"{stack_name}-mysql-service",
-                    "port": 3306,
-                    "username": dec("MYSQL_USER"),
-                    "password": dec("MYSQL_PASSWORD"),
-                    "database": dec("MYSQL_DATABASE"),
-                },
-                "phpmyadmin": {"url_hint": pma_url_hint},
+                "database": database,
+                "phpmyadmin": {"url_hint": pma_url or node_port_hint},
             }
 
         if app_type == "lamp":
-            lamp_pma_hint = "http://<NODE_IP>:<NODE_PORT>/"
-            lamp_web_url = None
-            if deployment_service._should_attach_ingress("lamp"):
-                try:
-                    host_pma = deployment_service._build_ingress_host(
-                        stack_name, current_user, component="pma"
-                    )
-                    host_web = deployment_service._build_ingress_host(
-                        stack_name, current_user, component="web"
-                    )
-                    scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                    lamp_pma_hint = (
-                        f"{scheme}://{host_pma}{settings.INGRESS_DEFAULT_PATH}"
-                    )
-                    lamp_web_url = (
-                        f"{scheme}://{host_web}{settings.INGRESS_DEFAULT_PATH}"
-                    )
-                except Exception:
-                    pass
+            pma_url = _ingress_url_for("lamp", stack_name, current_user, component="pma")
+            web_url = _ingress_url_for("lamp", stack_name, current_user, component="web")
             response = {
                 "type": "lamp",
-                "database": {
-                    "host": f"{stack_name}-mysql-service",
-                    "port": 3306,
-                    "username": dec("MYSQL_USER"),
-                    "password": dec("MYSQL_PASSWORD"),
-                    "database": dec("MYSQL_DATABASE"),
-                },
-                "phpmyadmin": {"url_hint": lamp_pma_hint},
+                "database": database,
+                "phpmyadmin": {"url_hint": pma_url or node_port_hint},
             }
-            if lamp_web_url:
-                response["web"] = {"url_hint": lamp_web_url}
+            if web_url:
+                response["web"] = {"url_hint": web_url}
             return response
 
-        decoded = {k: dec(k) for k in data.keys()}
-        return {"type": app_type, "secrets": decoded}
+        return {"type": app_type, "secrets": {k: dec(k) for k in data.keys()}}
 
     except Exception as e:
         raise_k8s_http(e)
@@ -895,14 +412,14 @@ async def get_deployment_credentials(
 
 @router.post("/pods")
 @limiter.limit("10/5minute")
-async def create_pod(
+def create_pod(
     request: Request,
     name: str,
     image: str,
     namespace: str = "default",
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
-):
+) -> Dict[str, str]:
     """Créer un pod (admin uniquement)."""
     name = validate_k8s_name(name)
     namespace = validate_k8s_name(namespace)
@@ -927,7 +444,7 @@ async def create_pod(
 
 @router.post("/deployments")
 @limiter.limit("10/5minute")
-async def create_deployment(
+def create_deployment(
     request: Request,
     name: str,
     image: str,
@@ -944,7 +461,7 @@ async def create_deployment(
     additional_labels: Optional[Dict[str, str]] = None,
     existing_pvc_name: Optional[str] = None,
     current_user: User = Depends(get_current_user),
-):
+) -> Dict[str, object]:
     """Créer un déploiement avec service optionnel."""
     logger.debug(
         "api_create_deployment_request",
@@ -958,7 +475,7 @@ async def create_deployment(
             }
         },
     )
-    return await deployment_service.create_deployment(
+    return deployment_service.create_deployment(
         name=name,
         image=image,
         replicas=replicas,
@@ -982,35 +499,29 @@ async def create_deployment(
 
 
 @router.post("/deployments/{namespace}/{name}/pause")
-async def pause_deployment(
+def pause_deployment(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
-):
+) -> Dict[str, object]:
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.pause_application(namespace, name, current_user)
-    except HTTPException:
-        raise
+        return deployment_service.pause_application(namespace, name, current_user)
     except Exception as exc:
         raise_k8s_http(exc)
 
 
 @router.post("/deployments/{namespace}/{name}/resume")
-async def resume_deployment(
+def resume_deployment(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
-):
+) -> Dict[str, object]:
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
     try:
-        return await deployment_service.resume_application(
-            namespace, name, current_user
-        )
-    except HTTPException:
-        raise
+        return deployment_service.resume_application(namespace, name, current_user)
     except Exception as exc:
         raise_k8s_http(exc)
 
@@ -1019,12 +530,12 @@ async def resume_deployment(
 
 
 @router.delete("/pods/{namespace}/{name}")
-async def delete_pod(
+def delete_pod(
     namespace: str,
     name: str,
     current_user: User = Depends(get_current_user),
     _: bool = Depends(is_admin),
-):
+) -> Dict[str, str]:
     """Supprimer un pod (admin uniquement)."""
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
@@ -1038,13 +549,13 @@ async def delete_pod(
 
 
 @router.delete("/deployments/{namespace}/{name}")
-async def delete_deployment(
+def delete_deployment(
     namespace: str,
     name: str,
     delete_service: bool = True,
     delete_persistent: bool = False,
     current_user: User = Depends(get_current_user),
-):
+) -> Dict[str, object]:
     """Supprimer un déploiement et son service."""
     namespace = validate_k8s_name(namespace)
     name = validate_k8s_name(name)
@@ -1070,23 +581,23 @@ async def delete_deployment(
             delete_services=delete_service,
             delete_persistent=delete_persistent,
         )
-        audit_logger.info(
-            "deployment_deleted",
-            extra={
-                "extra_fields": {
-                    "namespace": namespace,
-                    "name": result["name"],
-                    "user_id": getattr(current_user, "id", None),
-                    "deployment_type": result["deployment_type"],
-                    "delete_service": delete_service,
-                    "delete_persistent": delete_persistent,
-                    "deleted": result["deleted"],
-                }
-            },
-        )
-        return {
-            "message": f"Application '{result['name']}' supprimée du namespace {namespace}",
-            "deleted": result["deleted"],
-        }
     except Exception as e:
         raise_k8s_http(e)
+    audit_logger.info(
+        "deployment_deleted",
+        extra={
+            "extra_fields": {
+                "namespace": namespace,
+                "name": result["name"],
+                "user_id": getattr(current_user, "id", None),
+                "deployment_type": result["deployment_type"],
+                "delete_service": delete_service,
+                "delete_persistent": delete_persistent,
+                "deleted": result["deleted"],
+            }
+        },
+    )
+    return {
+        "message": f"Application '{result['name']}' supprimée du namespace {namespace}",
+        "deleted": result["deleted"],
+    }

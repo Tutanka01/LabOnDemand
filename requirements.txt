@@ -1,14 +1,17 @@
 fastapi==0.115.12
 uvicorn==0.34.2
+# WebSocket protocol implementation for uvicorn (web terminal: /api/v1/k8s/terminal/...)
+websockets==13.1
 kubernetes==32.0.1
 python-dotenv==1.1.0
 sqlalchemy==2.0.40
-pymysql==1.1.0
+pymysql==1.1.1
 cryptography==44.0.3
 bcrypt>=4.0.1,<4.1
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
+python-multipart==0.0.20
+# The [email] extra installs email-validator
 pydantic[email]==2.11.4
-redis>=5.0.0
+redis==8.2.0
 slowapi==0.1.9
-httpx>=0.27.0
+httpx==0.28.1

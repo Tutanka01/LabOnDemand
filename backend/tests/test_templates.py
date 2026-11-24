@@ -150,3 +150,34 @@ async def test_resource_presets_admin(admin_client):
 async def test_resource_presets_unauthenticated(client):
     r = await client.get(f"{BASE}/resource-presets")
     assert r.status_code == 401
+
+
+async def test_list_templates_db_error_is_not_an_empty_list(admin_user, admin_token):
+    """A failing DB query must surface as a 500, not as an empty catalogue."""
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.exc import OperationalError
+
+    from backend.database import get_db
+    from backend.main import app
+    from backend.security import get_current_user
+
+    class _BrokenSession:
+        def query(self, *a, **k):
+            raise OperationalError("SELECT", {}, Exception("db down"))
+
+    def _broken_db():
+        yield _BrokenSession()
+
+    app.dependency_overrides[get_db] = _broken_db
+    app.dependency_overrides[get_current_user] = lambda: admin_user
+    try:
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.get(f"{BASE}/templates", cookies={"session_id": admin_token})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 500
+    body = r.json()
+    assert body["error"] == "database_error"
+    assert "db down" not in r.text

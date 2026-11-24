@@ -1,20 +1,16 @@
 """Mixin pour la création de stacks WordPress + MariaDB."""
-import base64
 import secrets
-from typing import Dict, Any, Optional
-
-from fastapi import HTTPException
-from kubernetes import client
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import User
-from ..config import settings
-from ..k8s_utils import create_labondemand_labels, clamp_resources_for_role
+from ..k8s_utils import create_labondemand_labels
+from .stacks import DATABASE_RESOURCES, WORDPRESS_RESOURCES
 
 
 class WordPressDeployMixin:
     """Fournit _create_wordpress_stack() pour DeploymentService."""
 
-    async def _create_wordpress_stack(
+    def _create_wordpress_stack(
         self,
         name: str,
         effective_namespace: str,
@@ -88,8 +84,8 @@ class WordPressDeployMixin:
         }
 
         role_val = getattr(current_user.role, "value", str(current_user.role))
-        db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-        wp_res = clamp_resources_for_role(str(role_val), "250m", "1000m", "512Mi", "1Gi", 1)
+        db_res = DATABASE_RESOURCES.clamp(str(role_val))
+        wp_res = WORDPRESS_RESOURCES.clamp(str(role_val))
 
         dep_db_manifest = {
             "apiVersion": "apps/v1",
@@ -170,34 +166,20 @@ class WordPressDeployMixin:
             },
         }
 
-        created_objects = []
-        try:
-            try:
-                self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
-                created_objects.append(("secret", secret_name))
-            except client.exceptions.ApiException as e:
-                if e.status == 409:
-                    try:
-                        self.core_v1.patch_namespaced_secret(
-                            name=secret_manifest["metadata"]["name"],
-                            namespace=effective_namespace,
-                            body={"metadata": {"labels": secret_manifest["metadata"].get("labels", {})}},
-                        )
-                    except Exception:
-                        pass
-                else:
-                    raise
-
-            use_pvc = True
-            try:
-                self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
-                created_objects.append(("pvc", pvc_db))
-            except client.exceptions.ApiException as e:
-                msg = (getattr(e, "body", "") or "").lower()
-                if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
-                    use_pvc = False
-                else:
-                    raise
+        created_objects: List[Tuple[str, str]] = []
+        with self._rollback_on_failure(
+            effective_namespace, created_objects, "Erreur WordPress", "Erreur WordPress inattendue"
+        ):
+            # Credentials the pods really use (an existing secret is kept).
+            secret_values = self._create_or_relabel_secret(
+                effective_namespace, secret_manifest, created_objects
+            )
+            db_user = secret_values.get("MARIADB_USER")
+            db_pass = secret_values.get("MARIADB_PASSWORD")
+            db_default = secret_values.get("MARIADB_DATABASE")
+            wp_admin_user = secret_values.get("WORDPRESS_USERNAME")
+            wp_admin_pass = secret_values.get("WORDPRESS_PASSWORD")
+            use_pvc = self._create_pvc_or_fallback(effective_namespace, pvc_manifest, created_objects)
 
             self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
             created_objects.append(("service", svc_db))
@@ -212,17 +194,6 @@ class WordPressDeployMixin:
             self.apps_v1.create_namespaced_deployment(effective_namespace, dep_wp_manifest)
             created_objects.append(("deployment", wp_name))
 
-            try:
-                apps_v1 = client.AppsV1Api()
-                lbl = f"managed-by=labondemand,stack-name={name},user-id={current_user.id}"
-                _lst = apps_v1.list_namespaced_deployment(effective_namespace, label_selector=lbl)
-                if not (_lst.items or []):
-                    raise HTTPException(status_code=500, detail="Stack WordPress créée partiellement: aucun Deployment trouvé juste après la création")
-            except HTTPException:
-                raise
-            except Exception:
-                pass
-
             node_port = None
             ingress_details: Optional[Dict[str, Any]] = None
             if service_type in ["NodePort", "LoadBalancer"]:
@@ -234,21 +205,15 @@ class WordPressDeployMixin:
             )
 
             if use_ingress:
-                ingress_name = f"{wp_name}-ingress"
-                host = self._build_ingress_host(wp_name, current_user)
-                ingress_manifest = self.create_ingress_manifest(ingress_name, host, svc_wp, service_port, labels_wp)
-                ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
-                if created_flag:
-                    created_objects.append(("ingress", ingress_name))
-                scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                ingress_details = {
-                    "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
-                    "host": host,
-                    "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
-                    "class": settings.INGRESS_CLASS_NAME,
-                    "tls": bool(settings.INGRESS_TLS_SECRET),
-                    "created": created_flag,
-                }
+                ingress_details = self._expose_via_ingress(
+                    effective_namespace,
+                    f"{wp_name}-ingress",
+                    self._build_ingress_host(wp_name, current_user),
+                    svc_wp,
+                    service_port,
+                    labels_wp,
+                    created_objects,
+                )
                 result_msg += f" Accès web: {ingress_details['url']}"
 
             return {
@@ -259,12 +224,6 @@ class WordPressDeployMixin:
                 "created_objects": {"secret": secret_name, "pvc": pvc_db, "services": [svc_db, svc_wp], "deployments": [db_name, wp_name]},
                 "credentials": {
                     "wordpress": {"username": wp_admin_user, "password": wp_admin_pass},
-                    "database": {"host": svc_db, "port": 3306, "username": db_user, "password": db_pass, "database": "wordpress"},
+                    "database": {"host": svc_db, "port": 3306, "username": db_user, "password": db_pass, "database": db_default},
                 },
             }
-        except client.exceptions.ApiException as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            raise HTTPException(status_code=e.status or 500, detail=f"Erreur WordPress: {e.reason} - {e.body}")
-        except Exception as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            raise HTTPException(status_code=500, detail=f"Erreur WordPress inattendue: {e}")

@@ -1,19 +1,16 @@
 """Mixin pour la création de stacks MySQL + phpMyAdmin."""
 import secrets
-from typing import Dict, Any, Optional
-
-from fastapi import HTTPException
-from kubernetes import client
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import User
-from ..config import settings
-from ..k8s_utils import create_labondemand_labels, clamp_resources_for_role
+from ..k8s_utils import create_labondemand_labels
+from .stacks import DATABASE_RESOURCES, PHPMYADMIN_RESOURCES
 
 
 class MySQLDeployMixin:
     """Fournit _create_mysql_pma_stack() pour DeploymentService."""
 
-    async def _create_mysql_pma_stack(
+    def _create_mysql_pma_stack(
         self,
         name: str,
         effective_namespace: str,
@@ -63,8 +60,8 @@ class MySQLDeployMixin:
         }
 
         role_val = getattr(current_user.role, "value", str(current_user.role))
-        db_res = clamp_resources_for_role(str(role_val), "250m", "500m", "256Mi", "512Mi", 1)
-        pma_res = clamp_resources_for_role(str(role_val), "150m", "300m", "128Mi", "256Mi", 1)
+        db_res = DATABASE_RESOURCES.clamp(str(role_val))
+        pma_res = PHPMYADMIN_RESOURCES.clamp(str(role_val))
 
         dep_db_manifest = {
             "apiVersion": "apps/v1", "kind": "Deployment",
@@ -122,30 +119,21 @@ class MySQLDeployMixin:
             },
         }
 
-        created_objects = []
-        try:
-            try:
-                self.core_v1.create_namespaced_secret(effective_namespace, secret_manifest)
-                created_objects.append(("secret", secret_name))
-            except client.exceptions.ApiException as e:
-                if e.status == 409:
-                    try:
-                        self.core_v1.patch_namespaced_secret(name=secret_manifest["metadata"]["name"], namespace=effective_namespace, body={"metadata": {"labels": secret_manifest["metadata"].get("labels", {})}})
-                    except Exception:
-                        pass
-                else:
-                    raise
-
-            use_pvc = True
-            try:
-                self.core_v1.create_namespaced_persistent_volume_claim(effective_namespace, pvc_manifest)
-                created_objects.append(("pvc", pvc_db))
-            except client.exceptions.ApiException as e:
-                msg = (getattr(e, "body", "") or "").lower()
-                if e.status in (403, 422) or "no persistent volumes" in msg or "storageclass" in msg or "forbidden" in msg:
-                    use_pvc = False
-                else:
-                    raise
+        created_objects: List[Tuple[str, str]] = []
+        with self._rollback_on_failure(
+            effective_namespace,
+            created_objects,
+            "Erreur MySQL/phpMyAdmin",
+            "Erreur MySQL/phpMyAdmin inattendue",
+        ):
+            # Credentials the pods really use (an existing secret is kept).
+            secret_values = self._create_or_relabel_secret(
+                effective_namespace, secret_manifest, created_objects
+            )
+            db_user = secret_values.get("MYSQL_USER")
+            db_pass = secret_values.get("MYSQL_PASSWORD")
+            db_default = secret_values.get("MYSQL_DATABASE")
+            use_pvc = self._create_pvc_or_fallback(effective_namespace, pvc_manifest, created_objects)
 
             self.core_v1.create_namespaced_service(effective_namespace, svc_db_manifest)
             created_objects.append(("service", svc_db))
@@ -171,18 +159,15 @@ class MySQLDeployMixin:
             )
 
             if use_ingress:
-                ingress_name = f"{pma_name}-ingress"
-                host = self._build_ingress_host(name, current_user, component="pma")
-                ingress_manifest = self.create_ingress_manifest(ingress_name, host, svc_pma, service_port, labels_pma)
-                ingress_obj, created_flag = self._apply_ingress(effective_namespace, ingress_manifest)
-                if created_flag:
-                    created_objects.append(("ingress", ingress_name))
-                scheme = "https" if settings.INGRESS_TLS_SECRET else "http"
-                ingress_details = {
-                    "name": getattr(getattr(ingress_obj, "metadata", None), "name", ingress_name),
-                    "host": host, "url": f"{scheme}://{host}{settings.INGRESS_DEFAULT_PATH}",
-                    "class": settings.INGRESS_CLASS_NAME, "tls": bool(settings.INGRESS_TLS_SECRET), "created": created_flag,
-                }
+                ingress_details = self._expose_via_ingress(
+                    effective_namespace,
+                    f"{pma_name}-ingress",
+                    self._build_ingress_host(name, current_user, component="pma"),
+                    svc_pma,
+                    service_port,
+                    labels_pma,
+                    created_objects,
+                )
                 result_msg = (
                     f"Stack MySQL+phpMyAdmin créée dans {effective_namespace}. "
                     f"phpMyAdmin accessible via {ingress_details['url']}. "
@@ -195,9 +180,3 @@ class MySQLDeployMixin:
                 "created_objects": {"secret": secret_name, "pvc": pvc_db, "services": [svc_db, svc_pma], "deployments": [db_name, pma_name]},
                 "credentials": {"database": {"host": svc_db, "port": 3306, "username": db_user, "password": db_pass, "database": db_default}, "phpmyadmin": {"url_hint": "http://<NODE_IP>:<NODE_PORT>/"}},
             }
-        except client.exceptions.ApiException as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            raise HTTPException(status_code=e.status or 500, detail=f"Erreur MySQL/phpMyAdmin: {e.reason} - {e.body}")
-        except Exception as e:
-            self._rollback_created_objects(effective_namespace, created_objects)
-            raise HTTPException(status_code=500, detail=f"Erreur MySQL/phpMyAdmin inattendue: {e}")

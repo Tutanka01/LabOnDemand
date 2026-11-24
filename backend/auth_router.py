@@ -13,9 +13,9 @@ from .database import get_db
 from .models import User, UserRole, UserQuotaOverride
 from .schemas import UserCreate, UserLogin, UserResponse, UserUpdate, LoginResponse, SessionData, ChangePasswordRequest
 from .security import (
-    authenticate_user, create_session, get_password_hash,
+    authenticate_user, client_ip, create_session, get_password_hash,
     get_current_user, delete_session, delete_user_sessions,
-    is_admin, is_teacher_or_admin, limiter, validate_password_strength
+    is_admin, limiter, validate_password_strength
 )
 from .session import SECURE_COOKIES, SESSION_EXPIRY_HOURS, SESSION_SAMESITE, COOKIE_DOMAIN
 from .session_store import session_store
@@ -44,14 +44,13 @@ def login(
     """
     Connecte un utilisateur et crée une session
     """
-    client = request.client or None
     logger.info(
         "login_attempt",
         extra={
             "extra_fields": {
                 "username": user_credentials.username,
-                "client_ip": getattr(client, "host", None),
-                "client_port": getattr(client, "port", None),
+                "client_ip": client_ip(request),
+                "client_port": getattr(request.client, "port", None),
             }
         },
     )
@@ -68,7 +67,7 @@ def login(
             extra={
                 "extra_fields": {
                     "username": user_credentials.username,
-                    "client_ip": getattr(client, "host", None),
+                    "client_ip": client_ip(request),
                     "reason": "invalid_credentials",
                 }
             },
@@ -86,15 +85,9 @@ def login(
     request.state.user = user
     
     # Créer la réponse
-    resp = LoginResponse(
-        user=UserResponse.model_validate(user),
-        session_id=session_id
-    )
+    resp = LoginResponse(user=UserResponse.model_validate(user))
     
-    # Ajouter l'ID de session aux headers pour que le middleware puisse créer le cookie
-    response.headers["session_id"] = session_id
-    
-    # Ajouter le cookie directement (en plus du middleware)
+    # The session token travels only in the HttpOnly cookie, never in a header.
     response.set_cookie(
         key="session_id",
         value=session_id,
@@ -114,7 +107,7 @@ def login(
                 "username": user.username,
                 "role": user.role.value,
                 "session_id": session_preview,
-                "client_ip": getattr(client, "host", None),
+                "client_ip": client_ip(request),
             }
         },
     )
@@ -839,10 +832,11 @@ def delete_quota_override(user_id: int, db: Session = Depends(get_db)):
 import csv
 import io
 from fastapi import UploadFile, File
+from sqlalchemy.exc import SQLAlchemyError
 
 
 @router.post("/users/import", dependencies=[Depends(is_admin)], status_code=status.HTTP_200_OK)
-async def import_users_csv(
+def import_users_csv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -860,7 +854,9 @@ async def import_users_csv(
             detail="Le fichier doit être au format CSV (.csv)",
         )
 
-    content = await file.read()
+    # Sync handler (bcrypt hashing per row must stay off the event loop): the
+    # upload is already spooled by the time we run, so read it synchronously.
+    content = file.file.read()
     try:
         text_content = content.decode("utf-8-sig")  # gère le BOM UTF-8
     except UnicodeDecodeError:
@@ -925,9 +921,15 @@ async def import_users_csv(
             db.commit()
             db.refresh(new_user)
             results.append({"line": line_num, "username": username, "status": "created", "user_id": new_user.id})
-        except Exception as exc:
+        except SQLAlchemyError as exc:
+            # Per-row report: one rejected row (e.g. a race on a unique key)
+            # must not abort the rest of the import.
             db.rollback()
-            results.append({"line": line_num, "username": username, "status": "error", "detail": str(exc)})
+            logger.warning(
+                "user_import_row_failed",
+                extra={"extra_fields": {"line": line_num, "username": username, "error": str(exc)}},
+            )
+            results.append({"line": line_num, "username": username, "status": "error", "detail": "Erreur base de données"})
 
     created = sum(1 for r in results if r["status"] == "created")
     errors = sum(1 for r in results if r["status"] == "error")

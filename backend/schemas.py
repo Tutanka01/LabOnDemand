@@ -69,8 +69,9 @@ class SessionData(BaseModel):
 
 # Schéma pour la réponse de connexion
 class LoginResponse(BaseModel):
+    """Login payload. The session token travels only in the HttpOnly cookie."""
+
     user: UserResponse
-    session_id: str
 
 
 # ====== Templates ======

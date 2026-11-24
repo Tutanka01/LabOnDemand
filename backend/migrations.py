@@ -6,6 +6,7 @@ rollback propre en cas d'échec.
 
 import logging
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("labondemand.migrations")
@@ -263,6 +264,11 @@ def run_migrations(db: Session) -> None:
             db.execute(text(sql))
             db.commit()
             logger.debug("Migration '%s' applied (or already present)", name)
-        except Exception:
+        except SQLAlchemyError as exc:
+            # Expected on every start for ALTERs already applied ("duplicate column").
             db.rollback()
-            logger.debug("Migration '%s' skipped (already applied)", name)
+            logger.debug(
+                "Migration '%s' skipped (already applied?)",
+                name,
+                extra={"extra_fields": {"error": str(getattr(exc, "orig", exc))[:200]}},
+            )
