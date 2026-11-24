@@ -1,379 +1,131 @@
 import "../styles/main.css";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Cpu, Database, FolderTree, Gauge, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Boxes, Cpu, Database, Gauge, Plus, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
-import { LabCard } from "../components/LabCard";
-import { TemplateCard } from "../components/TemplateCard";
-import {
-  Button,
-  ConfirmDialog,
-  EmptyState,
-  ErrorState,
-  IconButton,
-  MetricCard,
-  ResourceMeter,
-  SearchBox,
-  Skeleton,
-  SkeletonCards,
-  SkeletonRows,
-  showToast,
-} from "../components/ui";
-import {
-  deleteDeployment,
-  deletePvc,
-  getDeploymentDetails,
-  getDeployments,
-  getPvcs,
-  getQuotas,
-  getTemplates,
-  setDeploymentLifecycle,
-} from "../lib/api";
-import { shortDate } from "../lib/format";
-import type { Deployment, PvcInfo, Template, User, VolumeTarget } from "../types/api";
-import { LaunchDialog } from "../components/dashboard/LaunchDialog";
+import { Button, MetricCard, showToast } from "../components/ui";
+import { CATALOG_ID, CATALOG_SEARCH_ID, CatalogPanel } from "../components/dashboard/CatalogPanel";
 import { DeploymentDetailsDialog } from "../components/dashboard/DeploymentDetailsDialog";
 import { K8sAdminPanel } from "../components/dashboard/K8sAdminPanel";
+import { LabsPanel } from "../components/dashboard/LabsPanel";
+import { LaunchDialog } from "../components/dashboard/LaunchDialog";
+import { NovncDialog } from "../components/dashboard/NovncDialog";
+import { QuotaPanel } from "../components/dashboard/QuotaPanel";
+import { VolumesPanel } from "../components/dashboard/VolumesPanel";
 import { VolumeBrowserDialog } from "../components/files/VolumeBrowserDialog";
+import { useDeployments } from "../hooks/useDeployments";
+import { getPvcs, getQuotas } from "../lib/api";
 import { useI18n } from "../lib/i18n";
+import type { Deployment, Template, User, VolumeTarget } from "../types/api";
+
+function scrollToCatalog() {
+  document.getElementById(CATALOG_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.getElementById(CATALOG_SEARCH_ID)?.focus({ preventScroll: true });
+}
 
 export default function DashboardPage() {
   const user = useOutletContext<User>();
-  const queryClient = useQueryClient();
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
+  const labsState = useDeployments();
+  // Shared with the panels through the query cache (no extra requests).
+  const quotas = useQuery({ queryKey: ["quotas"], queryFn: getQuotas });
+  const pvcs = useQuery({ queryKey: ["pvcs"], queryFn: getPvcs });
 
-  const [templateQuery, setTemplateQuery] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Deployment | null>(null);
   const [novncTarget, setNovncTarget] = useState<Deployment | null>(null);
   const [browseTarget, setBrowseTarget] = useState<{ target: VolumeTarget; title: string } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const deployments = useQuery({ queryKey: ["deployments"], queryFn: getDeployments });
-  const quotas = useQuery({ queryKey: ["quotas"], queryFn: getQuotas });
-  const pvcs = useQuery({ queryKey: ["pvcs"], queryFn: getPvcs });
-  const templates = useQuery({ queryKey: ["templates"], queryFn: getTemplates });
+  const isAdmin = user.role === "admin";
+  const student = user.role === "student";
+  const labs = labsState.labs;
+  const readyLabs = labs.filter((lab) => lab.phase === "ready").length;
+  const labsKnown = labsState.query.data !== undefined;
 
-  const invalidateDashboard = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["deployments"] }),
-      queryClient.invalidateQueries({ queryKey: ["quotas"] }),
-      queryClient.invalidateQueries({ queryKey: ["pvcs"] }),
-    ]);
+  const refreshAll = async () => {
+    setRefreshing(true);
+    try {
+      await labsState.refresh();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
-  const deleteMutation = useMutation({
-    mutationFn: (deployment: Deployment) => deleteDeployment(deployment.namespace, deployment.name),
-    onSuccess: () => {
-      invalidateDashboard();
-      showToast(locale === "fr" ? "Lab supprimé" : "Lab deleted", "success");
+  const metrics = [
+    { key: "active", label: t("labs.metric_active"), value: labsKnown ? labs.length : "–", icon: <Boxes size={18} aria-hidden="true" /> },
+    { key: "ready", label: t("labs.metric_ready"), value: labsKnown ? readyLabs : "–", icon: <Gauge size={18} aria-hidden="true" /> },
+    { key: "volumes", label: t("labs.metric_volumes"), value: pvcs.data ? pvcs.data.length : "–", icon: <Database size={18} aria-hidden="true" /> },
+    {
+      key: "remaining",
+      label: t("labs.metric_remaining"),
+      value: quotas.data?.remaining?.apps ?? "–",
+      icon: <Cpu size={18} aria-hidden="true" />,
     },
-  });
-
-  const lifecycleMutation = useMutation({
-    mutationFn: ({ deployment, action }: { deployment: Deployment; action: "pause" | "resume" }) =>
-      setDeploymentLifecycle(deployment.namespace, deployment.name, action),
-    onSuccess: (_data, variables) => {
-      invalidateDashboard();
-      showToast(
-        variables.action === "pause" 
-          ? (locale === "fr" ? "Lab mis en pause" : "Lab paused") 
-          : (locale === "fr" ? "Lab repris" : "Lab resumed"),
-        "success",
-      );
-    },
-  });
-
-  const deletePvcMutation = useMutation({
-    mutationFn: (pvc: PvcInfo) => deletePvc(pvc.name, Boolean(pvc.bound)),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["pvcs"] });
-      showToast(locale === "fr" ? "Volume supprimé" : "Volume deleted", "success");
-    },
-  });
-
-  const activeLabs = deployments.data || [];
-  const readyLabs = activeLabs.filter((lab) => (lab.ready_replicas || 0) > 0).length;
-  const pvcItems = pvcs.data || [];
-  const isAdmin = user.role === "admin";
-
-  const filteredTemplates = useMemo(() => {
-    const text = templateQuery.trim().toLowerCase();
-    return (templates.data || []).filter((item) => {
-      if (!text) return true;
-      return `${item.name} ${item.description || ""} ${(item.tags || []).join(" ")}`.toLowerCase().includes(text);
-    });
-  }, [templateQuery, templates.data]);
+  ];
 
   return (
     <>
       <PageHeader
         title={t("dashboard.title")}
-        subtitle={locale === "fr" ? "Lancez vos labs, retrouvez vos fichiers persistants et surveillez les quotas disponibles." : "Launch your labs, restore your persistent files, and monitor available resource quotas."}
+        subtitle={t("labs.page_subtitle")}
         actions={
           <>
-            <Button
-              variant="primary"
-              onClick={() => {
-                document.getElementById("lab-catalog")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-            >
-              <Plus size={16} />
+            <Button variant="primary" onClick={scrollToCatalog}>
+              <Plus size={16} aria-hidden="true" />
               {t("dashboard.create_lab")}
             </Button>
-            <Button onClick={() => void invalidateDashboard()}>
-              <RefreshCw size={16} />
-              {t("overview.refresh")}
+            <Button onClick={() => void refreshAll()} disabled={refreshing}>
+              <RefreshCw size={16} className={refreshing ? "animate-spin" : undefined} aria-hidden="true" />
+              {t("common.refresh")}
             </Button>
           </>
         }
       />
 
-      <section className="metric-grid">
-        {[
-          { label: locale === "fr" ? "Labs actifs" : "Active labs", value: activeLabs.length, icon: <Boxes size={18} /> },
-          { label: locale === "fr" ? "Labs prêts" : "Ready labs", value: readyLabs, icon: <Gauge size={18} /> },
-          { label: locale === "fr" ? "Volumes" : "Volumes", value: pvcItems.length, icon: <Database size={18} /> },
-          { label: locale === "fr" ? "Labs restants" : "Remaining labs", value: quotas.data?.remaining?.apps ?? "-", icon: <Cpu size={18} /> },
-        ].map((metric) => (
-          <MetricCard key={metric.label} label={metric.label} value={metric.value} icon={metric.icon} />
+      <section className="metric-grid" aria-label={t("labs.metrics_label")}>
+        {metrics.map((metric) => (
+          <MetricCard key={metric.key} label={metric.label} value={metric.value} icon={metric.icon} />
         ))}
       </section>
 
-      <section className="grid-2">
-        <div className="panel">
-          <div className="section-head">
-            <div className="flex items-center gap-2.5">
-              <h2>{locale === "fr" ? "Labs actifs" : "Active labs"}</h2>
-              {activeLabs.length ? <span className="badge">{activeLabs.length}</span> : null}
-            </div>
-          </div>
-          {deployments.isLoading ? <SkeletonCards count={3} lines={2} /> : null}
-          {deployments.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les labs." : "Unable to load labs."}</ErrorState> : null}
-          {!deployments.isLoading && !deployments.error && activeLabs.length === 0 ? (
-            <EmptyState title={t("dashboard.no_labs")}>
-              {locale === "fr" ? "Choisissez un template dans le catalogue pour démarrer votre premier environnement." : "Choose a template from the catalog to start your first environment."}
-            </EmptyState>
-          ) : null}
-          <div className="lab-list">
-            {activeLabs.map((deployment, index) => (
-              <LabCard
-                key={`${deployment.namespace}-${deployment.name}`}
-                index={index}
-                deployment={deployment}
-                onOpen={async (item) => {
-                  try {
-                    const details = await getDeploymentDetails(item.namespace, item.name);
-                    const firstUrl = details.access_urls?.find((access) => access.url)?.url;
-                    if (firstUrl) {
-                      window.open(firstUrl, "_blank", "noopener,noreferrer");
-                      return;
-                    }
-                    showToast(locale === "fr" ? "Aucune URL disponible pour ce lab pour le moment." : "No URL available for this lab at the moment.", "error");
-                  } catch {
-                    showToast(locale === "fr" ? "Impossible de récupérer l'URL du lab." : "Failed to retrieve lab URL.", "error");
-                  }
-                }}
-                onDetails={setDetailsTarget}
-                onDelete={(item) => deleteMutation.mutate(item)}
-                onLifecycle={(item, action) => lifecycleMutation.mutate({ deployment: item, action })}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="section-head">
-            <h2>{locale === "fr" ? "Vos ressources" : "Your resources"}</h2>
-            <Button onClick={() => void queryClient.invalidateQueries({ queryKey: ["quotas"] })}>
-              <RefreshCw size={16} /> {t("overview.refresh")}
-            </Button>
-          </div>
-          {quotas.isLoading ? (
-            <div className="grid gap-3.5" aria-busy="true">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="grid gap-2">
-                  <Skeleton className="h-3.5 w-1/3" />
-                  <Skeleton className="h-2 w-full rounded-full" />
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {quotas.error ? <ErrorState>{locale === "fr" ? "Quotas indisponibles." : "Quotas unavailable."}</ErrorState> : null}
-          {quotas.data ? (
-            <div className="grid gap-3.5">
-              <ResourceMeter label={locale === "fr" ? "Applications" : "Applications"} used={quotas.data.usage.apps_used} max={quotas.data.limits.max_apps} />
-              <ResourceMeter label="CPU" used={quotas.data.usage.cpu_m_used} max={quotas.data.limits.max_requests_cpu_m} unit="m" />
-              <ResourceMeter label={locale === "fr" ? "Mémoire" : "Memory"} used={quotas.data.usage.mem_mi_used} max={quotas.data.limits.max_requests_mem_mi} unit="Mi" />
-              {quotas.data.limits.max_storage_gi != null ? (
-                <ResourceMeter
-                  label={locale === "fr" ? "Stockage" : "Storage"}
-                  used={quotas.data.usage.storage_gi_used || 0}
-                  max={quotas.data.limits.max_storage_gi}
-                  unit="Gi"
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </section>
+      <div className="grid-2">
+        <LabsPanel labsState={labsState} onDetails={setDetailsTarget} onBrowseCatalog={scrollToCatalog} />
+        <QuotaPanel />
+      </div>
 
       <K8sAdminPanel admin={isAdmin} />
 
-      <section className="panel" id="lab-catalog">
-        <div className="section-head">
-          <div>
-            <h2>{locale === "fr" ? "Catalogue" : "Catalog"}</h2>
-            <p className="muted">
-              {locale === "fr" ? `Templates autorisés pour votre rôle ${user.role}.` : `Templates authorized for your role ${user.role}.`}
-            </p>
-          </div>
-          <SearchBox
-            placeholder={locale === "fr" ? "Rechercher un template..." : "Search template..."}
-            value={templateQuery}
-            onChange={(e) => setTemplateQuery(e.target.value)}
-          />
-        </div>
-        {templates.isLoading ? <SkeletonCards count={3} lines={2} /> : null}
-        {templates.error ? <ErrorState>{locale === "fr" ? "Impossible de charger le catalogue." : "Unable to load catalog."}</ErrorState> : null}
-        {!templates.isLoading && !templates.error && filteredTemplates.length === 0 ? (
-          <EmptyState title={locale === "fr" ? "Aucun template" : "No templates"}>
-            {templateQuery
-              ? (locale === "fr" ? "Aucun template ne correspond à la recherche." : "No template matches the search.")
-              : (locale === "fr" ? "Aucun template actif n'est disponible pour votre rôle." : "No active template is available for your role.")}
-          </EmptyState>
-        ) : null}
-        <div className="grid-3">
-          {filteredTemplates.map((template, index) => (
-            <TemplateCard
-              key={String(template.key || template.id || template.name)}
-              index={index}
-              template={template}
-              onSelect={setSelectedTemplate}
-            />
-          ))}
-        </div>
-      </section>
+      <CatalogPanel technical={!student} onSelect={setSelectedTemplate} />
 
-      <section className="panel">
-        <div className="section-head">
-          <h2>{locale === "fr" ? "Mes volumes persistants" : "My persistent volumes"}</h2>
-          <Button onClick={() => void queryClient.invalidateQueries({ queryKey: ["pvcs"] })}>
-            <RefreshCw size={16} /> {t("overview.refresh")}
-          </Button>
-        </div>
-        {pvcs.isLoading ? <SkeletonRows rows={4} cols={5} /> : null}
-        {pvcs.error ? <ErrorState>{locale === "fr" ? "Impossible de charger les volumes." : "Unable to load volumes."}</ErrorState> : null}
-        {!pvcs.isLoading && !pvcs.error && pvcItems.length === 0 ? (
-          <EmptyState title={locale === "fr" ? "Aucun volume" : "No volumes"}>
-            {locale === "fr" ? "Les volumes VS Code et Jupyter apparaîtront ici après création." : "VS Code and Jupyter volumes will appear here after creation."}
-          </EmptyState>
-        ) : null}
-        {pvcItems.length ? (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Volume</th>
-                  <th>{locale === "fr" ? "État" : "State"}</th>
-                  <th>{locale === "fr" ? "Capacité" : "Capacity"}</th>
-                  <th>StorageClass</th>
-                  {isAdmin ? <th>Namespace</th> : null}
-                  <th>{locale === "fr" ? "Accès" : "Access"}</th>
-                  <th>{locale === "fr" ? "Dernier lab" : "Last lab"}</th>
-                  <th>{locale === "fr" ? "Créé le" : "Created at"}</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pvcItems.map((pvc) => (
-                  <tr key={pvc.name}>
-                    <td>{pvc.name}</td>
-                    <td>
-                      <span className={pvc.bound ? "badge" : "badge blue"}>
-                        {pvc.bound
-                          ? (locale === "fr" ? "Attaché" : "Bound")
-                          : (locale === "fr" ? "Disponible" : "Available")}
-                      </span>
-                    </td>
-                    <td>{pvc.storage || "N/A"}</td>
-                    <td>{pvc.storage_class || "N/A"}</td>
-                    {isAdmin ? <td>{pvc.namespace || "N/A"}</td> : null}
-                    <td>{pvc.access_modes?.length ? pvc.access_modes.join(", ") : "N/A"}</td>
-                    <td>{pvc.last_bound_app || pvc.app_type || "N/A"}</td>
-                    <td>{shortDate(pvc.created_at)}</td>
-                    <td>
-                      <div className="flex justify-end gap-1">
-                        {pvc.namespace ? (
-                          <IconButton
-                            title={t("files.browse")}
-                            aria-label={t("files.browse")}
-                            onClick={() =>
-                              setBrowseTarget({
-                                target: { namespace: pvc.namespace!, pvc: pvc.name },
-                                title: pvc.name,
-                              })
-                            }
-                          >
-                            <FolderTree size={14} />
-                          </IconButton>
-                        ) : null}
-                        <ConfirmDialog
-                          destructive
-                          title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
-                          description={locale === "fr" ? `Supprimer ${pvc.name} ? Les données stockées dans ce volume seront perdues.` : `Delete ${pvc.name}? Data stored in this volume will be permanently lost.`}
-                          confirmLabel={t("common.delete")}
-                          trigger={
-                            <Button
-                              variant="danger"
-                              title={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
-                              aria-label={locale === "fr" ? "Supprimer le volume" : "Delete volume"}
-                            >
-                              <Trash2 size={14} />
-                            </Button>
-                          }
-                          onConfirm={() => deletePvcMutation.mutate(pvc)}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </section>
+      <VolumesPanel showNamespace={isAdmin} onBrowse={(target, title) => setBrowseTarget({ target, title })} />
 
       {selectedTemplate ? (
         <LaunchDialog
           template={selectedTemplate}
-          pvcs={pvcItems}
-          student={user.role === "student"}
+          pvcs={pvcs.data || []}
+          student={student}
+          existingNames={labs.map((lab) => lab.deployment.name)}
           onOpenChange={(open) => !open && setSelectedTemplate(null)}
-          onCreated={async (created, name) => {
+          onCreated={(created, name) => {
+            const type =
+              created.deployment_type ||
+              selectedTemplate.deployment_type ||
+              selectedTemplate.key ||
+              String(selectedTemplate.id || "custom");
             setSelectedTemplate(null);
-            await invalidateDashboard();
-            showToast(
-              locale === "fr"
-                ? `Déploiement de ${name} en cours. Le lab apparaîtra prêt dès que Kubernetes aura terminé.`
-                : `Deployment of ${name} in progress. The lab will appear ready as soon as Kubernetes finishes.`,
-              "info"
-            );
+            labsState.registerCreated({ name, namespace: created.namespace, type });
+            showToast(t("labs.created_toast", { name }), "info");
           }}
         />
       ) : null}
 
       {detailsTarget ? (
-        <DeploymentDetailsDialog
-          deployment={detailsTarget}
-          onClose={() => setDetailsTarget(null)}
-          onNovnc={setNovncTarget}
-        />
+        <DeploymentDetailsDialog deployment={detailsTarget} onClose={() => setDetailsTarget(null)} onNovnc={setNovncTarget} />
       ) : null}
 
-      {novncTarget ? (
-        <NovncDialog deployment={novncTarget} onClose={() => setNovncTarget(null)} />
-      ) : null}
+      {novncTarget ? <NovncDialog deployment={novncTarget} onClose={() => setNovncTarget(null)} /> : null}
 
       {browseTarget ? (
         <VolumeBrowserDialog
@@ -383,43 +135,5 @@ export default function DashboardPage() {
         />
       ) : null}
     </>
-  );
-}
-
-function NovncDialog({ deployment, onClose }: { deployment: Deployment; onClose: () => void }) {
-  const { locale } = useI18n();
-  const details = useQuery({
-    queryKey: ["deployment-details", deployment.namespace, deployment.name],
-    queryFn: () => getDeploymentDetails(deployment.namespace, deployment.name),
-    staleTime: 30_000,
-  });
-
-  const novncUrl = details.data?.novnc_endpoint;
-
-  return (
-    <div className="dialog-overlay z-[60]" onClick={onClose}>
-      <div
-        className="dialog-content panel flex h-[min(768px,calc(100vh-32px))] w-[min(1024px,calc(100vw-32px))] flex-col p-0"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="section-head border-b border-[var(--border)] px-4 py-3">
-          <h2>{deployment.name} — {locale === "fr" ? "Bureau NoVNC" : "NoVNC Desktop"}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Fermer">
-            <X size={17} />
-          </button>
-        </div>
-        {details.isLoading ? (
-          <div className="grid flex-1 place-items-center">
-            <span className="muted">{locale === "fr" ? "Chargement..." : "Loading..."}</span>
-          </div>
-        ) : novncUrl ? (
-          <iframe className="w-full flex-1 border-0" src={novncUrl} title="NoVNC" />
-        ) : (
-          <div className="grid flex-1 place-items-center">
-            <span className="muted">{locale === "fr" ? "NoVNC non disponible pour ce lab." : "NoVNC not available for this lab."}</span>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }

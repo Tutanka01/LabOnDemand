@@ -1,5 +1,29 @@
+export type FormatLocale = "fr" | "en";
+
+/** BCP 47 tag used with `Intl` for each UI locale. */
+const INTL_TAGS: Record<FormatLocale, string> = { fr: "fr-FR", en: "en-GB" };
+
+/**
+ * UI locale for callers that do not pass one: the `lang` attribute kept in sync
+ * by the i18n provider, French otherwise.
+ */
+export function currentLocale(): FormatLocale {
+  if (typeof document === "undefined") return "fr";
+  return document.documentElement.lang?.toLowerCase().startsWith("en") ? "en" : "fr";
+}
+
+function intlTag(locale?: FormatLocale): string {
+  return INTL_TAGS[locale ?? currentLocale()];
+}
+
+function parseDate(value?: string | number | null): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export function displayName(user?: { full_name?: string | null; username?: string | null }) {
-  return user?.full_name || user?.username || "Utilisateur";
+  return user?.full_name || user?.username || roleLabel(null);
 }
 
 export function initials(user?: { full_name?: string | null; username?: string | null }) {
@@ -9,7 +33,7 @@ export function initials(user?: { full_name?: string | null; username?: string |
   return name.slice(0, 2).toUpperCase();
 }
 
-export function roleLabel(role?: string | null, locale: "fr" | "en" = "fr") {
+export function roleLabel(role?: string | null, locale: FormatLocale = currentLocale()) {
   const labels = {
     fr: {
       admin: "Administrateur",
@@ -28,10 +52,10 @@ export function roleLabel(role?: string | null, locale: "fr" | "en" = "fr") {
   return labels[locale].user;
 }
 
-export function authProviderLabel(provider?: string | null) {
+export function authProviderLabel(provider?: string | null, locale: FormatLocale = currentLocale()) {
   if (provider === "oidc") return "SSO";
   if (provider === "local") return "Local";
-  return provider || "Inconnu";
+  return provider || (locale === "en" ? "Unknown" : "Inconnu");
 }
 
 export function pct(used?: number, max?: number) {
@@ -44,25 +68,16 @@ export function pctFloat(used?: number, max?: number) {
   return Math.max(0, Math.min(100, ((used || 0) / max) * 100));
 }
 
-export function shortDate(value?: string | null) {
-  if (!value) return "N/A";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "N/A";
-  return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+export function shortDate(value?: string | null, locale?: FormatLocale) {
+  const date = parseDate(value);
+  if (!date) return "N/A";
+  return date.toLocaleDateString(intlTag(locale), { day: "2-digit", month: "short", year: "numeric" });
 }
 
-export function fullDate(value?: string | null) {
-  if (!value) return "N/A";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "N/A";
-  return date.toLocaleString("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-export function dateTime(value?: number | null, locale: "fr" | "en" = "fr") {
-  if (!value) return "—";
-  const date = new Date(value * 1000);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(locale === "fr" ? "fr-FR" : "en-GB", {
+export function fullDate(value?: string | null, locale?: FormatLocale) {
+  const date = parseDate(value);
+  if (!date) return "N/A";
+  return date.toLocaleString(intlTag(locale), {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -71,29 +86,86 @@ export function dateTime(value?: number | null, locale: "fr" | "en" = "fr") {
   });
 }
 
-export function fileSize(bytes?: number | null, locale: "fr" | "en" = "fr") {
+/** Formats a UNIX timestamp in seconds. */
+export function dateTime(value?: number | null, locale?: FormatLocale) {
+  if (!value) return "—";
+  const date = parseDate(value * 1000);
+  if (!date) return "—";
+  return date.toLocaleString(intlTag(locale), {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+const BYTE_UNITS = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte"] as const;
+
+export function fileSize(bytes?: number | null, locale?: FormatLocale) {
   if (bytes === null || bytes === undefined) return "—";
-  const units = locale === "fr" ? ["o", "Ko", "Mo", "Go", "To"] : ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
   let index = 0;
-  while (value >= 1024 && index < units.length - 1) {
+  while (value >= 1024 && index < BYTE_UNITS.length - 1) {
     value /= 1024;
     index += 1;
   }
   const digits = index === 0 ? 0 : value < 10 ? 1 : 0;
-  return `${value.toLocaleString(locale === "fr" ? "fr-FR" : "en-GB", { maximumFractionDigits: digits })} ${units[index]}`;
+  return new Intl.NumberFormat(intlTag(locale), {
+    style: "unit",
+    unit: BYTE_UNITS[index],
+    unitDisplay: "short",
+    maximumFractionDigits: digits,
+  }).format(value);
 }
 
-export function ttl(value?: string | null) {
-  if (!value) return "Aucune expiration";
-  const diff = new Date(value).getTime() - Date.now();
-  if (diff <= 0) return "Expiré";
+/** "3 days", "1 hour"… in the given locale. */
+export function unitAmount(
+  amount: number,
+  unit: "day" | "hour" | "minute",
+  locale?: FormatLocale,
+  display: "long" | "short" | "narrow" = "long",
+) {
+  return new Intl.NumberFormat(intlTag(locale), { style: "unit", unit, unitDisplay: display }).format(amount);
+}
+
+/**
+ * Compact remaining time until `value` ("2 j 3 h" / "2d 3h"), or `null` when there is
+ * no expiry date or it has already passed.
+ */
+export function remainingTime(value?: string | null, locale?: FormatLocale): string | null {
+  const date = parseDate(value);
+  if (!date) return null;
+  const diff = date.getTime() - Date.now();
+  if (diff <= 0) return null;
   const minutes = Math.floor(diff / 60_000);
   const days = Math.floor(minutes / 1440);
   const hours = Math.floor((minutes % 1440) / 60);
-  if (days > 0) return `${days}j ${hours}h`;
-  if (hours > 0) return `${hours}h`;
-  return `${minutes}min`;
+  if (days > 0) {
+    return hours > 0
+      ? `${unitAmount(days, "day", locale, "narrow")} ${unitAmount(hours, "hour", locale, "narrow")}`
+      : unitAmount(days, "day", locale, "narrow");
+  }
+  if (hours > 0) return unitAmount(hours, "hour", locale, "narrow");
+  return unitAmount(Math.max(minutes, 1), "minute", locale, "narrow");
+}
+
+/** True when `value` is a date in the past. */
+export function isPast(value?: string | null): boolean {
+  const date = parseDate(value);
+  return Boolean(date && date.getTime() <= Date.now());
+}
+
+const TTL_LABELS: Record<FormatLocale, { none: string; expired: string }> = {
+  fr: { none: "Aucune expiration", expired: "Expiré" },
+  en: { none: "No expiry", expired: "Expired" },
+};
+
+/** Remaining lifetime of a lab, with a label when there is none or it has expired. */
+export function ttl(value?: string | null, locale?: FormatLocale) {
+  const labels = TTL_LABELS[locale ?? currentLocale()];
+  if (!value) return labels.none;
+  return remainingTime(value, locale) ?? labels.expired;
 }
 
 export function ttlPct(expiresAt?: string | null, createdDurationDays = 7) {
@@ -139,6 +211,39 @@ export function memoryDisplay(mi: number | string): string {
   return `${Math.round(v)} Mi`;
 }
 
+/** Kubernetes CPU quantity ("250m", "1") to millicores. */
+export function parseCpuMillicores(value?: string | null): number {
+  if (!value) return 0;
+  const milli = value.endsWith("m");
+  const numeric = Number(milli ? value.slice(0, -1) : value);
+  if (Number.isNaN(numeric)) return 0;
+  return milli ? numeric : numeric * 1000;
+}
+
+/** Kubernetes memory quantity ("256Mi", "1Gi") to MiB. */
+export function parseMemoryMi(value?: string | null): number {
+  if (!value) return 0;
+  const numeric = Number(value.replace(/[^\d.]/g, ""));
+  if (Number.isNaN(numeric)) return 0;
+  const lower = value.toLowerCase();
+  if (lower.endsWith("gi")) return numeric * 1024;
+  if (lower.endsWith("ki")) return numeric / 1024;
+  return numeric;
+}
+
+/** "0.25 vCPU" for a CPU quantity, formatted for the locale. */
+export function cpuLabel(value?: string | null, locale?: FormatLocale): string {
+  const cores = parseCpuMillicores(value) / 1000;
+  return `${new Intl.NumberFormat(intlTag(locale), { maximumFractionDigits: 2 }).format(cores)} vCPU`;
+}
+
+/** "512 MiB" / "1 GiB" for a memory quantity, formatted for the locale. */
+export function memoryLabel(value?: string | null, locale?: FormatLocale): string {
+  const mi = parseMemoryMi(value);
+  const number = new Intl.NumberFormat(intlTag(locale), { maximumFractionDigits: 1 });
+  return mi >= 1024 ? `${number.format(mi / 1024)} GiB` : `${number.format(mi)} MiB`;
+}
+
 export function defaultRuntime(deploymentType: string) {
   const defaults: Record<string, { image: string; port: number; target: number; serviceType: string }> = {
     jupyter: { image: "tutanka01/k8s:jupyter", port: 8888, target: 8888, serviceType: "NodePort" },
@@ -153,15 +258,14 @@ export function defaultRuntime(deploymentType: string) {
   return defaults[deploymentType] || defaults.custom;
 }
 
-export function presetLabel(preset?: string | null) {
-  const labels: Record<string, string> = {
-    "very-low": "Très bas",
-    low: "Bas",
-    medium: "Moyen",
-    high: "Élevé",
-    "very-high": "Très élevé",
-  };
-  return labels[preset || ""] || preset || "Moyen";
+const PRESET_LABELS: Record<FormatLocale, Record<string, string>> = {
+  fr: { "very-low": "Très bas", low: "Bas", medium: "Moyen", high: "Élevé", "very-high": "Très élevé" },
+  en: { "very-low": "Very low", low: "Low", medium: "Medium", high: "High", "very-high": "Very high" },
+};
+
+export function presetLabel(preset?: string | null, locale: FormatLocale = currentLocale()) {
+  const labels = PRESET_LABELS[locale];
+  return labels[preset || ""] || preset || labels.medium;
 }
 
 export function escapeHtml(str: string): string {

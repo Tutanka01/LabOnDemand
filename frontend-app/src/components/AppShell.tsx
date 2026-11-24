@@ -13,16 +13,20 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useState, useEffect, ReactNode, type FormEvent } from "react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { changePassword, getCurrentUser, logout, pingK8s, updateProfile } from "../lib/api";
+import { Suspense, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { apiFetch, changePassword, getCurrentUser, logout, updateProfile } from "../lib/api";
 import { displayName, initials, roleLabel } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { RuntimeIcon } from "../lib/icons";
+import { isAuthError, isClientError } from "../lib/query";
 import { useThemePreference } from "../lib/theme";
-import { Button, ErrorState, IconButton, LoadingState, SearchBox, showToast, ToastContainer } from "./ui";
+import type { Role, User } from "../types/api";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { RouteFallback } from "./RouteFallback";
+import { Button, ErrorState, IconButton, SearchBox, showToast, ToastContainer, TooltipProvider } from "./ui";
 
-const nav = [
+const nav: Array<{ to: string; labelKey: string; icon: typeof LayoutDashboard; roles: Role[] }> = [
   { to: "/", labelKey: "header.home", icon: LayoutDashboard, roles: ["student", "teacher", "admin"] },
   { to: "/labs", labelKey: "header.catalog", icon: Boxes, roles: ["student"] },
   { to: "/teacher", labelKey: "header.my_classes", icon: Users, roles: ["teacher", "admin"] },
@@ -30,73 +34,72 @@ const nav = [
   { to: "/admin-stats", labelKey: "header.stats", icon: BarChart3, roles: ["admin"] },
 ];
 
-const documentationHref = "documentation.html";
+const documentationHref = "/documentation.html";
+const STATUS_POLL_MS = 30_000;
+const SESSION_RETRY_MS = 5_000;
 
 function normalizeSearch(value: string) {
   return value
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .trim();
 }
 
-export function AppShellLayout({
-  requireRole,
-}: {
-  requireRole?: Array<"admin" | "teacher" | "student">;
-}) {
+export function AppShellLayout({ requireRole }: { requireRole?: Role[] }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
-
-  const userQuery = useQuery({ queryKey: ["me"], queryFn: getCurrentUser, retry: false });
   const { locale, setLocale, t } = useI18n();
   const { theme, setTheme } = useThemePreference();
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickNav, setQuickNav] = useState("");
 
-  // Status check (API and Kubernetes status dot)
-  const apiStatus = useQuery({
-    queryKey: ["status-api"],
-    queryFn: async () => {
-      try {
-        const res = await fetch("/api/v1/status");
-        return res.ok;
-      } catch {
-        return false;
-      }
-    },
-    refetchInterval: 30_000,
+  const userQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: getCurrentUser,
+    staleTime: 5 * 60_000,
+    // Auth refusals are final; network errors and 5xx keep being retried
+    // until the API is back, without ever logging the user out.
+    retry: (failureCount, error) => !isClientError(error) && failureCount < 2,
+    refetchInterval: (query) =>
+      query.state.status === "error" && !isAuthError(query.state.error) ? SESSION_RETRY_MS : false,
   });
-
-  const k8sStatus = useQuery({
-    queryKey: ["status-k8s"],
-    queryFn: pingK8s,
-    refetchInterval: 30_000,
-  });
-
-  useEffect(() => {
-    if (userQuery.data) sessionStorage.setItem("user", JSON.stringify(userQuery.data));
-  }, [userQuery.data]);
-
-  useEffect(() => {
-    if (userQuery.error) {
-      sessionStorage.removeItem("user");
-      navigate("/login");
-    }
-  }, [userQuery.error, navigate]);
-
-  useEffect(() => {
-    const user = userQuery.data;
-    if (user && requireRole && !requireRole.includes(user.role)) {
-      const roleSeparator = locale === "fr" ? " ou " : " or ";
-      navigate(`/access-denied?role=${encodeURIComponent(requireRole.map((role) => roleLabel(role, locale)).join(roleSeparator))}`);
-    }
-  }, [locale, requireRole, userQuery.data, navigate]);
-
-  if (!userQuery.data) return <LoadingState label={locale === "fr" ? "Vérification de la session" : "Checking session"} />;
-
   const user = userQuery.data;
+
+  // One lightweight probe drives the status pill: it answers only if the API
+  // is up, and its payload says whether Kubernetes is reachable. TanStack Query
+  // pauses refetchInterval while the tab is hidden.
+  const statusQuery = useQuery({
+    queryKey: ["shell-status"],
+    queryFn: () => apiFetch<{ k8s?: boolean }>("/api/v1/k8s/ping"),
+    enabled: Boolean(user),
+    refetchInterval: STATUS_POLL_MS,
+    staleTime: STATUS_POLL_MS,
+    retry: false,
+  });
+
+  const sessionLost = isAuthError(userQuery.error);
+  useEffect(() => {
+    if (!sessionLost) return;
+    queryClient.clear();
+    const next = `${location.pathname}${location.search}`;
+    navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
+    // Only react to the session being lost, not to later location changes.
+  }, [sessionLost]);
+
+  if (!user) {
+    if (userQuery.isError && !sessionLost) {
+      return <ServiceUnavailable retrying={userQuery.isFetching} onRetry={() => void userQuery.refetch()} />;
+    }
+    return <RouteFallback />;
+  }
+
+  if (requireRole && !requireRole.includes(user.role)) {
+    const roles = requireRole.map((role) => roleLabel(role, locale)).join(` ${t("common.or")} `);
+    return <Navigate to={`/access-denied?role=${encodeURIComponent(roles)}`} replace />;
+  }
+
   const allowedNav = nav.filter((item) => item.roles.includes(user.role));
 
   const handleQuickNav = (event: FormEvent<HTMLFormElement>) => {
@@ -104,154 +107,175 @@ export function AppShellLayout({
     const query = normalizeSearch(quickNav);
     if (!query) return;
 
-    const target = allowedNav.find((item) => {
-      const label = normalizeSearch(`${t(item.labelKey)} ${item.to}`);
-      return label.includes(query) || query.includes(label);
-    });
-
+    const target = allowedNav.find((item) => normalizeSearch(`${t(item.labelKey)} ${item.to}`).includes(query));
     if (target) {
       setQuickNav("");
       navigate(target.to);
       return;
     }
 
-    if (query.includes("doc") || query.includes("aide") || query.includes("help")) {
-      window.open(documentationHref, "_blank", "noopener,noreferrer");
+    const docTerms = normalizeSearch(`${t("shell.documentation")} doc help aide`);
+    if (docTerms.includes(query) || query.includes("doc")) {
       setQuickNav("");
+      window.open(documentationHref, "_blank", "noopener,noreferrer");
       return;
     }
 
-    showToast(
-      locale === "fr" ? "Aucune page ne correspond à cette recherche." : "No page matches this search.",
-      "info",
-    );
+    showToast(t("shell.quick_nav_no_match"), "info");
   };
 
-  // Connection status info
-  let statusText = t("header.status_ok");
-  let statusColor = "var(--success)";
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      showToast(t("shell.logout_failed"), "error");
+      return;
+    }
+    navigate("/login", { replace: true });
+    queryClient.clear();
+  };
 
-  if (!apiStatus.data) {
+  let statusText = t("shell.status_checking");
+  let statusColor = "var(--muted)";
+  if (statusQuery.isError && !isClientError(statusQuery.error)) {
     statusText = t("header.status_api_down");
     statusColor = "var(--danger)";
-  } else if (!k8sStatus.data) {
+  } else if (statusQuery.data?.k8s === false) {
     statusText = t("header.status_k8s_down");
     statusColor = "var(--warning)";
+  } else if (statusQuery.data?.k8s) {
+    statusText = t("header.status_ok");
+    statusColor = "var(--success)";
   }
 
   const isDark = theme === "dark";
+  const otherLocale = locale === "en" ? "fr" : "en";
+  const themeLabel = isDark ? t("shell.theme_to_light") : t("shell.theme_to_dark");
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <Link className="brand" to="/">
-          <span className="brand-mark">
-            <RuntimeIcon type="flask" />
-          </span>
-          <span>LabOnDemand</span>
-        </Link>
-        <nav className="nav" aria-label="Navigation principale">
-          {allowedNav.map((item) => {
-            const Icon = item.icon;
-            const active = location.pathname === item.to;
-            return (
-              <Link className={active ? "active" : ""} to={item.to} key={item.to} aria-current={active ? "page" : undefined}>
-                <Icon size={16} />
-                {t(item.labelKey)}
-              </Link>
-            );
-          })}
-        </nav>
-      </aside>
+    // Radix requires a Provider above every Tooltip.Root used by the pages.
+    <TooltipProvider>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <Link className="brand" to="/">
+            <span className="brand-mark">
+              <RuntimeIcon type="flask" />
+            </span>
+            <span>LabOnDemand</span>
+          </Link>
+          <nav className="nav" aria-label={t("shell.nav_label")}>
+            {allowedNav.map((item) => {
+              const Icon = item.icon;
+              const active = location.pathname === item.to || (item.to !== "/" && location.pathname.startsWith(`${item.to}/`));
+              return (
+                <Link className={active ? "active" : ""} to={item.to} key={item.to} aria-current={active ? "page" : undefined}>
+                  <Icon size={16} aria-hidden="true" />
+                  {t(item.labelKey)}
+                </Link>
+              );
+            })}
+          </nav>
+        </aside>
 
-      <main className="main flex min-h-screen flex-col">
-        <header className="topbar">
-          <div className="flex min-w-0 items-center gap-3">
-            <form className="quick-nav-form" onSubmit={handleQuickNav}>
-              <SearchBox
-                placeholder={t("header.quick_nav")}
-                value={quickNav}
-                onChange={(event) => setQuickNav(event.target.value)}
-              />
-            </form>
+        <main className="main flex min-h-screen flex-col">
+          <header className="topbar">
+            <div className="flex min-w-0 items-center gap-3">
+              <form className="quick-nav-form" role="search" onSubmit={handleQuickNav}>
+                <SearchBox
+                  placeholder={t("header.quick_nav")}
+                  value={quickNav}
+                  onChange={(event) => setQuickNav(event.target.value)}
+                />
+              </form>
 
-            <div className="status-pill" title={statusText}>
-              <span
-                className="h-2 w-2 flex-none rounded-full"
-                style={{ background: statusColor }}
-                aria-hidden="true"
-              />
-              <span>{statusText}</span>
+              <div className="status-pill" title={statusText} role="status">
+                <span className="h-2 w-2 flex-none rounded-full" style={{ background: statusColor }} aria-hidden="true" />
+                <span>{statusText}</span>
+              </div>
+            </div>
+
+            <div className="top-actions">
+              <a
+                className="icon-btn"
+                href={documentationHref}
+                target="_blank"
+                rel="noreferrer"
+                title={t("shell.documentation")}
+                aria-label={t("shell.documentation")}
+              >
+                <BookOpen size={16} aria-hidden="true" />
+              </a>
+              <IconButton title={themeLabel} aria-label={themeLabel} onClick={() => setTheme(isDark ? "light" : "dark")}>
+                {isDark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+              </IconButton>
+              <IconButton
+                title={t("shell.switch_language")}
+                aria-label={t("shell.switch_language")}
+                lang={otherLocale}
+                onClick={() => setLocale(otherLocale)}
+              >
+                <Globe2 size={16} aria-hidden="true" />
+              </IconButton>
+              <button
+                className="user-chip user-chip-btn"
+                id="username-display"
+                type="button"
+                title={t("shell.open_profile")}
+                onClick={() => setProfileOpen(true)}
+              >
+                <span
+                  className="grid h-7 w-7 flex-none place-items-center rounded-full text-[var(--text-xs)] font-semibold"
+                  style={{ background: "var(--primary)", color: "var(--primary-text)" }}
+                  aria-hidden="true"
+                >
+                  {initials(user)}
+                </span>
+                <span className="hidden flex-col items-start leading-tight sm:flex">
+                  <strong className="text-[var(--text-xs)] font-semibold text-[var(--text)]">{displayName(user)}</strong>
+                  <span className="text-[var(--text-xs)]">{roleLabel(user.role, locale)}</span>
+                </span>
+                <span className="sr-only sm:hidden">{displayName(user)}</span>
+              </button>
+              <IconButton id="logout-btn" title={t("header.logout")} aria-label={t("header.logout")} onClick={handleLogout}>
+                <LogOut size={16} aria-hidden="true" />
+              </IconButton>
+            </div>
+          </header>
+
+          <div className="content flex-1">
+            <div className="flex w-full flex-col gap-6">
+              <ErrorBoundary resetKey={location.pathname}>
+                <Suspense fallback={<RouteFallback />}>
+                  <Outlet context={user} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           </div>
+        </main>
 
-          <div className="top-actions">
-            <a className="icon-btn" href={documentationHref} target="_blank" rel="noreferrer" title="Documentation" aria-label="Documentation">
-              <BookOpen size={16} />
-            </a>
-            <IconButton
-              title={isDark ? (locale === "fr" ? "Activer le mode clair" : "Switch to light mode") : (locale === "fr" ? "Activer le mode sombre" : "Switch to dark mode")}
-              aria-label={isDark ? (locale === "fr" ? "Activer le mode clair" : "Switch to light mode") : (locale === "fr" ? "Activer le mode sombre" : "Switch to dark mode")}
-              onClick={() => setTheme(isDark ? "light" : "dark")}
-            >
-              {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            </IconButton>
-            <IconButton
-              title={locale === "fr" ? "Switch to English" : "Passer en Français"}
-              aria-label={locale === "fr" ? "Switch to English" : "Passer en Français"}
-              onClick={() => setLocale(locale === "fr" ? "en" : "fr")}
-            >
-              <Globe2 size={16} />
-            </IconButton>
-            <button className="user-chip user-chip-btn" id="username-display" onClick={() => setProfileOpen(true)}>
-              <span
-                className="grid h-7 w-7 flex-none place-items-center rounded-full text-[var(--text-xs)] font-semibold"
-                style={{ background: "var(--primary)", color: "var(--primary-text)" }}
-                aria-hidden="true"
-              >
-                {initials(user)}
-              </span>
-              <span className="hidden flex-col items-start leading-tight sm:flex">
-                <strong className="text-[var(--text-xs)] font-semibold text-[var(--text)]">{displayName(user)}</strong>
-                <span className="text-[var(--text-xs)]">{roleLabel(user.role, locale)}</span>
-              </span>
-            </button>
-            <IconButton
-              id="logout-btn"
-              title={t("header.logout")}
-              aria-label={t("header.logout")}
-              onClick={async () => {
-                try {
-                  await logout();
-                } finally {
-                  sessionStorage.removeItem("user");
-                  navigate("/login");
-                }
-              }}
-            >
-              <LogOut size={16} />
-            </IconButton>
-          </div>
-        </header>
+        <ProfileDialog
+          open={profileOpen}
+          user={user}
+          onOpenChange={setProfileOpen}
+          onUpdated={(updated) => queryClient.setQueryData(["me"], updated)}
+        />
+        <ToastContainer />
+      </div>
+    </TooltipProvider>
+  );
+}
 
-        <div className="content flex-1">
-          <div className="flex w-full flex-col gap-6">
-            <Outlet context={user} />
-          </div>
-        </div>
-      </main>
-
-      <ProfileDialog
-        open={profileOpen}
-        user={user}
-        onOpenChange={setProfileOpen}
-        onUpdated={(updated) => {
-          queryClient.setQueryData(["me"], updated);
-          sessionStorage.setItem("user", JSON.stringify(updated));
-        }}
-      />
-      <ToastContainer />
-    </div>
+/** Shown instead of the app while /auth/me fails for a reason other than authentication. */
+function ServiceUnavailable({ retrying, onRetry }: { retrying: boolean; onRetry: () => void }) {
+  const { t } = useI18n();
+  return (
+    <main className="grid min-h-screen place-items-center p-6">
+      <div className="max-w-md">
+        <ErrorState title={t("shell.unavailable.title")} onRetry={onRetry} retrying={retrying}>
+          {t("shell.unavailable.body")}
+        </ErrorState>
+      </div>
+    </main>
   );
 }
 
@@ -262,9 +286,9 @@ function ProfileDialog({
   onUpdated,
 }: {
   open: boolean;
-  user: Awaited<ReturnType<typeof getCurrentUser>>;
+  user: User;
   onOpenChange: (open: boolean) => void;
-  onUpdated: (user: Awaited<ReturnType<typeof getCurrentUser>>) => void;
+  onUpdated: (user: User) => void;
 }) {
   const { locale, t } = useI18n();
   const [fullName, setFullName] = useState(user.full_name || "");
@@ -272,20 +296,11 @@ function ProfileDialog({
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
 
-  useEffect(() => {
-    if (open) {
-      setFullName(user.full_name || "");
-      setEmail(user.email || "");
-      setOldPassword("");
-      setNewPassword("");
-    }
-  }, [open, user.email, user.full_name]);
-
   const profileMut = useMutation({
     mutationFn: () => updateProfile({ full_name: fullName, email }),
     onSuccess: (updated) => {
       onUpdated(updated);
-      showToast(locale === "fr" ? "Profil mis à jour" : "Profile updated", "success");
+      showToast(t("shell.profile.updated"), "success");
     },
   });
   const passwordMut = useMutation({
@@ -293,9 +308,22 @@ function ProfileDialog({
     onSuccess: () => {
       setOldPassword("");
       setNewPassword("");
-      showToast(locale === "fr" ? "Mot de passe modifié" : "Password changed", "success");
+      showToast(t("shell.profile.password_changed"), "success");
     },
   });
+
+  // Start from the current profile each time the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    setFullName(user.full_name || "");
+    setEmail(user.email || "");
+    setOldPassword("");
+    setNewPassword("");
+    profileMut.reset();
+    passwordMut.reset();
+  }, [open, user.email, user.full_name]);
+
+  const isSso = user.auth_provider === "oidc";
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -304,35 +332,43 @@ function ProfileDialog({
         <Dialog.Content className="dialog-content panel" aria-describedby={undefined}>
           <div className="section-head">
             <Dialog.Title asChild>
-              <h2>{t("profileTitle") || "Mon profil"}</h2>
+              <h2>{t("profileTitle")}</h2>
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton aria-label="Fermer"><X size={17} /></IconButton>
+              <IconButton aria-label={t("common.close")} title={t("common.close")}>
+                <X size={17} aria-hidden="true" />
+              </IconButton>
             </Dialog.Close>
           </div>
 
-          <div className="form-grid">
+          <form
+            className="form-grid"
+            onSubmit={(e) => {
+              e.preventDefault();
+              profileMut.mutate();
+            }}
+          >
             <div className="field">
-              <label htmlFor="profile-name">{locale === "fr" ? "Nom complet" : "Full name"}</label>
-              <input id="profile-name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+              <label htmlFor="profile-name">{t("shell.profile.full_name")}</label>
+              <input id="profile-name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="profile-email">Email</label>
-              <input id="profile-email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <label htmlFor="profile-email">{t("shell.profile.email")}</label>
+              <input id="profile-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
             <div className="field full">
               <span className="badge">{roleLabel(user.role, locale)}</span>
-              {user.auth_provider === "oidc" ? <span className="muted">{locale === "fr" ? "Compte géré par SSO." : "Account managed by SSO."}</span> : null}
+              {isSso ? <span className="muted">{t("shell.profile.sso_managed")}</span> : null}
             </div>
-            {profileMut.error ? <ErrorState>{profileMut.error.message}</ErrorState> : null}
+            {profileMut.error ? <ErrorState title={t("common.error")}>{profileMut.error.message}</ErrorState> : null}
             <div className="actions-row field full justify-end">
-              <Button onClick={() => profileMut.mutate()} disabled={profileMut.isPending} variant="primary">
-                {profileMut.isPending ? (locale === "fr" ? "Enregistrement..." : "Saving...") : (t("common.save") || "Enregistrer")}
+              <Button type="submit" disabled={profileMut.isPending} variant="primary">
+                {profileMut.isPending ? t("shell.profile.saving") : t("common.save")}
               </Button>
             </div>
-          </div>
+          </form>
 
-          {user.auth_provider !== "oidc" ? (
+          {isSso ? null : (
             <form
               className="form-grid mt-4 border-t border-[var(--border)] pt-4"
               onSubmit={(e) => {
@@ -340,23 +376,41 @@ function ProfileDialog({
                 passwordMut.mutate();
               }}
             >
-              <h3 className="field full">{t("changePassword") || "Changer le mot de passe"}</h3>
+              <h3 className="field full">{t("changePassword")}</h3>
+              {/* Lets password managers associate the new password with this account. */}
+              <input type="text" className="sr-only" autoComplete="username" value={user.username} readOnly tabIndex={-1} aria-hidden="true" />
               <div className="field">
-                <label htmlFor="old-password">{locale === "fr" ? "Mot de passe actuel" : "Current password"}</label>
-                <input id="old-password" type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} />
+                <label htmlFor="old-password">{t("shell.profile.current_password")}</label>
+                <input
+                  id="old-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={oldPassword}
+                  onChange={(e) => setOldPassword(e.target.value)}
+                />
               </div>
               <div className="field">
-                <label htmlFor="new-password">{locale === "fr" ? "Nouveau mot de passe" : "New password"}</label>
-                <input id="new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                <label htmlFor="new-password">{t("shell.profile.new_password")}</label>
+                <input
+                  id="new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  aria-describedby="new-password-hint"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
               </div>
-              {passwordMut.error ? <ErrorState>{passwordMut.error.message}</ErrorState> : null}
+              <p id="new-password-hint" className="field full muted text-[var(--text-xs)]">
+                {t("shell.profile.password_hint")}
+              </p>
+              {passwordMut.error ? <ErrorState title={t("common.error")}>{passwordMut.error.message}</ErrorState> : null}
               <div className="actions-row field full justify-end">
                 <Button type="submit" disabled={passwordMut.isPending || !oldPassword || !newPassword}>
-                  {passwordMut.isPending ? (locale === "fr" ? "Modification..." : "Changing...") : (t("changePassword") || "Changer le mot de passe")}
+                  {passwordMut.isPending ? t("shell.profile.changing_password") : t("changePassword")}
                 </Button>
               </div>
             </form>
-          ) : null}
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

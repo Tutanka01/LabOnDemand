@@ -1,31 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, FlaskConical, PlayCircle } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, FlaskConical, PlayCircle } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
-import {
-  Badge,
-  Button,
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  ModalShell,
-  SkeletonRows,
-  showToast,
-} from "../components/ui";
+import { Badge, Button, EmptyState, errorMessage, QueryState, showToast, SkeletonRows } from "../components/ui";
+import { type ColumnDef, DataTable } from "../components/DataTable";
 import { GradingResultList, RunSummary, RunVerdictBadge } from "../components/GradingResults";
-import {
-  getAssignmentSubmissions,
-  getDeploymentDetails,
-  getGradingRunTeacher,
-  getSubmissionDetail,
-  gradeSubmission,
-  runTestsAll,
-  testNow,
-} from "../lib/api";
+import { CorrectionDialog } from "../components/teacher/CorrectionDialog";
+import { getAssignmentSubmissions, getGradingRunTeacher, runTestsAll, testNow } from "../lib/api";
 import { fullDate } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import type { GradingRun, TeacherSubmissionRow } from "../types/api";
+
+/** Sort rank so that work to correct comes first when sorting by status. */
+function statusRank(row: TeacherSubmissionRow): number {
+  if (row.submission_status === "submitted") return row.is_late ? 1 : 0;
+  if (row.submission_status === "graded") return 2;
+  return 3;
+}
 
 function StatusCell({ row }: { row: TeacherSubmissionRow }) {
   const { t } = useI18n();
@@ -53,7 +45,7 @@ export default function TeacherSubmissionsPage() {
     queryKey: ["assignment-submissions", classroomId, assignmentId],
     queryFn: () => getAssignmentSubmissions(classroomId, assignmentId),
     enabled: Number.isFinite(classroomId) && Number.isFinite(assignmentId),
-    // Tant que des tests tournent, on rafraîchit pour faire vivre la colonne verdict.
+    // While tests run, poll so the verdict column updates.
     refetchInterval: (query) => {
       const data = query.state.data as TeacherSubmissionRow[] | undefined;
       const running = data?.some((r) => r.grading_status === "queued" || r.grading_status === "running");
@@ -61,7 +53,7 @@ export default function TeacherSubmissionsPage() {
     },
   });
 
-  // Run de démo du prof (« Tester maintenant »).
+  // Teacher's demo run ("Test now").
   const demoRun = useQuery({
     queryKey: ["teacher-grading-run", classroomId, assignmentId, demoRunId],
     queryFn: () => getGradingRunTeacher(classroomId, assignmentId, demoRunId as number),
@@ -78,7 +70,7 @@ export default function TeacherSubmissionsPage() {
       setDemoRunId(run.id);
       queryClient.setQueryData(["teacher-grading-run", classroomId, assignmentId, run.id], run);
     },
-    onError: (e) => showToast((e as Error).message, "error"),
+    onError: (e) => showToast(errorMessage(e, t("probe.run_failed")), "error"),
   });
 
   const runAllMut = useMutation({
@@ -87,26 +79,101 @@ export default function TeacherSubmissionsPage() {
       showToast(t("probe.run_all_done", { n: res.queued }), "success");
       queryClient.invalidateQueries({ queryKey: ["assignment-submissions", classroomId, assignmentId] });
     },
-    onError: (e) => showToast((e as Error).message, "error"),
+    onError: (e) => showToast(errorMessage(e, t("probe.run_failed")), "error"),
   });
 
   const demoActive = demoRun.data?.status === "queued" || demoRun.data?.status === "running" || testNowMut.isPending;
+
+  const columns = useMemo<ColumnDef<TeacherSubmissionRow>[]>(
+    () => [
+      {
+        id: "student",
+        header: t("correction.student"),
+        accessorFn: (row) => row.username,
+        cell: ({ row }) => (
+          <>
+            <strong>{row.original.username}</strong>
+            {row.original.email ? <div className="muted text-sm">{row.original.email}</div> : null}
+          </>
+        ),
+      },
+      {
+        id: "status",
+        header: t("submission.status"),
+        accessorFn: statusRank,
+        cell: ({ row }) => <StatusCell row={row.original} />,
+      },
+      {
+        id: "verdict",
+        header: t("probe.verdict_label"),
+        enableSorting: false,
+        cell: ({ row }) => {
+          const r = row.original;
+          return (
+            <RunVerdictBadge
+              run={
+                r.grading_status
+                  ? { status: r.grading_status, passed_checks: r.grading_passed ?? null, total_checks: r.grading_total ?? null }
+                  : null
+              }
+            />
+          );
+        },
+      },
+      {
+        id: "submitted",
+        header: t("submission.submitted_at"),
+        accessorFn: (row) => row.submitted_at ?? "",
+        cell: ({ row }) => <span className="muted">{row.original.submitted_at ? fullDate(row.original.submitted_at) : "—"}</span>,
+      },
+      {
+        id: "grade",
+        header: t("submission.grade"),
+        accessorFn: (row) => row.grade ?? "",
+        cell: ({ row }) =>
+          row.original.grade ? (
+            <span style={{ fontFamily: "var(--font-display)", fontWeight: 700 }}>{row.original.grade}</span>
+          ) : (
+            <span className="muted">—</span>
+          ),
+      },
+      {
+        id: "actions",
+        header: t("dashboard.actions"),
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.submission_id ? (
+            <Button
+              onClick={() => setOpenSid(row.original.submission_id!)}
+              aria-label={t("teacher.grade_student", { name: row.original.username })}
+            >
+              {t("correction.grade")}
+            </Button>
+          ) : (
+            <span className="muted text-sm">{t("correction.nothing_to_grade")}</span>
+          ),
+      },
+    ],
+    [t],
+  );
+
+  const items = rows.data || [];
 
   return (
     <>
       <div>
         <Link to="/teacher" className="muted inline-flex items-center gap-1 text-sm no-underline">
-          <ArrowLeft size={15} /> {t("correction.back")}
+          <ArrowLeft size={15} aria-hidden="true" /> {t("correction.back")}
         </Link>
       </div>
       <PageHeader title={t("correction.title")} subtitle={t("correction.subtitle")} />
 
       <div className="actions-row justify-end mb-3 gap-2">
-        <Button onClick={() => testNowMut.mutate()} disabled={demoActive}>
-          <FlaskConical size={16} /> {demoActive ? t("probe.running") : t("probe.test_now")}
+        <Button onClick={() => testNowMut.mutate()} disabled={demoActive} title={t("probe.test_now_hint")}>
+          <FlaskConical size={16} aria-hidden="true" /> {demoActive ? t("probe.running") : t("probe.test_now")}
         </Button>
         <Button variant="primary" onClick={() => runAllMut.mutate()} disabled={runAllMut.isPending}>
-          <PlayCircle size={16} /> {runAllMut.isPending ? t("probe.run_all_pending") : t("probe.run_all")}
+          <PlayCircle size={16} aria-hidden="true" /> {runAllMut.isPending ? t("probe.run_all_pending") : t("probe.run_all")}
         </Button>
       </div>
 
@@ -114,7 +181,7 @@ export default function TeacherSubmissionsPage() {
         <section className="panel tests-panel mb-3">
           <div className="section-head">
             <h2 className="inline-flex items-center gap-2 text-base">
-              <FlaskConical size={16} /> {t("probe.test_now")}
+              <FlaskConical size={16} aria-hidden="true" /> {t("probe.test_now")}
             </h2>
             <RunSummary run={demoRun.data} />
           </div>
@@ -122,73 +189,26 @@ export default function TeacherSubmissionsPage() {
         </section>
       ) : null}
 
-      {rows.isLoading ? (
+      <QueryState
+        query={rows}
+        skeleton={
+          <section className="panel">
+            <SkeletonRows rows={6} cols={6} />
+          </section>
+        }
+        errorTitle={t("teacher.error_submissions")}
+        isEmpty={items.length === 0}
+        empty={<EmptyState title={t("correction.empty")}>{t("teacher.submissions_empty_hint")}</EmptyState>}
+      >
         <section className="panel">
-          <SkeletonRows rows={6} cols={6} />
+          <DataTable
+            data={items}
+            columns={columns}
+            getRowId={(row) => String(row.user_id)}
+            label={t("correction.title")}
+          />
         </section>
-      ) : null}
-      {rows.error ? <ErrorState>{(rows.error as Error).message}</ErrorState> : null}
-      {!rows.isLoading && !rows.error && (rows.data?.length || 0) === 0 ? (
-        <EmptyState title={t("correction.empty")} />
-      ) : null}
-
-      {rows.data && rows.data.length > 0 ? (
-        <section className="panel">
-          <table className="data-table w-full">
-            <thead>
-              <tr>
-                <th>{t("correction.student")}</th>
-                <th>{t("submission.status")}</th>
-                <th>{t("probe.verdict_label")}</th>
-                <th>{t("submission.submitted_at")}</th>
-                <th>{t("submission.grade")}</th>
-                <th>{t("dashboard.actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.data.map((row) => (
-                <tr key={row.user_id}>
-                  <td>
-                    <strong>{row.username}</strong>
-                    {row.email ? <div className="muted text-sm">{row.email}</div> : null}
-                  </td>
-                  <td><StatusCell row={row} /></td>
-                  <td>
-                    <RunVerdictBadge
-                      run={
-                        row.grading_status
-                          ? {
-                              status: row.grading_status,
-                              passed_checks: row.grading_passed ?? null,
-                              total_checks: row.grading_total ?? null,
-                            }
-                          : null
-                      }
-                    />
-                  </td>
-                  <td className="muted">{row.submitted_at ? fullDate(row.submitted_at) : "—"}</td>
-                  <td>
-                    {row.grade ? (
-                      <span style={{ fontFamily: "var(--font-display)", fontWeight: 700 }}>
-                        {row.grade}
-                      </span>
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
-                  <td>
-                    {row.submission_id ? (
-                      <Button onClick={() => setOpenSid(row.submission_id!)}>{t("correction.grade")}</Button>
-                    ) : (
-                      <span className="muted text-sm">{t("correction.nothing_to_grade")}</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ) : null}
+      </QueryState>
 
       {openSid !== null ? (
         <CorrectionDialog
@@ -203,155 +223,5 @@ export default function TeacherSubmissionsPage() {
         />
       ) : null}
     </>
-  );
-}
-
-function CorrectionDialog({
-  classroomId,
-  assignmentId,
-  submissionId,
-  onClose,
-  onGraded,
-}: {
-  classroomId: number;
-  assignmentId: number;
-  submissionId: number;
-  onClose: () => void;
-  onGraded: () => void;
-}) {
-  const { t } = useI18n();
-  const [grade, setGrade] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [opening, setOpening] = useState(false);
-
-  const sub = useQuery({
-    queryKey: ["submission-detail", classroomId, assignmentId, submissionId],
-    queryFn: () => getSubmissionDetail(classroomId, assignmentId, submissionId),
-  });
-
-  // Pré-remplir avec la correction existante.
-  const data = sub.data;
-  if (data && grade === "" && feedback === "" && (data.grade || data.feedback)) {
-    if (data.grade) setGrade(data.grade);
-    if (data.feedback) setFeedback(data.feedback);
-  }
-  // À défaut de note existante, proposer la suggestion pondérée des tests (modifiable).
-  if (data && grade === "" && !data.grade && data.grading_run?.score_suggestion) {
-    setGrade(data.grading_run.score_suggestion);
-  }
-
-  const gradeMut = useMutation({
-    mutationFn: () =>
-      gradeSubmission(classroomId, assignmentId, submissionId, {
-        grade: grade.trim() || undefined,
-        feedback: feedback.trim() || undefined,
-      }),
-    onSuccess: () => {
-      showToast(t("correction.graded_ok"), "success");
-      onGraded();
-    },
-    onError: (e) => showToast((e as Error).message, "error"),
-  });
-
-  async function openStudentLab() {
-    const snap = data?.lab_snapshot as { name?: string; namespace?: string } | null | undefined;
-    if (!snap?.name || !snap?.namespace) {
-      showToast(t("correction.lab_gone"), "info");
-      return;
-    }
-    setOpening(true);
-    try {
-      const d = await getDeploymentDetails(snap.namespace, snap.name);
-      const url = d.access_urls?.find((a) => a.url)?.url;
-      if (url) window.open(url, "_blank", "noopener,noreferrer");
-      else showToast(t("correction.lab_gone"), "info");
-    } catch {
-      showToast(t("correction.lab_gone"), "info");
-    } finally {
-      setOpening(false);
-    }
-  }
-
-  return (
-    <ModalShell open onOpenChange={(o) => (!o ? onClose() : undefined)} title={t("correction.dialog_title")} wide>
-      {sub.isLoading ? <LoadingState label={t("common.loading")} /> : null}
-      {sub.error ? <ErrorState>{(sub.error as Error).message}</ErrorState> : null}
-      {data ? (
-        <div className="flex flex-col gap-4">
-          {/* Rendu de l'étudiant */}
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="m-0">{t("correction.submitted_work")}</h3>
-              {data.is_late ? <Badge tone="amber">{t("myassignments.status_late")}</Badge> : null}
-            </div>
-            {data.text ? (
-              <p
-                className="whitespace-pre-wrap leading-relaxed mt-2"
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: "var(--radius)",
-                  background: "var(--surface-muted)",
-                  border: "1px solid var(--border)",
-                }}
-              >
-                {data.text}
-              </p>
-            ) : (
-              <p className="muted mt-2">{t("correction.no_text")}</p>
-            )}
-            {data.links && data.links.length > 0 ? (
-              <ul className="mt-2 flex flex-col gap-1">
-                {data.links.map((l, i) => (
-                  <li key={i}>
-                    <a href={l.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1">
-                      {l.label || l.url} <ExternalLink size={13} />
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-
-          {/* Snapshot lab */}
-          <div className="flex items-center gap-3">
-            <Button onClick={openStudentLab} disabled={opening}>
-              <ExternalLink size={16} /> {opening ? t("submission.opening") : t("correction.open_student_lab")}
-            </Button>
-            <span className="muted text-sm">{t("correction.lab_hint")}</span>
-          </div>
-
-          {/* Résultats des tests automatiques */}
-          {data.grading_run ? (
-            <div className="border-t border-[var(--border)] pt-4">
-              <h3 className="inline-flex items-center gap-2">
-                <FlaskConical size={16} /> {t("probe.results")}
-              </h3>
-              <div className="mt-2 mb-3">
-                <RunSummary run={data.grading_run} />
-              </div>
-              <GradingResultList run={data.grading_run} />
-            </div>
-          ) : null}
-
-          {/* Correction */}
-          <div className="border-t border-[var(--border)] pt-4 flex flex-col gap-3">
-            <div className="field">
-              <label>{t("submission.grade")}</label>
-              <input value={grade} onChange={(e) => setGrade(e.target.value)} placeholder="15/20" />
-            </div>
-            <div className="field full">
-              <label>{t("submission.feedback")}</label>
-              <textarea rows={5} value={feedback} onChange={(e) => setFeedback(e.target.value)} />
-            </div>
-            <div className="actions-row justify-end">
-              <Button onClick={onClose}>{t("common.cancel")}</Button>
-              <Button variant="primary" disabled={gradeMut.isPending} onClick={() => gradeMut.mutate()}>
-                {gradeMut.isPending ? t("correction.grading") : t("correction.publish")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </ModalShell>
   );
 }

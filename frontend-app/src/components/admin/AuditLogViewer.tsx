@@ -1,58 +1,82 @@
-import { useQuery } from "@tanstack/react-query";
-import { Activity, Download, Eye, Gauge, Layers, RefreshCw } from "lucide-react";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { Activity, Download, Eye, Gauge, Layers, RotateCcw } from "lucide-react";
 import { useState } from "react";
+import { useDebounce } from "../../hooks";
 import type { AuditLogEntry } from "../../types/api";
 import { exportAuditLogs, getAuditLogs, getAuditLogStats } from "../../lib/api";
 import { fullDate } from "../../lib/format";
-import { Button, EmptyState, ErrorState, MetricCard, Pagination, SearchBox, SkeletonRows, showToast } from "../ui";
+import { useI18n } from "../../lib/i18n";
+import {
+  Button,
+  EmptyState,
+  errorMessage,
+  MetricCard,
+  ModalShell,
+  Pagination,
+  QueryState,
+  SearchBox,
+  showToast,
+  SkeletonRows,
+} from "../ui";
 
+type Filters = {
+  search: string;
+  event: string;
+  category: string;
+  level: string;
+  username: string;
+  dateFrom: string;
+  dateTo: string;
+};
+
+const EMPTY_FILTERS: Filters = { search: "", event: "", category: "", level: "", username: "", dateFrom: "", dateTo: "" };
+
+const PAGE_SIZES = [25, 50, 100];
+
+function LevelBadge({ level }: { level?: string }) {
+  const upper = (level || "").toUpperCase();
+  const tone = upper === "ERROR" ? " red" : upper === "WARNING" ? " amber" : upper === "INFO" ? " blue" : "";
+  return <span className={`badge${tone}`}>{level}</span>;
+}
+
+const entryTitle = (entry: AuditLogEntry) => entry.event_label || entry.event || entry.message || "audit";
+
+/** Audit log: activity summary, filters, paginated table, JSON export and entry details. */
 export function AuditLogViewer() {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
-  const [event, setEvent] = useState("");
-  const [category, setCategory] = useState("");
-  const [level, setLevel] = useState("");
-  const [username, setUsername] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [pageSize, setPageSize] = useState(50);
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
+  // Text inputs are debounced so typing does not fire one request per keystroke.
+  const debounced = useDebounce(filters, 300);
 
-  const stats = useQuery({
-    queryKey: ["audit-stats"],
-    queryFn: getAuditLogStats,
-    staleTime: 60_000,
-  });
+  const setFilter = (key: keyof Filters, value: string) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+    setPage(1);
+  };
+
+  const apiFilters = {
+    search: debounced.search || undefined,
+    event: debounced.event || undefined,
+    category: debounced.category || undefined,
+    level: debounced.level || undefined,
+    username: debounced.username || undefined,
+    date_from: debounced.dateFrom || undefined,
+    date_to: debounced.dateTo || undefined,
+  };
+
+  const stats = useQuery({ queryKey: ["audit-stats"], queryFn: getAuditLogStats, staleTime: 60_000 });
 
   const logs = useQuery({
-    queryKey: ["audit-logs", { page, pageSize, search, event, category, level, username, dateFrom, dateTo }],
-    queryFn: () =>
-      getAuditLogs({
-        page,
-        page_size: pageSize,
-        search: search || undefined,
-        event: event || undefined,
-        category: category || undefined,
-        level: level || undefined,
-        username: username || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      }),
+    queryKey: ["audit-logs", { page, pageSize, ...debounced }],
+    queryFn: () => getAuditLogs({ page, page_size: pageSize, ...apiFilters }),
+    placeholderData: keepPreviousData,
   });
 
-  const totalPages = logs.data?.total ? Math.ceil(logs.data.total / pageSize) : 1;
-
-  const handleExport = async () => {
-    try {
-      const data = await exportAuditLogs({
-        search: search || undefined,
-        event: event || undefined,
-        category: category || undefined,
-        level: level || undefined,
-        username: username || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      });
+  const exportMut = useMutation({
+    mutationFn: () => exportAuditLogs(apiFilters),
+    onSuccess: (data) => {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -60,60 +84,51 @@ export function AuditLogViewer() {
       a.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast("Export termine", "success");
-    } catch {
-      showToast("Erreur d'export", "error");
-    }
-  };
+      showToast(t("admin.audit_export_done"), "success");
+    },
+    onError: (error) => showToast(errorMessage(error, t("admin.audit_export_failed")), "error"),
+  });
 
-  const levelBadge = (l?: string) => {
-    if (l === "ERROR" || l === "error") return <span className="badge red">{l}</span>;
-    if (l === "WARNING" || l === "warning") return <span className="badge amber">{l}</span>;
-    if (l === "INFO" || l === "info") return <span className="badge blue">{l}</span>;
-    return <span className="badge">{l}</span>;
-  };
+  const totalPages = logs.data?.total ? Math.ceil(logs.data.total / pageSize) : 1;
+  const items = logs.data?.items || [];
+  const filtersActive = Object.values(filters).some(Boolean);
+  const last7 = stats.data?.last_7_days;
+  const last7Total = last7 ? Object.values(last7).reduce((a, b) => a + b, 0) : 0;
+  const last7Max = last7 ? Math.max(1, ...Object.values(last7)) : 1;
 
   return (
     <div className="grid gap-5">
       {stats.data ? (
         <section className="metric-grid">
-          <MetricCard label="Total" value={stats.data.total || 0} icon={<Eye size={18} />} hint="Événements enregistrés" />
+          <MetricCard label={t("admin.metric_total")} value={stats.data.total || 0} icon={<Eye size={18} />} hint={t("admin.audit_metric_events")} />
           <MetricCard
-            label="Catégories"
+            label={t("admin.audit_categories")}
             value={Object.keys(stats.data.by_category || {}).length}
             icon={<Layers size={18} />}
-            hint="Types distincts"
+            hint={t("admin.audit_metric_types")}
           />
           <MetricCard
-            label="Niveaux"
+            label={t("admin.audit_levels")}
             value={Object.keys(stats.data.by_level || {}).length}
             icon={<Gauge size={18} />}
-            hint="Sévérités"
+            hint={t("admin.audit_metric_severities")}
           />
-          <MetricCard
-            label="7 derniers jours"
-            value={stats.data.last_7_days ? Object.values(stats.data.last_7_days).reduce((a, b) => a + b, 0) : 0}
-            icon={<Activity size={18} />}
-            hint="Activité récente"
-          />
+          <MetricCard label={t("admin.audit_last_7_days")} value={last7Total} icon={<Activity size={18} />} hint={t("admin.audit_metric_recent")} />
         </section>
       ) : null}
 
-      {stats.data?.last_7_days ? (
+      {last7 ? (
         <section className="panel">
           <div className="section-head">
-            <h2>Activité 7 jours</h2>
-            <span className="badge blue">{Object.values(stats.data.last_7_days).reduce((a, b) => a + b, 0)} évts</span>
+            <h2>{t("admin.audit_activity_7d")}</h2>
+            <span className="badge blue">{t("admin.audit_events_count", { count: last7Total })}</span>
           </div>
-          <div className="grid grid-cols-7 items-end gap-2.5">
-            {Object.entries(stats.data.last_7_days).map(([day, count]) => {
-              const max = Math.max(...Object.values(stats.data!.last_7_days || { x: 1 }));
-              const pct = Math.max(6, (count / Math.max(max, 1)) * 100);
+          <div className="grid grid-cols-7 items-end gap-2.5" role="img" aria-label={t("admin.audit_activity_7d")}>
+            {Object.entries(last7).map(([day, count]) => {
+              const pct = Math.max(6, (count / last7Max) * 100);
               return (
                 <div className="group grid gap-2 text-center" key={day} title={`${day}: ${count}`}>
-                  <span className="text-xs font-bold leading-none text-[var(--text-soft)]">
-                    {count}
-                  </span>
+                  <span className="text-xs font-bold leading-none text-[var(--text-soft)]">{count}</span>
                   <div className="meter-track flex h-[96px] items-end rounded-[var(--radius)]">
                     <div
                       className="meter-fill w-full rounded-[var(--radius)] transition-[height] duration-500"
@@ -130,101 +145,147 @@ export function AuditLogViewer() {
 
       <section className="panel">
         <div className="section-head">
-          <h2>Filtres</h2>
-          <Button onClick={handleExport}><Download size={16} /> Export JSON</Button>
+          <h2>{t("admin.audit_filters")}</h2>
+          <Button onClick={() => exportMut.mutate()} disabled={exportMut.isPending}>
+            <Download size={16} aria-hidden="true" /> {exportMut.isPending ? t("admin.audit_exporting") : t("admin.audit_export")}
+          </Button>
         </div>
         <div className="actions-row mb-3.5 gap-2.5">
-          <SearchBox placeholder="Recherche texte..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <SearchBox placeholder={t("admin.audit_search")} value={filters.search} onChange={(e) => setFilter("search", e.target.value)} />
           <input
-            placeholder="Evenement"
-            value={event}
-            onChange={(e) => { setEvent(e.target.value); setPage(1); }}
+            placeholder={t("admin.audit_event")}
+            aria-label={t("admin.audit_event")}
+            value={filters.event}
+            onChange={(e) => setFilter("event", e.target.value)}
             className="control control-wide"
           />
           <input
-            placeholder="Categorie"
-            value={category}
-            onChange={(e) => { setCategory(e.target.value); setPage(1); }}
+            placeholder={t("admin.audit_category")}
+            aria-label={t("admin.audit_category")}
+            value={filters.category}
+            onChange={(e) => setFilter("category", e.target.value)}
             className="control control-narrow"
           />
-          <select className="control" value={level} onChange={(e) => { setLevel(e.target.value); setPage(1); }}>
-            <option value="">Tous niveaux</option>
+          <select
+            className="control"
+            value={filters.level}
+            onChange={(e) => setFilter("level", e.target.value)}
+            aria-label={t("admin.audit_level")}
+          >
+            <option value="">{t("admin.audit_all_levels")}</option>
             <option value="INFO">INFO</option>
             <option value="WARNING">WARNING</option>
             <option value="ERROR">ERROR</option>
           </select>
           <input
-            placeholder="Utilisateur"
-            value={username}
-            onChange={(e) => { setUsername(e.target.value); setPage(1); }}
+            placeholder={t("admin.audit_user")}
+            aria-label={t("admin.audit_user")}
+            value={filters.username}
+            onChange={(e) => setFilter("username", e.target.value)}
             className="control control-narrow"
           />
-          <input className="control" type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
-          <input className="control" type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
-          <select className="control" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}>
-            <option value={25}>25 / page</option>
-            <option value={50}>50 / page</option>
-            <option value={100}>100 / page</option>
+          <input
+            className="control"
+            type="date"
+            aria-label={t("admin.audit_date_from")}
+            title={t("admin.audit_date_from")}
+            value={filters.dateFrom}
+            onChange={(e) => setFilter("dateFrom", e.target.value)}
+          />
+          <input
+            className="control"
+            type="date"
+            aria-label={t("admin.audit_date_to")}
+            title={t("admin.audit_date_to")}
+            value={filters.dateTo}
+            onChange={(e) => setFilter("dateTo", e.target.value)}
+          />
+          <select
+            className="control"
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
+            aria-label={t("admin.page_size")}
+          >
+            {PAGE_SIZES.map((size) => (
+              <option key={size} value={size}>
+                {t("admin.per_page", { count: size })}
+              </option>
+            ))}
           </select>
-          <Button onClick={() => { setSearch(""); setEvent(""); setCategory(""); setLevel(""); setUsername(""); setDateFrom(""); setDateTo(""); setPage(1); }}>
-            <RefreshCw size={16} />
-            <span>Réinitialiser</span>
+          <Button
+            onClick={() => {
+              setFilters(EMPTY_FILTERS);
+              setPage(1);
+            }}
+            disabled={!filtersActive}
+          >
+            <RotateCcw size={16} aria-hidden="true" />
+            <span>{t("admin.audit_reset")}</span>
           </Button>
         </div>
 
-        {logs.isLoading ? <SkeletonRows rows={8} cols={5} /> : null}
-        {logs.error ? <ErrorState>Impossible de charger les logs.</ErrorState> : null}
-
-        {(logs.data?.items || []).length ? (
-          <>
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Niveau</th>
-                    <th>Evenement</th>
-                    <th>Categorie</th>
-                    <th>Utilisateur</th>
-                    <th></th>
+        <QueryState
+          query={logs}
+          skeleton={<SkeletonRows rows={8} cols={5} />}
+          errorTitle={t("admin.error_audit")}
+          isEmpty={items.length === 0}
+          empty={
+            <EmptyState title={t("admin.audit_empty")}>
+              {filtersActive ? t("admin.audit_no_match") : t("admin.audit_none")}
+            </EmptyState>
+          }
+        >
+          <div className="table-wrap">
+            <table className="data-table" aria-label={t("admin.tab_audit")}>
+              <thead>
+                <tr>
+                  <th>{t("admin.audit_date")}</th>
+                  <th>{t("admin.audit_level")}</th>
+                  <th>{t("admin.audit_event")}</th>
+                  <th>{t("admin.audit_category")}</th>
+                  <th>{t("admin.audit_user")}</th>
+                  <th>
+                    <span className="sr-only">{t("common.details")}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((entry, i) => (
+                  <tr key={entry.id || i}>
+                    <td>{fullDate(entry.timestamp)}</td>
+                    <td>
+                      <LevelBadge level={entry.level} />
+                    </td>
+                    <td>{entry.event_label || entry.event || entry.message || "—"}</td>
+                    <td>{entry.category || "—"}</td>
+                    <td>{entry.username || "—"}</td>
+                    <td>
+                      <Button onClick={() => setSelectedEntry(entry)} aria-label={t("admin.audit_view_details")} title={t("common.details")}>
+                        <Eye size={14} aria-hidden="true" />
+                      </Button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {(logs.data?.items || []).map((entry, i) => (
-                    <tr key={entry.id || i}>
-                      <td>{fullDate(entry.timestamp)}</td>
-                      <td>{levelBadge(entry.level)}</td>
-                      <td>{entry.event_label || entry.event || entry.message || "N/A"}</td>
-                      <td>{entry.category || "N/A"}</td>
-                      <td>{entry.username || "N/A"}</td>
-                      <td>
-                        <Button onClick={() => setSelectedEntry(entry)}>
-                          <Eye size={14} />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-          </>
-        ) : !logs.isLoading && !logs.error ? (
-          <EmptyState title="Aucun log">{search || event || category || level || username || dateFrom || dateTo ? "Aucun événement ne correspond aux filtres." : "Aucun événement d'audit disponible."}</EmptyState>
-        ) : null}
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+        </QueryState>
       </section>
 
-      {selectedEntry ? (
-        <section className="panel">
-          <div className="section-head">
-            <h2>Detail: {selectedEntry.event_label || selectedEntry.event || selectedEntry.message || "audit"}</h2>
-            <Button onClick={() => setSelectedEntry(null)}>Fermer</Button>
-          </div>
-          <pre className="pre-wrap">
-            {JSON.stringify(selectedEntry, null, 2)}
-          </pre>
-        </section>
-      ) : null}
+      <ModalShell
+        open={selectedEntry !== null}
+        onOpenChange={(o) => {
+          if (!o) setSelectedEntry(null);
+        }}
+        title={selectedEntry ? t("admin.audit_detail_title", { title: entryTitle(selectedEntry) }) : ""}
+        wide
+      >
+        {selectedEntry ? <pre className="pre-wrap overflow-x-auto text-xs">{JSON.stringify(selectedEntry, null, 2)}</pre> : null}
+      </ModalShell>
     </div>
   );
 }

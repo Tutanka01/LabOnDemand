@@ -1,94 +1,66 @@
-import "../styles/main.css";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, FlaskConical, ShieldCheck, UserPlus } from "lucide-react";
-import { motion } from "motion/react";
+import { ArrowRight, ShieldCheck, UserPlus } from "lucide-react";
 import { Link } from "react-router-dom";
+import { AuthLayout, enter } from "../components/AuthLayout";
 import { Button } from "../components/ui";
 import { getSsoStatus } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 
-const stagger = (i: number) => ({
-  initial: { opacity: 0, y: 12 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.4, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] as const }
-});
-
+/** Self-registration is disabled: accounts come from an administrator or from SSO. */
 export default function RegisterPage() {
-  const { locale, t } = useI18n();
-  const sso = useQuery({ queryKey: ["sso"], queryFn: getSsoStatus });
+  const { t } = useI18n();
+  const sso = useQuery({ queryKey: ["sso"], queryFn: getSsoStatus, staleTime: 5 * 60_000 });
 
   return (
-    <main className="auth-page">
-      <section className="auth-brand">
-        <div className="brand">
-          <span className="brand-mark">
-            <FlaskConical size={19} />
-          </span>
-          <span>LabOnDemand</span>
+    <AuthLayout
+      title={t("register.title")}
+      lead={t("auth.register.lead")}
+      features={[t("auth.register.feature_roles"), t("auth.register.feature_sso"), t("auth.register.feature_local")]}
+    >
+      <div className="card auth-card text-center">
+        <div
+          {...enter(0, "mx-auto grid h-14 w-14 place-items-center rounded-[var(--radius)]", {
+            background: "var(--primary)",
+            color: "var(--primary-text)",
+          })}
+        >
+          <UserPlus size={24} aria-hidden="true" />
         </div>
-        <div className="auth-copy">
-          <h1>{t("register.title")}</h1>
-          <p className="muted">
-            {locale === "fr"
-              ? "Création de compte contrôlée. Les comptes locaux sont créés par un administrateur. Quand le SSO est actif, utilisez votre fournisseur d'identité institutionnel."
-              : "Controlled account creation. Local accounts are created by an administrator. When SSO is active, use your institutional identity provider."}
-          </p>
-          <div className="auth-list">
-            <span>{locale === "fr" ? "Rôles et quotas validés avant activation" : "Roles and quotas validated before activation"}</span>
-            <span>{locale === "fr" ? "Comptes SSO rattachés automatiquement" : "SSO accounts linked automatically"}</span>
-            <span>{locale === "fr" ? "Création locale réservée à l'administration" : "Local creation restricted to administration"}</span>
+
+        <div {...enter(1)}>
+          <div className="grid gap-1.5">
+            <h1>{t("auth.register.unavailable_title")}</h1>
+            <p className="sub">{t("auth.register.unavailable_body")}</p>
           </div>
         </div>
-        <span className="muted">© 2026 LabOnDemand</span>
-      </section>
 
-      <section className="auth-form-panel">
-        <div className="card auth-card text-center">
-          <motion.div
-            {...stagger(0)}
-            className="mx-auto grid h-14 w-14 place-items-center rounded-[var(--radius)]"
-            style={{ background: "var(--primary)", color: "var(--primary-text)" }}
-          >
-            <UserPlus size={24} />
-          </motion.div>
+        {sso.data ? (
+          <div {...enter(2)}>
+            <Button
+              className="w-full justify-center"
+              variant="primary"
+              type="button"
+              onClick={() => (window.location.href = "/api/v1/auth/sso/login")}
+            >
+              <ShieldCheck size={16} aria-hidden="true" />
+              {t("login.sso_continue")}
+            </Button>
+          </div>
+        ) : null}
 
-          <motion.div {...stagger(1)} className="grid gap-1.5">
-            <h1>
-              {locale === "fr" ? "Inscription indisponible" : "Registration unavailable"}
-            </h1>
-            <p className="sub">
-              {locale === "fr"
-                ? "Demandez la création de votre compte à un administrateur LabOnDemand, ou connectez-vous via SSO si votre établissement l'a activé."
-                : "Request your account creation from a LabOnDemand administrator, or sign in via SSO if your institution has enabled it."}
-            </p>
-          </motion.div>
-
-          {sso.data ? (
-            <motion.div {...stagger(2)}>
-              <Button className="w-full justify-center" variant="primary" type="button" onClick={() => (window.location.href = "/api/v1/auth/sso/login")}>
-                <ShieldCheck size={16} />
-                {t("register.sso_managed") || (locale === "fr" ? "Continuer avec SSO" : "Continue with SSO")}
-              </Button>
-            </motion.div>
-          ) : null}
-
-          <motion.div {...stagger(3)} className="grid gap-2.5">
-            <Link to="/admin" className="w-full">
-              <Button type="button" className="w-full justify-center">
-                <UserPlus size={16} />
-                {locale === "fr" ? "Espace administrateur" : "Administrator space"}
-              </Button>
+        <div {...enter(3)}>
+          <div className="grid gap-2.5">
+            <Link to="/admin" className="btn w-full justify-center">
+              <UserPlus size={16} aria-hidden="true" />
+              {t("auth.register.admin_space")}
             </Link>
-
-            <Link to="/login" className="w-full">
-              <Button type="button" className="w-full justify-center">
-                {t("register.login") || (locale === "fr" ? "Se connecter" : "Sign in")}
-                <ArrowRight size={16} />
-              </Button>
+            <Link to="/login" className="btn w-full justify-center">
+              {t("login.submit")}
+              <ArrowRight size={16} aria-hidden="true" />
             </Link>
-          </motion.div>
+          </div>
         </div>
-      </section>
-    </main>
+      </div>
+    </AuthLayout>
   );
 }

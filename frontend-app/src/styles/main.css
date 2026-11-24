@@ -938,6 +938,21 @@
     @apply grid w-[min(400px,100%)] gap-4 p-6;
   }
 
+  /* Staggered entrance for auth screens: set --i on each child. */
+  .auth-enter {
+    animation: auth-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 50ms);
+  }
+
+  .field-error {
+    @apply text-[var(--text-xs)] font-medium;
+    color: var(--danger);
+  }
+
+  .field input[aria-invalid="true"] {
+    border-color: var(--danger);
+  }
+
   /* ── Devoirs ───────────────────────────────────────────── */
 
   .assignment-grid {
@@ -1624,6 +1639,18 @@
   to {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes auth-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

@@ -1,18 +1,20 @@
-import * as Dialog from "@radix-ui/react-dialog";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { User } from "../../types/api";
 import { registerUser, updateUser } from "../../lib/api";
-import { Button, ErrorState, IconButton, showToast } from "../ui";
+import { roleLabel } from "../../lib/format";
+import { useI18n } from "../../lib/i18n";
+import { Button, ErrorState, ModalShell, showToast } from "../ui";
+import { FieldError } from "./FieldError";
 
+// Validation messages are translation keys, resolved with t() when displayed.
 const schema = z.object({
-  username: z.string().min(3, "Minimum 3 caracteres"),
-  email: z.string().email("Email invalide").or(z.literal("")).optional(),
+  username: z.string().min(3, "admin.validation_min_3"),
+  email: z.string().email("admin.validation_email").or(z.literal("")).optional(),
   full_name: z.string().optional(),
-  password: z.string().min(12, "Minimum 12 caractères").or(z.literal("")).optional(),
+  password: z.string().min(12, "admin.validation_password_12").or(z.literal("")).optional(),
   role: z.enum(["student", "teacher", "admin"]),
   is_active: z.boolean(),
 });
@@ -30,6 +32,7 @@ export function UserDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { locale, t } = useI18n();
   const queryClient = useQueryClient();
   const isEdit = Boolean(user);
 
@@ -44,6 +47,14 @@ export function UserDialog({
       is_active: user?.is_active !== false,
     },
   });
+  const errors = form.formState.errors;
+
+  const close = () => {
+    form.reset();
+    createMut.reset();
+    updateMut.reset();
+    onOpenChange(false);
+  };
 
   const createMut = useMutation({
     mutationFn: (data: FormData) =>
@@ -57,8 +68,8 @@ export function UserDialog({
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      showToast("Utilisateur créé", "success");
-      onOpenChange(false);
+      showToast(t("admin.toast_user_created"), "success");
+      close();
     },
   });
 
@@ -74,92 +85,101 @@ export function UserDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      showToast("Utilisateur mis à jour", "success");
-      onOpenChange(false);
+      showToast(t("admin.toast_user_updated"), "success");
+      close();
     },
   });
 
   const mutation = isEdit ? updateMut : createMut;
+  const ssoUser = isEdit && user?.auth_provider === "oidc";
 
   return (
-    <Dialog.Root open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) form.reset(); }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="dialog-content panel" aria-describedby={undefined}>
-          <div className="section-head">
-            <Dialog.Title asChild>
-              <h2>{isEdit ? "Modifier l'utilisateur" : "Nouvel utilisateur"}</h2>
-            </Dialog.Title>
-            <Dialog.Close asChild>
-              <IconButton aria-label="Fermer"><X size={17} /></IconButton>
-            </Dialog.Close>
+    <ModalShell
+      open={open}
+      onOpenChange={(o) => (o ? onOpenChange(true) : close())}
+      title={isEdit ? t("admin.edit_user") : t("admin.new_user_title")}
+    >
+      {mutation.error ? <ErrorState title={t("admin.error_save_user")} error={mutation.error} /> : null}
+
+      {ssoEnabled && !isEdit ? <p className="muted mb-3">{t("admin.sso_local_account_hint")}</p> : null}
+
+      <form
+        className="form-grid"
+        noValidate
+        onSubmit={form.handleSubmit((data) => {
+          if (!isEdit && !data.password) {
+            form.setError("password", { message: "admin.validation_password_required" });
+            return;
+          }
+          mutation.mutate(data);
+        })}
+      >
+        <div className="field full">
+          <label htmlFor="user-username">
+            {t("students.username")}
+            <span className="required"> *</span>
+          </label>
+          <input
+            id="user-username"
+            disabled={isEdit}
+            autoComplete="off"
+            aria-invalid={Boolean(errors.username)}
+            {...form.register("username")}
+          />
+          <FieldError message={errors.username?.message} />
+        </div>
+        <div className="field">
+          <label htmlFor="user-email">{t("students.email")}</label>
+          <input id="user-email" type="email" aria-invalid={Boolean(errors.email)} {...form.register("email")} />
+          <FieldError message={errors.email?.message} />
+        </div>
+        <div className="field">
+          <label htmlFor="user-full-name">{t("teacher.full_name")}</label>
+          <input id="user-full-name" {...form.register("full_name")} />
+        </div>
+        {!ssoUser ? (
+          <div className="field">
+            <label htmlFor="user-password">
+              {t("login.password")}
+              {isEdit ? ` ${t("admin.password_keep_hint")}` : <span className="required"> *</span>}
+            </label>
+            <input
+              id="user-password"
+              type="password"
+              autoComplete="new-password"
+              aria-invalid={Boolean(errors.password)}
+              {...form.register("password")}
+            />
+            <FieldError message={errors.password?.message} />
           </div>
-
-          {mutation.error ? <ErrorState>{mutation.error.message}</ErrorState> : null}
-
-          {ssoEnabled && !isEdit ? (
-            <p className="muted mb-3">SSO est actif. Créez un compte local seulement si cet utilisateur ne doit pas passer par l'IdP.</p>
-          ) : null}
-
-          <form
-            className="form-grid"
-            onSubmit={form.handleSubmit((data) => {
-              if (!isEdit && !data.password) {
-                form.setError("password", { message: "Mot de passe requis pour un compte local" });
-                return;
-              }
-              mutation.mutate(data);
-            })}
-          >
-            <div className="field full">
-              <label htmlFor="username">Nom d'utilisateur</label>
-              <input id="username" disabled={isEdit} {...form.register("username")} />
-              {form.formState.errors.username ? <span className="badge red">{form.formState.errors.username.message}</span> : null}
-            </div>
-            <div className="field">
-              <label htmlFor="email">Email</label>
-              <input id="email" type="email" {...form.register("email")} />
-            </div>
-            <div className="field">
-              <label htmlFor="full_name">Nom complet</label>
-              <input id="full_name" {...form.register("full_name")} />
-            </div>
-            {!isEdit || !(user?.auth_provider === "oidc") ? (
-              <div className="field">
-                <label htmlFor="password">
-                  Mot de passe {isEdit ? "(laisser vide pour conserver)" : ""}
-                </label>
-                <input id="password" type="password" {...form.register("password")} />
-                {form.formState.errors.password ? <span className="badge red">{form.formState.errors.password.message}</span> : null}
-              </div>
-            ) : (
-              <div className="field">
-                <span className="muted">Utilisateur SSO - mot de passe géré par l'IdP</span>
-              </div>
-            )}
-            <div className="field">
-              <label htmlFor="role">Role</label>
-              <select id="role" {...form.register("role")}>
-                <option value="student">Étudiant</option>
-                <option value="teacher">Enseignant</option>
-                <option value="admin">Administrateur</option>
-              </select>
-            </div>
-            <div className="field">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" {...form.register("is_active")} />
-                Actif
-              </label>
-            </div>
-            <div className="actions-row field full justify-end">
-              <Button type="button" onClick={() => onOpenChange(false)}>Annuler</Button>
-              <Button variant="primary" type="submit" disabled={mutation.isPending}>
-                {mutation.isPending ? "Enregistrement..." : isEdit ? "Mettre à jour" : "Créer"}
-              </Button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        ) : (
+          <div className="field">
+            <span className="muted">{t("admin.sso_password_managed")}</span>
+          </div>
+        )}
+        <div className="field">
+          <label htmlFor="user-role">{t("admin.col_role")}</label>
+          <select id="user-role" {...form.register("role")}>
+            <option value="student">{roleLabel("student", locale)}</option>
+            <option value="teacher">{roleLabel("teacher", locale)}</option>
+            <option value="admin">{roleLabel("admin", locale)}</option>
+          </select>
+        </div>
+        <div className="field">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" {...form.register("is_active")} />
+            {t("admin.col_active")}
+          </label>
+        </div>
+        <div className="actions-row field full justify-end">
+          <Button type="button" onClick={close}>
+            {t("common.cancel")}
+          </Button>
+          <Button variant="primary" type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? t("assignment.saving") : isEdit ? t("assignment.update") : t("admin.create")}
+          </Button>
+        </div>
+      </form>
+    </ModalShell>
   );
 }

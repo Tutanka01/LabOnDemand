@@ -46,12 +46,11 @@ function entryIcon(entry: VolumeFileEntry) {
 
 function entryTypeLabel(
   entry: VolumeFileEntry,
-  locale: "fr" | "en",
   t: (key: string, replacements?: Record<string, string | number>) => string,
 ) {
   if (entry.type === "dir") return t("files.folder");
   if (entry.type === "link") return t("files.link");
-  return locale === "fr" ? "Fichier" : "File";
+  return t("files.file");
 }
 
 function buildCrumbs(root: string, path: string) {
@@ -500,7 +499,7 @@ export function VolumeBrowserDialog({
                         <div className="min-w-0">
                           <strong className="truncate">{selected.name}</strong>
                           <span className="muted">
-                            {entryTypeLabel(selected, locale, t)}
+                            {entryTypeLabel(selected, t)}
                             {selected.type === "file" ? ` · ${fileSize(selected.size, locale)}` : ""}
                           </span>
                         </div>

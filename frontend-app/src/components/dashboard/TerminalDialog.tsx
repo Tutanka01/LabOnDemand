@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Terminal as TermIcon, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
+import { useI18n } from "../../lib/i18n";
 import { IconButton } from "../ui";
 
 export function TerminalDialog({
@@ -13,7 +14,11 @@ export function TerminalDialog({
   pod: string;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
+  // Read through a ref so that switching language does not reconnect the session.
+  const translate = useRef(t);
+  translate.current = t;
 
   useEffect(() => {
     let mounted = true;
@@ -51,8 +56,9 @@ export function TerminalDialog({
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
       ws.onmessage = (e) => { if (typeof e.data === "string") term.write(e.data); };
-      ws.onerror = () => term.write("\r\n\x1b[31m[Erreur de connexion]\x1b[0m\r\n");
-      ws.onclose = (e) => term.write(`\r\n\x1b[33m[Session terminee (code ${e.code})]\x1b[0m\r\n`);
+      ws.onerror = () => term.write(`\r\n\x1b[31m[${translate.current("details.terminal_error")}]\x1b[0m\r\n`);
+      ws.onclose = (e) =>
+        term.write(`\r\n\x1b[33m[${translate.current("details.terminal_closed", { code: e.code })}]\x1b[0m\r\n`);
 
       term.onData((data) => {
         if (ws.readyState === WebSocket.OPEN) ws.send(data);
@@ -92,14 +98,15 @@ export function TerminalDialog({
                   <span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
                   <span className="h-2.5 w-2.5 rounded-full bg-[#27c93f]" />
                 </span>
-                <TermIcon size={15} className="text-[var(--primary)]" />
+                <TermIcon size={15} className="text-[var(--primary)]" aria-hidden="true" />
+                <span className="sr-only">{t("details.terminal")}:</span>
                 {namespace} / {pod}
               </span>
             </Dialog.Title>
             <Dialog.Close asChild>
               <IconButton
                 className="border-0 bg-transparent text-[#9fb0ad]"
-                aria-label="Fermer"
+                aria-label={t("common.close")}
               >
                 <X size={17} />
               </IconButton>

@@ -2,7 +2,17 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, Loader2, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 import {
   type ButtonHTMLAttributes,
   type CSSProperties,
@@ -12,6 +22,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { ApiError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 
 type ButtonVariant = "default" | "primary" | "danger" | "ghost";
@@ -54,10 +65,11 @@ export function ActionRow({ className = "", ...props }: HTMLAttributes<HTMLDivEl
 }
 
 export function SearchBox(props: InputHTMLAttributes<HTMLInputElement>) {
+  const { t } = useI18n();
   return (
     <label className="search">
-      <Search size={17} />
-      <input aria-label={typeof props.placeholder === "string" ? props.placeholder : "Search"} {...props} />
+      <Search size={17} aria-hidden="true" />
+      <input aria-label={typeof props.placeholder === "string" ? props.placeholder : t("common.search")} {...props} />
     </label>
   );
 }
@@ -76,24 +88,25 @@ export function MetricCard({ label, value, icon, hint }: { label: string; value:
 }
 
 export function StatusBadge({ state }: { state?: string | null }) {
-  const { locale } = useI18n();
+  const { t } = useI18n();
   const value = (state || "unknown").toLowerCase();
   if (value === "running" || value === "active" || value === "ready") {
-    return <Badge tone="green">{locale === "fr" ? "Actif" : "Active"}</Badge>;
+    return <Badge tone="green">{t("common.status_active")}</Badge>;
   }
-  if (value === "paused") return <Badge tone="amber">{locale === "fr" ? "En pause" : "Paused"}</Badge>;
+  if (value === "paused") return <Badge tone="amber">{t("common.status_paused")}</Badge>;
   if (value === "starting" || value === "mixed" || value === "pending") {
-    return <Badge tone="blue">{locale === "fr" ? "Initialisation" : "Starting"}</Badge>;
+    return <Badge tone="blue">{t("common.status_starting")}</Badge>;
   }
   if (value === "inactive" || value === "disabled") {
-    return <Badge tone="amber">{locale === "fr" ? "Inactif" : "Inactive"}</Badge>;
+    return <Badge tone="amber">{t("common.status_inactive")}</Badge>;
   }
-  if (value === "error" || value === "failed") return <Badge tone="red">{locale === "fr" ? "Erreur" : "Error"}</Badge>;
-  if (value === "expired" || value === "deleted") return <Badge tone="red">{locale === "fr" ? "Expiré" : "Expired"}</Badge>;
-  if (value === "archived") return <Badge tone="amber">{locale === "fr" ? "Archivé" : "Archived"}</Badge>;
-  if (value === "ok" || value === "success") return <Badge tone="green">{locale === "fr" ? "OK" : "OK"}</Badge>;
-  if (value === "none") return <Badge>{locale === "fr" ? "Aucun" : "None"}</Badge>;
-  return <Badge>{locale === "fr" ? "Inconnu" : "Unknown"}</Badge>;
+  if (value === "error" || value === "failed") return <Badge tone="red">{t("common.status_error")}</Badge>;
+  if (value === "expired" || value === "deleted") return <Badge tone="red">{t("common.status_expired")}</Badge>;
+  if (value === "archived") return <Badge tone="amber">{t("common.status_archived")}</Badge>;
+  if (value === "ok" || value === "success") return <Badge tone="green">{t("common.status_ok")}</Badge>;
+  if (value === "skipped") return <Badge tone="amber">{t("common.status_skipped")}</Badge>;
+  if (value === "none") return <Badge>{t("common.status_none")}</Badge>;
+  return <Badge>{t("common.status_unknown")}</Badge>;
 }
 
 export function ResourceMeter({ label, used, max, unit = "" }: { label: string; used?: number; max?: number; unit?: string }) {
@@ -114,31 +127,115 @@ export function ResourceMeter({ label, used, max, unit = "" }: { label: string; 
   );
 }
 
-export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
+export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="empty-state">
       <strong>{title}</strong>
       {children ? <span>{children}</span> : null}
+      {action ? <div className="mt-1">{action}</div> : null}
     </div>
   );
 }
 
-export function ErrorState({ title = "Erreur", children }: { title?: string; children?: ReactNode }) {
+/** True when the API reported that Kubernetes could not be reached (HTTP 503). */
+export function isClusterUnreachable(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 503;
+}
+
+/** Message to show for a failed request: the server `detail` when there is one, else `fallback`. */
+export function errorMessage(error: unknown, fallback = ""): string {
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
+/**
+ * Error panel. Pass `error` to show the server's message (and a "cluster unreachable"
+ * title on HTTP 503) and `onRetry` to offer a retry button.
+ */
+export function ErrorState({
+  title,
+  children,
+  error,
+  onRetry,
+  retrying = false,
+}: {
+  title?: string;
+  children?: ReactNode;
+  error?: unknown;
+  onRetry?: () => void;
+  retrying?: boolean;
+}) {
+  const { t } = useI18n();
+  const unreachable = isClusterUnreachable(error);
+  const heading = unreachable ? t("common.cluster_unreachable") : title ?? t("common.error");
+  const detail = error ? errorMessage(error) : "";
   return (
-    <div className="error-state">
-      <AlertTriangle size={22} />
-      <strong>{title}</strong>
+    <div className="error-state" role="alert">
+      <AlertTriangle size={22} aria-hidden="true" />
+      <strong>{heading}</strong>
       {children ? <span>{children}</span> : null}
+      {detail && detail !== children ? <span className="text-xs">{detail}</span> : null}
+      {unreachable ? <span className="muted text-xs">{t("common.cluster_unreachable_hint")}</span> : null}
+      {onRetry ? (
+        <Button onClick={onRetry} disabled={retrying}>
+          <RefreshCw size={15} className={retrying ? "animate-spin" : undefined} aria-hidden="true" />
+          {retrying ? t("common.retrying") : t("common.retry")}
+        </Button>
+      ) : null}
     </div>
   );
 }
 
-export function LoadingState({ label = "Chargement" }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const { t } = useI18n();
   return (
-    <div className="loading-state">
-      <Loader2 size={22} className="animate-spin text-[var(--primary)]" />
-      <span>{label}</span>
+    <div className="loading-state" role="status">
+      <Loader2 size={22} className="animate-spin text-[var(--primary)]" aria-hidden="true" />
+      <span>{label ?? t("common.loading")}</span>
     </div>
+  );
+}
+
+type QueryLike = {
+  data?: unknown;
+  error: unknown;
+  isLoading: boolean;
+  isFetching?: boolean;
+  refetch: () => unknown;
+};
+
+/**
+ * Renders the loading / error / empty / content states of a TanStack query in one place.
+ * A failed background refresh keeps showing the last data with an error banner above it.
+ */
+export function QueryState({
+  query,
+  skeleton,
+  isEmpty = false,
+  empty,
+  errorTitle,
+  children,
+}: {
+  query: QueryLike;
+  skeleton?: ReactNode;
+  isEmpty?: boolean;
+  empty?: ReactNode;
+  errorTitle?: string;
+  children?: ReactNode;
+}) {
+  const retry = () => void query.refetch();
+  if (query.isLoading) return <>{skeleton ?? <LoadingState />}</>;
+  if (query.error && query.data === undefined) {
+    return <ErrorState title={errorTitle} error={query.error} onRetry={retry} retrying={Boolean(query.isFetching)} />;
+  }
+  const banner = query.error ? (
+    <ErrorState title={errorTitle} error={query.error} onRetry={retry} retrying={Boolean(query.isFetching)} />
+  ) : null;
+  return (
+    <>
+      {banner}
+      {isEmpty ? empty : children}
+    </>
   );
 }
 
@@ -148,7 +245,7 @@ export function Skeleton({ className = "", style }: { className?: string; style?
   return <div className={cn("skeleton", className)} style={style} aria-hidden="true" />;
 }
 
-/** Grille de cartes fantômes pour les états de chargement de listes. */
+/** Placeholder cards shown while a list loads. */
 export function SkeletonCards({ count = 3, lines = 3 }: { count?: number; lines?: number }) {
   return (
     <div className="lab-list" aria-busy="true" aria-live="polite">
@@ -167,7 +264,7 @@ export function SkeletonCards({ count = 3, lines = 3 }: { count?: number; lines?
   );
 }
 
-/** Rangées fantômes pour les tableaux. */
+/** Placeholder rows shown while a table loads. */
 export function SkeletonRows({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
   return (
     <div className="grid gap-2.5" aria-busy="true">
@@ -186,7 +283,7 @@ export function ConfirmDialog({
   title,
   description,
   trigger,
-  confirmLabel = "Confirmer",
+  confirmLabel,
   destructive = false,
   onConfirm,
 }: {
@@ -209,7 +306,7 @@ export function ConfirmDialog({
               <h2>{title}</h2>
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton aria-label="Fermer">
+              <IconButton aria-label={t("common.close")}>
                 <X size={17} />
               </IconButton>
             </Dialog.Close>
@@ -221,7 +318,7 @@ export function ConfirmDialog({
             </Dialog.Close>
             <Dialog.Close asChild>
               <Button variant={destructive ? "danger" : "primary"} onClick={() => void onConfirm()}>
-                {confirmLabel}
+                {confirmLabel ?? t("common.confirm")}
               </Button>
             </Dialog.Close>
           </ActionRow>
@@ -276,19 +373,20 @@ export function Pagination({
   totalPages: number;
   onChange: (p: number) => void;
 }) {
+  const { t } = useI18n();
   if (totalPages <= 1) return null;
   return (
     <div className="pagination">
       <Button disabled={page <= 1} onClick={() => onChange(page - 1)}>
-        <ChevronLeft size={16} />
-        <span className="sr-only">Previous page</span>
+        <ChevronLeft size={16} aria-hidden="true" />
+        <span className="sr-only">{t("common.previous_page")}</span>
       </Button>
       <span className="muted">
         {page} / {totalPages}
       </span>
       <Button disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
-        <ChevronRight size={16} />
-        <span className="sr-only">Next page</span>
+        <ChevronRight size={16} aria-hidden="true" />
+        <span className="sr-only">{t("common.next_page")}</span>
       </Button>
     </div>
   );
@@ -301,7 +399,7 @@ export function Select({
   value,
   onChange,
   options,
-  placeholder = "Selectionner...",
+  placeholder,
   className = "",
 }: {
   label?: string;
@@ -311,12 +409,13 @@ export function Select({
   placeholder?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div className={cn("select-root", className)}>
       {label ? <label className="select-label">{label}</label> : null}
       <SelectPrimitive.Root value={value} onValueChange={onChange}>
-        <SelectPrimitive.Trigger className="select-trigger">
-          <SelectPrimitive.Value placeholder={placeholder} />
+        <SelectPrimitive.Trigger className="select-trigger" aria-label={label}>
+          <SelectPrimitive.Value placeholder={placeholder ?? t("common.select_placeholder")} />
           <SelectPrimitive.Icon>
             <ChevronDown size={14} />
           </SelectPrimitive.Icon>
@@ -391,7 +490,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="toast-container">
+    <div className="toast-container" role="status" aria-live="polite">
       {toasts.map((t) => (
         <div key={t.id} className={cn("toast", t.type)}>
           {t.type === "success" ? <Check size={16} /> : t.type === "error" ? <AlertTriangle size={16} /> : null}
@@ -444,6 +543,7 @@ export function ModalShell({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -457,7 +557,7 @@ export function ModalShell({
               <h2>{title}</h2>
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton aria-label="Fermer">
+              <IconButton aria-label={t("common.close")}>
                 <X size={17} />
               </IconButton>
             </Dialog.Close>

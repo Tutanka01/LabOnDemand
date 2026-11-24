@@ -1,0 +1,21 @@
+{
+  "common.retry": "Retry",
+  "common.retrying": "Retrying...",
+  "common.cluster_unreachable": "Kubernetes cluster unreachable",
+  "common.cluster_unreachable_hint": "Cluster data cannot be shown right now. This is not an empty list: try again in a moment.",
+  "common.sort": "Sort",
+  "common.previous_page": "Previous page",
+  "common.next_page": "Next page",
+  "common.select_placeholder": "Select...",
+  "common.status_active": "Active",
+  "common.status_paused": "Paused",
+  "common.status_starting": "Starting",
+  "common.status_inactive": "Inactive",
+  "common.status_error": "Error",
+  "common.status_expired": "Expired",
+  "common.status_archived": "Archived",
+  "common.status_ok": "OK",
+  "common.status_skipped": "Skipped",
+  "common.status_none": "None",
+  "common.status_unknown": "Unknown"
+}

@@ -45,9 +45,11 @@ export class ApiError extends Error {
 }
 
 function redirectToLoginOnUnauthorized(path: string, status: number): void {
-  if (status !== 401 || path === "/api/v1/auth/login" || path === "/api/v1/auth/logout") return;
+  // /auth/me is handled by the AppShell, which redirects without a full reload.
+  if (status !== 401 || path === "/api/v1/auth/login" || path === "/api/v1/auth/logout" || path === "/api/v1/auth/me") return;
   if (typeof window === "undefined" || window.location.pathname === "/login") return;
-  window.location.href = "/login";
+  const next = `${window.location.pathname}${window.location.search}`;
+  window.location.href = `/login?next=${encodeURIComponent(next)}`;
 }
 
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
@@ -206,7 +208,14 @@ export async function importUsersCsv(file: File): Promise<{
   skipped?: number;
   errors?: string[];
   summary?: { created: number; skipped: number; errors: number };
-  results?: Array<{ username?: string; email?: string; status: "created" | "skipped" | "error"; error?: string }>;
+  results?: Array<{
+    line?: number;
+    username?: string;
+    email?: string;
+    status: "created" | "skipped" | "error";
+    detail?: string;
+    error?: string;
+  }>;
 }> {
   const formData = new FormData();
   formData.append("file", file);
@@ -216,7 +225,8 @@ export async function importUsersCsv(file: File): Promise<{
 // ─── Quota Overrides (Admin) ───────────────────────────
 
 export async function getQuotaOverride(userId: number): Promise<QuotaOverride | null> {
-  return apiFetch<QuotaOverride | null>(`/api/v1/auth/users/${userId}/quota-override`);
+  const data = await apiFetch<{ override: QuotaOverride | null }>(`/api/v1/auth/users/${userId}/quota-override`);
+  return data.override ?? null;
 }
 
 export async function setQuotaOverride(userId: number, override: QuotaOverride): Promise<void> {
@@ -506,8 +516,8 @@ export async function getClusterStats(): Promise<ClusterStats> {
 
 export async function pingK8s(): Promise<boolean> {
   try {
-    await apiFetch("/api/v1/k8s/ping");
-    return true;
+    const data = await apiFetch<{ k8s?: boolean }>("/api/v1/k8s/ping");
+    return data.k8s === true;
   } catch {
     return false;
   }

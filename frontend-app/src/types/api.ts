@@ -112,8 +112,14 @@ export interface Deployment {
   created_at?: string | null;
   labels?: Record<string, string>;
   owner_username?: string;
+  /** Admin fleet view (`/deployments/all`): database row id, status and owner. */
+  id?: number;
+  status?: "active" | "paused" | "expired" | "deleted" | string;
+  owner?: { id: number; username: string; email?: string | null; full_name?: string | null; role?: string };
   cpu_requested?: number;
   mem_requested?: number;
+  /** Primary URL to open the lab; null (or missing on older APIs) when none is known yet. */
+  access_url?: string | null;
 }
 
 export interface AccessUrl {

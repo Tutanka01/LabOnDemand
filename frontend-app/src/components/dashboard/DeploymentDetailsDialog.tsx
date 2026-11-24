@@ -1,12 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, FolderTree, Terminal, X } from "lucide-react";
+import { Copy, ExternalLink, FolderTree, KeyRound, Terminal, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { getDeploymentCredentials, getDeploymentDetails } from "../../lib/api";
 import { ttl } from "../../lib/format";
 import { useI18n } from "../../lib/i18n";
 import type { Deployment, DeploymentCredential, DeploymentCredentialsResponse } from "../../types/api";
 import { Button, ErrorState, IconButton, LoadingState, StatusBadge, showToast } from "../ui";
+import { QueryProblem, problemDetail } from "./QueryProblem";
 import { VolumeBrowserDialog } from "../files/VolumeBrowserDialog";
 import { TerminalDialog } from "./TerminalDialog";
 
@@ -30,10 +31,15 @@ export function DeploymentDetailsDialog({
     queryKey: ["deployment-details", deployment.namespace, deployment.name],
     queryFn: () => getDeploymentDetails(deployment.namespace, deployment.name),
     staleTime: 10_000,
+    // This dialog only exists while it is open: poll only while the lab is still changing state.
     refetchInterval: (query) => {
-      const state = query.state.data?.lifecycle?.state;
-      const ready = (query.state.data?.deployment.available_replicas || 0) > 0;
-      return ready || state === "deleted" || state === "expired" ? false : 5000;
+      const data = query.state.data;
+      if (!data || query.state.status === "error") return false;
+      const state = data.lifecycle?.state;
+      if (data.lifecycle?.paused || state === "paused" || state === "deleted" || state === "expired") return false;
+      const available = data.deployment.available_replicas || 0;
+      const wanted = Math.max(data.deployment.replicas || deployment.replicas || 1, 1);
+      return available >= wanted ? false : 5000;
     },
   });
 
@@ -44,7 +50,7 @@ export function DeploymentDetailsDialog({
   });
 
   const deploymentType = (deployment.deployment_type || deployment.type || "").toLowerCase();
-  const isVncDesktop = ["netbeans", "eclipse"].some((t) => deploymentType.includes(t));
+  const isVncDesktop = ["netbeans", "eclipse"].some((type) => deploymentType.includes(type));
   const canBrowseFiles = BROWSABLE_TYPES.some((type) => deploymentType.includes(type));
 
   return (
@@ -58,57 +64,69 @@ export function DeploymentDetailsDialog({
               <h2 className="min-w-0 truncate">{deployment.name}</h2>
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton aria-label="Fermer">
+              <IconButton aria-label={t("common.close")}>
                 <X size={17} />
               </IconButton>
             </Dialog.Close>
           </div>
 
           {details.isLoading ? <LoadingState /> : null}
-          {details.error ? <ErrorState>{locale === "fr" ? "Détails indisponibles." : "Details unavailable."}</ErrorState> : null}
+          {details.error ? (
+            <QueryProblem
+              error={details.error}
+              title={t("details.unavailable")}
+              onRetry={() => void details.refetch()}
+              retrying={details.isFetching}
+              stale={Boolean(details.data)}
+            />
+          ) : null}
 
           {details.data ? (
             <div className="grid gap-4">
               <div className="lab-meta">
                 <span className="badge">{details.data.deployment.namespace}</span>
                 <StatusBadge state={details.data.lifecycle?.state} />
-                <span className="badge">{details.data.deployment.available_replicas || 0} replicas dispo.</span>
-                <span className="badge">TTL {ttl(deployment.expires_at)}</span>
-                {!details.data.deployment.available_replicas ? <span className="badge blue">{locale === "fr" ? "Préparation du lab" : "Preparing lab"}</span> : null}
+                <span className="badge">{t("details.expires", { time: ttl(deployment.expires_at, locale) })}</span>
+                {!details.data.deployment.available_replicas && !details.data.lifecycle?.paused ? (
+                  <span className="badge blue">{t("labs.preparing")}</span>
+                ) : null}
               </div>
 
               <div className="grid-3">
                 <div className="card grid gap-1 p-3.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Image</span>
-                  <strong className="block truncate-cell code-text text-sm">{details.data.deployment.image || deployment.image || "N/A"}</strong>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{t("details.image")}</span>
+                  <strong className="block truncate-cell code-text text-sm">{details.data.deployment.image || deployment.image || "—"}</strong>
                 </div>
                 <div className="card grid gap-1 p-3.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{locale === "fr" ? "Réplicas" : "Replicas"}</span>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{t("details.replicas")}</span>
                   <strong className="display-figure text-2xl leading-none">
                     {details.data.deployment.available_replicas || 0}
                     <span className="text-[var(--muted)]"> / {details.data.deployment.replicas || deployment.replicas || 1}</span>
                   </strong>
                 </div>
                 <div className="card grid gap-1 p-3.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">Namespace</span>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)]">{t("details.namespace")}</span>
                   <strong className="block truncate-cell code-text text-sm">{details.data.deployment.namespace}</strong>
                 </div>
               </div>
 
               <div>
-                <h3>{locale === "fr" ? "Accès" : "Access"}</h3>
+                <h3>{t("details.access")}</h3>
                 <div className="actions-row mt-2.5">
                   {(details.data.access_urls || [])?.length ? (
                     details.data.access_urls!.map((access) => (
-                      <a className="btn primary" href={access.url} target="_blank" rel="noreferrer" key={access.url}>
-                        Ouvrir {access.label || access.service || "le lab"}
+                      <a className="btn primary" href={access.url} target="_blank" rel="noopener noreferrer" key={access.url}>
+                        <ExternalLink size={15} aria-hidden="true" />
+                        {access.label || access.service
+                          ? t("details.open_access", { label: access.label || access.service || "" })
+                          : t("dashboard.open")}
                       </a>
                     ))
                   ) : (
-                    <span className="muted">{locale === "fr" ? "Aucune URL disponible pour le moment." : "No URL available yet."}</span>
+                    <span className="muted">{t("labs.no_url_yet")}</span>
                   )}
                   {(isVncDesktop || details.data.novnc_endpoint) && onNovnc ? (
-                    <Button variant="primary" onClick={() => onNovnc(deployment)}>NoVNC</Button>
+                    <Button onClick={() => onNovnc(deployment)}>{t("details.novnc_button")}</Button>
                   ) : null}
                 </div>
               </div>
@@ -117,20 +135,22 @@ export function DeploymentDetailsDialog({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Pod</th>
-                      <th>{locale === "fr" ? "Statut" : "Status"}</th>
-                      <th>IP</th>
-                      <th>{locale === "fr" ? "Nœud" : "Node"}</th>
-                      <th></th>
+                      <th>{t("details.pod")}</th>
+                      <th>{t("details.status")}</th>
+                      <th>{t("details.ip")}</th>
+                      <th>{t("details.node")}</th>
+                      <th>
+                        <span className="sr-only">{t("dashboard.actions")}</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {(details.data.pods || []).map((pod) => (
                       <tr key={pod.name}>
                         <td className="code-text">{pod.name}</td>
-                        <td>{pod.status || "N/A"}</td>
-                        <td>{pod.pod_ip || "N/A"}</td>
-                        <td>{pod.node_name || "N/A"}</td>
+                        <td>{pod.status || "—"}</td>
+                        <td>{pod.pod_ip || "—"}</td>
+                        <td>{pod.node_name || "—"}</td>
                         <td>
                           {pod.status === "Running" ? (
                             <div className="flex justify-end gap-1">
@@ -144,7 +164,8 @@ export function DeploymentDetailsDialog({
                                 </IconButton>
                               ) : null}
                               <IconButton
-                                title="Ouvrir terminal"
+                                title={t("details.terminal")}
+                                aria-label={t("details.terminal")}
                                 onClick={() => setTerminalPod(pod.name)}
                               >
                                 <Terminal size={14} />
@@ -163,10 +184,10 @@ export function DeploymentDetailsDialog({
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Service</th>
-                        <th>Type</th>
-                        <th>Cluster IP</th>
-                        <th>Ports</th>
+                        <th>{t("details.service")}</th>
+                        <th>{t("details.type")}</th>
+                        <th>{t("details.cluster_ip")}</th>
+                        <th>{t("details.ports")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -174,7 +195,7 @@ export function DeploymentDetailsDialog({
                         <tr key={service.name}>
                           <td className="code-text">{service.name}</td>
                           <td><span className="badge">{service.type}</span></td>
-                          <td>{service.cluster_ip || "N/A"}</td>
+                          <td>{service.cluster_ip || "—"}</td>
                           <td>
                             {(service.ports || []).map((port) => (
                               <span className="badge" key={`${service.name}-${port.port}-${port.target_port}`}>
@@ -190,16 +211,17 @@ export function DeploymentDetailsDialog({
               ) : null}
 
               <div>
-                <Button onClick={() => setShowCredentials(!showCredentials)}>
-                  <Terminal size={16} />
-                  {showCredentials
-                    ? (locale === "fr" ? "Masquer identifiants" : "Hide credentials")
-                    : (locale === "fr" ? "Afficher identifiants" : "Show credentials")}
+                <Button onClick={() => setShowCredentials(!showCredentials)} aria-expanded={showCredentials}>
+                  <KeyRound size={16} aria-hidden="true" />
+                  {showCredentials ? t("details.hide_credentials") : t("details.show_credentials")}
                 </Button>
                 {showCredentials && credentials.data ? (
                   <CredentialsDisplay credentials={credentials.data} />
                 ) : null}
-                {showCredentials && credentials.isLoading ? <LoadingState label={locale === "fr" ? "Récupération..." : "Loading..."} /> : null}
+                {showCredentials && credentials.isLoading ? <LoadingState label={t("details.loading_credentials")} /> : null}
+                {showCredentials && credentials.error ? (
+                  <ErrorState title={t("details.credentials_unavailable")}>{problemDetail(credentials.error)}</ErrorState>
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -231,27 +253,27 @@ function isCredential(value: unknown): value is DeploymentCredential {
 }
 
 function CredentialsDisplay({ credentials }: { credentials: DeploymentCredentialsResponse }) {
-  const { locale } = useI18n();
+  const { t } = useI18n();
   const copy = useCallback((text: string) => {
     navigator.clipboard.writeText(text).then(
-      () => showToast(locale === "fr" ? "Copié !" : "Copied!", "success"),
-      () => showToast(locale === "fr" ? "Erreur de copie" : "Copy failed", "error"),
+      () => showToast(t("common.copied"), "success"),
+      () => showToast(t("details.copy_failed"), "error"),
     );
-  }, [locale]);
+  }, [t]);
 
   const rows: Array<{ service: string; label: string; value?: string | number; secret?: boolean }> = [];
 
   const addCredential = (service: string, cred?: DeploymentCredential & { email?: string }) => {
     if (!cred) return;
-    if (cred.url) rows.push({ service, label: "URL", value: cred.url });
-    if (cred.host) rows.push({ service, label: "Host", value: cred.host });
-    if (cred.port) rows.push({ service, label: "Port", value: cred.port });
-    if (cred.database) rows.push({ service, label: "Database", value: cred.database });
-    if (cred.username) rows.push({ service, label: locale === "fr" ? "Identifiant" : "Username", value: cred.username });
-    if (cred.email) rows.push({ service, label: "Email", value: cred.email });
-    if (cred.token) rows.push({ service, label: "Token", value: cred.token, secret: true });
-    if (cred.password) rows.push({ service, label: locale === "fr" ? "Mot de passe" : "Password", value: cred.password, secret: true });
-    if (cred.view_only_password) rows.push({ service, label: locale === "fr" ? "Mot de passe lecture seule" : "View-only password", value: cred.view_only_password, secret: true });
+    if (cred.url) rows.push({ service, label: t("details.url"), value: cred.url });
+    if (cred.host) rows.push({ service, label: t("details.host"), value: cred.host });
+    if (cred.port) rows.push({ service, label: t("details.port"), value: cred.port });
+    if (cred.database) rows.push({ service, label: t("details.db_name"), value: cred.database });
+    if (cred.username) rows.push({ service, label: t("details.username"), value: cred.username });
+    if (cred.email) rows.push({ service, label: t("details.email"), value: cred.email });
+    if (cred.token) rows.push({ service, label: t("details.token"), value: cred.token, secret: true });
+    if (cred.password) rows.push({ service, label: t("details.password"), value: cred.password, secret: true });
+    if (cred.view_only_password) rows.push({ service, label: t("details.view_only_password"), value: cred.view_only_password, secret: true });
   };
 
   addCredential("WordPress", credentials.wordpress as DeploymentCredential & { email?: string });
@@ -259,11 +281,11 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
   addCredential("Jupyter", credentials.jupyter as DeploymentCredential);
   addCredential("NetBeans", credentials.netbeans as DeploymentCredential);
   addCredential("Eclipse", credentials.eclipse as DeploymentCredential);
-  addCredential(locale === "fr" ? "Base de données" : "Database", credentials.database as DeploymentCredential);
+  addCredential(t("details.database"), credentials.database as DeploymentCredential);
 
   if (credentials.secrets && typeof credentials.secrets === "object") {
     Object.entries(credentials.secrets).forEach(([key, value]) => {
-      rows.push({ service: credentials.type || "Secret", label: key, value, secret: true });
+      rows.push({ service: credentials.type || t("details.secret"), label: key, value, secret: true });
     });
   }
 
@@ -273,7 +295,7 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
   });
 
   if (rows.length === 0) {
-    return <span className="muted">{locale === "fr" ? "Aucun identifiant disponible." : "No credentials available."}</span>;
+    return <p className="muted mt-3">{t("details.no_credentials")}</p>;
   }
 
   return (
@@ -281,10 +303,12 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
       <table className="data-table">
         <thead>
           <tr>
-            <th>Service</th>
-            <th>{locale === "fr" ? "Champ" : "Field"}</th>
-            <th>{locale === "fr" ? "Valeur" : "Value"}</th>
-            <th>Copier</th>
+            <th>{t("details.service")}</th>
+            <th>{t("details.field")}</th>
+            <th>{t("details.value")}</th>
+            <th>
+              <span className="sr-only">{t("details.copy")}</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -292,10 +316,14 @@ function CredentialsDisplay({ credentials }: { credentials: DeploymentCredential
             <tr key={`${row.service}-${row.label}-${index}`}>
               <td>{row.service}</td>
               <td>{row.label}</td>
-              <td>{row.secret ? "******" : row.value || "N/A"}</td>
+              <td>{row.secret ? "******" : row.value || "—"}</td>
               <td>
                 {row.value ? (
-                  <IconButton onClick={() => copy(String(row.value || ""))} title={locale === "fr" ? "Copier" : "Copy"}>
+                  <IconButton
+                    onClick={() => copy(String(row.value || ""))}
+                    title={t("details.copy")}
+                    aria-label={t("details.copy_named", { field: row.label })}
+                  >
                     <Copy size={14} />
                   </IconButton>
                 ) : null}

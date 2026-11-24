@@ -3,22 +3,23 @@ import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { Activity, Cpu, HardDrive, MemoryStick, Server } from "lucide-react";
 import { PageHeader } from "../components/AppShell";
-import { ErrorState, LoadingState, MetricCard } from "../components/ui";
+import { EmptyState, LoadingState, MetricCard, QueryState } from "../components/ui";
 import { getClusterStats } from "../lib/api";
 import { cpuDisplay, memoryDisplay } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 
 export default function AdminStatsPage() {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const stats = useQuery({
     queryKey: ["cluster-stats"],
     queryFn: getClusterStats,
+    // Node usage changes continuously; TanStack Query pauses this poll while the tab is hidden.
     refetchInterval: 30_000,
   });
 
   const nodes = Array.isArray(stats.data?.nodes) ? stats.data!.nodes : [];
 
-  // Agrégat de capacité cluster (construit à partir des nœuds)
+  // Aggregate cluster capacity, summed over the nodes
   const capacity = nodes.reduce(
     (acc, node) => {
       acc.cpuUsed += node.cpu_usage_m || 0;
@@ -37,27 +38,27 @@ export default function AdminStatsPage() {
   return (
     <>
       <PageHeader
-        title={locale === "fr" ? "Stats cluster" : "Cluster stats"}
-        subtitle={locale === "fr" ? "Vue détaillée de l'état du cluster Kubernetes — rafraîchissement automatique toutes les 30s." : "Detailed view of the Kubernetes cluster status — auto-refresh every 30s."}
+        title={t("admin.stats_title")}
+        subtitle={t("admin.stats_subtitle")}
       />
 
-      {stats.isLoading ? <LoadingState label={locale === "fr" ? "Récupération des métriques cluster..." : "Retrieving cluster metrics..."} /> : null}
-      {stats.error ? (
-        <ErrorState>{locale === "fr" ? "Stats cluster indisponibles. Vérifiez la connexion à l'API Kubernetes." : "Cluster stats unavailable. Check the connection to the Kubernetes API."}</ErrorState>
-      ) : null}
-
+      <QueryState
+        query={stats}
+        skeleton={<LoadingState label={t("admin.stats_loading")} />}
+        errorTitle={t("admin.stats_error")}
+      >
       {stats.data ? (
         <div className="grid gap-4">
           <section className="metric-grid">
             {[
               {
-                label: locale === "fr" ? "Nœuds" : "Nodes",
+                label: t("admin.stats_nodes"),
                 value: nodes.length,
                 icon: <Server size={18} />,
-                hint: locale === "fr" ? "Total cluster" : "Cluster total",
+                hint: t("admin.stats_cluster_total"),
               },
               {
-                label: "Deployments",
+                label: t("admin.stats_deployments"),
                 value: (
                   <>
                     {stats.data.ready_deployments ?? "-"}
@@ -65,38 +66,38 @@ export default function AdminStatsPage() {
                   </>
                 ),
                 icon: <Activity size={18} />,
-                hint: "Ready / Total",
+                hint: t("admin.stats_ready_total"),
               },
               {
-                label: "Pods",
+                label: t("admin.stats_pods"),
                 value: stats.data.total_pods ?? "-",
                 icon: <Activity size={18} />,
-                hint: locale === "fr" ? "Tous namespaces" : "All namespaces",
+                hint: t("admin.stats_all_namespaces"),
               },
               {
-                label: "Namespaces",
+                label: t("admin.col_namespace"),
                 value: stats.data.total_namespaces ?? "-",
                 icon: <HardDrive size={18} />,
-                hint: "Total",
+                hint: t("admin.metric_total"),
               },
             ].map((m) => (
               <MetricCard key={m.label} label={m.label} value={m.value} icon={m.icon} hint={m.hint} />
             ))}
           </section>
 
-          {/* Capacité agrégée du cluster — barres construites à partir des tokens */}
+          {/* Aggregate cluster capacity, bars built from the CSS tokens */}
           {capacity.cpuTotal > 0 || capacity.memTotal > 0 ? (
             <section className="grid gap-3.5 md:grid-cols-2">
               <CapacityCard
                 icon={<Cpu size={18} />}
-                label={locale === "fr" ? "CPU agrégé" : "Aggregate CPU"}
+                label={t("admin.stats_aggregate_cpu")}
                 percent={cpuPct}
                 tone={cpuTone}
                 detail={`${cpuDisplay(capacity.cpuUsed)} / ${cpuDisplay(capacity.cpuTotal)}`}
               />
               <CapacityCard
                 icon={<MemoryStick size={18} />}
-                label={locale === "fr" ? "Mémoire agrégée" : "Aggregate memory"}
+                label={t("admin.stats_aggregate_memory")}
                 percent={memPct}
                 tone={memTone}
                 detail={`${memoryDisplay(capacity.memUsed)} / ${memoryDisplay(capacity.memTotal)}`}
@@ -106,14 +107,14 @@ export default function AdminStatsPage() {
 
           <section className="panel">
             <div className="section-head">
-              <h2>{locale === "fr" ? "Nœuds du cluster" : "Cluster nodes"}</h2>
-              <span className="badge blue">
+              <h2>{t("admin.stats_cluster_nodes")}</h2>
+              <span className="badge blue" aria-live="polite">
                 {stats.isFetching
-                  ? (locale === "fr" ? "Actualisation..." : "Refreshing...")
+                  ? t("admin.stats_refreshing")
                   : stats.dataUpdatedAt
-                    ? (locale === "fr"
-                        ? `Mis à jour ${new Date(stats.dataUpdatedAt).toLocaleTimeString("fr-FR")}`
-                        : `Updated at ${new Date(stats.dataUpdatedAt).toLocaleTimeString()}`)
+                    ? t("admin.stats_updated_at", {
+                        time: new Date(stats.dataUpdatedAt).toLocaleTimeString(locale),
+                      })
                     : ""}
               </span>
             </div>
@@ -123,12 +124,12 @@ export default function AdminStatsPage() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>{locale === "fr" ? "Nœud" : "Node"}</th>
-                      <th>Roles</th>
-                      <th>Version</th>
-                      <th>Pods</th>
+                      <th>{t("admin.stats_node")}</th>
+                      <th>{t("admin.stats_roles")}</th>
+                      <th>{t("admin.stats_version")}</th>
+                      <th>{t("admin.stats_pods")}</th>
                       <th className="min-w-[200px]">CPU</th>
-                      <th className="min-w-[200px]">{locale === "fr" ? "Mémoire" : "Memory"}</th>
+                      <th className="min-w-[200px]">{t("admin.stats_memory")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -147,13 +148,13 @@ export default function AdminStatsPage() {
                       return (
                         <tr key={node.name || i}>
                           <td>
-                            <strong>{node.name || "N/A"}</strong>
+                            <strong>{node.name || "—"}</strong>
                           </td>
                           <td>
                             <span className="badge">{node.roles || "worker"}</span>
                           </td>
                           <td>
-                            <span className="badge">{node.kubelet_version || "N/A"}</span>
+                            <span className="badge">{node.kubelet_version || "—"}</span>
                           </td>
                           <td>{node.pods ?? "-"}</td>
                           <td>
@@ -197,13 +198,12 @@ export default function AdminStatsPage() {
                 </table>
               </div>
             ) : (
-              <pre className="pre-wrap text-xs">
-                {JSON.stringify(stats.data, null, 2)}
-              </pre>
+              <EmptyState title={t("admin.stats_no_nodes")}>{t("admin.stats_no_nodes_hint")}</EmptyState>
             )}
           </section>
         </div>
       ) : null}
+      </QueryState>
     </>
   );
 }

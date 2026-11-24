@@ -3,9 +3,10 @@ import { BookOpen, CalendarClock, ChevronRight, FlaskConical } from "lucide-reac
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
-import { Badge, EmptyState, ErrorState, SkeletonCards } from "../components/ui";
+import { Badge, EmptyState, SkeletonCards } from "../components/ui";
+import { QueryProblem } from "../components/dashboard/QueryProblem";
 import { getStudentAssignments } from "../lib/api";
-import { fullDate } from "../lib/format";
+import { type FormatLocale, fullDate, unitAmount } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import type { StudentAssignmentItem } from "../types/api";
 
@@ -14,25 +15,34 @@ function isPastDue(due?: string | null): boolean {
   return new Date(due).getTime() < Date.now();
 }
 
-/** Relative due-date emphasis ("dans 2 j" / overdue) for the to-do cards. */
+type Translate = (key: string, replacements?: Record<string, string | number>) => string;
+
+/** Relative due-date emphasis ("in 2 days" / overdue) for the to-do cards. */
 function dueProximity(
   due: string | null | undefined,
-  locale: string,
+  locale: FormatLocale,
+  t: Translate,
 ): { label: string; tone: "urgent" | "soon" | "calm" } | null {
   if (!due) return null;
   const ms = new Date(due).getTime() - Date.now();
-  const days = Math.round(ms / 86_400_000);
+  if (Number.isNaN(ms)) return null;
   if (ms < 0) {
-    const overdue = Math.abs(days);
+    const overdue = Math.floor(Math.abs(ms) / 86_400_000);
     return {
       tone: "urgent",
-      label: locale === "fr" ? `En retard de ${overdue} j` : `${overdue}d overdue`,
+      label: overdue > 0 ? t("assignments.overdue_by", { duration: unitAmount(overdue, "day", locale) }) : t("assignments.overdue"),
     };
   }
-  if (days === 0) return { tone: "urgent", label: locale === "fr" ? "Aujourd'hui" : "Due today" };
-  if (days === 1) return { tone: "soon", label: locale === "fr" ? "Demain" : "Tomorrow" };
-  const tone = days <= 3 ? "soon" : "calm";
-  return { tone, label: locale === "fr" ? `Dans ${days} j` : `In ${days}d` };
+  const days = Math.round(ms / 86_400_000);
+  if (days === 0) return { tone: "urgent", label: t("assignments.due_today") };
+  if (days === 1) return { tone: "soon", label: t("assignments.due_tomorrow") };
+  return { tone: days <= 3 ? "soon" : "calm", label: t("assignments.due_in", { duration: unitAmount(days, "day", locale) }) };
+}
+
+function labLabel(item: StudentAssignmentItem, t: Translate): string {
+  if (item.lab_ready) return t("myassignments.lab_ready");
+  if (item.lab_status === "paused") return t("assignments.lab_paused");
+  return t("myassignments.lab_not_ready");
 }
 
 function StatusBadge({ item }: { item: StudentAssignmentItem }) {
@@ -52,7 +62,7 @@ function AssignmentCard({ item }: { item: StudentAssignmentItem }) {
   const { t, locale } = useI18n();
   // Due-date urgency is only meaningful while the work is still open.
   const proximity =
-    item.submission_status === "not_started" ? dueProximity(item.due_at, locale) : null;
+    item.submission_status === "not_started" ? dueProximity(item.due_at, locale, t) : null;
   const proximityColor =
     proximity?.tone === "urgent"
       ? "var(--danger)"
@@ -77,18 +87,18 @@ function AssignmentCard({ item }: { item: StudentAssignmentItem }) {
               proximity ? (
                 <span className="inline-flex items-baseline gap-1">
                   {proximity.label}
-                  <span className="muted" style={{ fontWeight: 400 }}>· {fullDate(item.due_at)}</span>
+                  <span className="muted" style={{ fontWeight: 400 }}>· {fullDate(item.due_at, locale)}</span>
                 </span>
               ) : (
-                `${t("myassignments.due")} ${fullDate(item.due_at)}`
+                `${t("myassignments.due")} ${fullDate(item.due_at, locale)}`
               )
             ) : (
               t("myassignments.no_due")
             )}
           </span>
           <span style={{ color: item.lab_ready ? "var(--primary)" : undefined }}>
-            <FlaskConical size={15} />
-            {item.lab_ready ? t("myassignments.lab_ready") : t("myassignments.lab_not_ready")}
+            <FlaskConical size={15} aria-hidden="true" />
+            {labLabel(item, t)}
           </span>
           {item.grade ? (
             <span>
@@ -134,9 +144,17 @@ export default function MyAssignmentsPage() {
           <SkeletonCards count={6} lines={3} />
         </div>
       ) : null}
-      {assignments.error ? <ErrorState>{(assignments.error as Error).message}</ErrorState> : null}
+      {assignments.error ? (
+        <QueryProblem
+          error={assignments.error}
+          title={t("assignments.load_error")}
+          onRetry={() => void assignments.refetch()}
+          retrying={assignments.isFetching}
+          stale={Boolean(assignments.data)}
+        />
+      ) : null}
 
-      {!assignments.isLoading && !assignments.error && (assignments.data?.length || 0) === 0 ? (
+      {assignments.data && assignments.data.length === 0 ? (
         <EmptyState title={t("myassignments.empty")}>{t("myassignments.empty_hint")}</EmptyState>
       ) : null}
 

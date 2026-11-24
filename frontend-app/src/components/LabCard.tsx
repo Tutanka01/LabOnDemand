@@ -1,80 +1,142 @@
-import { ExternalLink, Info, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
-import type { Deployment } from "../types/api";
-import { ttl } from "../lib/format";
+import { ExternalLink, Info, Loader2, PauseCircle, PlayCircle, Trash2 } from "lucide-react";
+import { canOpen, type LabAction, type LabView } from "../hooks/useDeployments";
+import { remainingTime } from "../lib/format";
 import { RuntimeIcon } from "../lib/icons";
 import { useI18n } from "../lib/i18n";
-import { Button, ConfirmDialog, StatusBadge } from "./ui";
+import type { Deployment } from "../types/api";
+import { LabStatusBadge } from "./dashboard/LabStatusBadge";
+import { Badge, Button, ConfirmDialog, cn } from "./ui";
 
 export function LabCard({
-  deployment,
-  onOpen,
+  lab,
+  highlight = false,
+  onOpenFallback,
   onDetails,
-  onDelete,
-  onLifecycle
+  onAction,
 }: {
-  deployment: Deployment;
-  index?: number;
-  onOpen: (deployment: Deployment) => void;
+  lab: LabView;
+  /** Briefly emphasise a lab that just became ready. */
+  highlight?: boolean;
+  /** Called when the lab is ready but the list has no URL for it yet. */
+  onOpenFallback: (deployment: Deployment) => void;
   onDetails: (deployment: Deployment) => void;
-  onDelete: (deployment: Deployment) => void;
-  onLifecycle: (deployment: Deployment, action: "pause" | "resume") => void;
+  onAction: (deployment: Deployment, action: LabAction) => void;
 }) {
-  const { locale } = useI18n();
-  const lifecycle = deployment.lifecycle || deployment.lifecycle_summary;
-  const state = lifecycle?.state || (deployment.is_paused ? "paused" : deployment.ready_replicas ? "running" : "starting");
-  const paused = state === "paused" || lifecycle?.paused;
-  const ready = !paused && Boolean(deployment.ready_replicas && deployment.ready_replicas > 0);
+  const { t, locale } = useI18n();
+  const { deployment, phase, busy } = lab;
+  const type = deployment.type || deployment.deployment_type || "custom";
+  const placeholder = phase === "creating";
+  const paused = phase === "paused" || phase === "pausing";
+  const openable = canOpen(lab) && !busy;
+  const accessUrl = deployment.access_url || null;
+  const remaining = remainingTime(deployment.expires_at, locale);
+  const ready = deployment.ready_replicas ?? 0;
+  const total = Math.max(deployment.replicas ?? 1, 1);
+
+  const hint =
+    phase === "starting" || phase === "creating" || phase === "resuming"
+      ? t("labs.hint_starting")
+      : phase === "paused"
+        ? t("labs.hint_paused")
+        : null;
+
+  const openLabel = t("labs.open_named", { name: deployment.name });
 
   return (
-    <article className="card lab-card">
+    <article
+      className={cn(
+        "card lab-card",
+        busy && "opacity-80",
+        highlight && "border-[var(--success)] shadow-[var(--shadow)]",
+      )}
+      aria-busy={busy}
+      aria-label={deployment.name}
+    >
       <div className="lab-card-head">
         <div className="lab-title">
           <span className="runtime-mark">
-            <RuntimeIcon type={deployment.type || deployment.deployment_type} />
+            <RuntimeIcon type={type} />
           </span>
           <div className="min-w-0">
-            <strong>{deployment.name}</strong>
-            <div className="muted code-text">{deployment.namespace}</div>
+            <strong className="block truncate">{deployment.name}</strong>
+            <div className="muted text-[var(--text-xs)]">{type}</div>
           </div>
         </div>
-        <StatusBadge state={state} />
+        <LabStatusBadge phase={phase} />
       </div>
 
       <div className="lab-meta">
-        <span className="badge">{deployment.type || deployment.deployment_type || "custom"}</span>
-        <span className={`badge ${ready ? "green" : ""}`}>
-          {deployment.ready_replicas || 0}/{deployment.replicas || 1} {locale === "fr" ? "réplicas" : "replicas"}
-        </span>
-        <span className="badge">TTL {ttl(deployment.expires_at)}</span>
+        {phase === "starting" && total > 1 ? (
+          <Badge tone="blue">{t("labs.replicas_ready", { ready, total })}</Badge>
+        ) : null}
+        <Badge tone={deployment.expires_at && !remaining ? "red" : "default"}>
+          {!deployment.expires_at
+            ? t("labs.no_expiry")
+            : remaining
+              ? t("labs.expires_in", { time: remaining })
+              : t("labs.expired")}
+        </Badge>
       </div>
+
+      {hint ? <p className="muted m-0 text-[var(--text-xs)]">{hint}</p> : null}
 
       <div className="hairline" />
 
       <div className="actions-row">
-        <Button disabled={!ready} onClick={() => onOpen(deployment)}>
-          <ExternalLink size={15} />
-          {ready ? (locale === "fr" ? "Ouvrir" : "Open") : (locale === "fr" ? "En préparation" : "Preparing")}
+        {openable && accessUrl ? (
+          <a className="btn primary" href={accessUrl} target="_blank" rel="noopener noreferrer" aria-label={openLabel}>
+            <ExternalLink size={15} aria-hidden="true" />
+            {t("dashboard.open")}
+          </a>
+        ) : openable ? (
+          <Button variant="primary" onClick={() => onOpenFallback(deployment)} aria-label={openLabel}>
+            <ExternalLink size={15} aria-hidden="true" />
+            {t("dashboard.open")}
+          </Button>
+        ) : (
+          <Button variant="primary" disabled>
+            {phase === "starting" || phase === "creating" || phase === "resuming" ? (
+              <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <ExternalLink size={15} aria-hidden="true" />
+            )}
+            {phase === "starting" || phase === "creating" || phase === "resuming" ? t("labs.preparing") : t("dashboard.open")}
+          </Button>
+        )}
+        <Button onClick={() => onDetails(deployment)} disabled={placeholder}>
+          <Info size={15} aria-hidden="true" />
+          {t("common.details")}
         </Button>
-        <Button onClick={() => onDetails(deployment)}>
-          <Info size={15} />
-          {locale === "fr" ? "Infos" : "Info"}
-        </Button>
-        <Button onClick={() => onLifecycle(deployment, paused ? "resume" : "pause")}>
-          {paused ? <PlayCircle size={15} /> : <PauseCircle size={15} />}
-          {paused ? (locale === "fr" ? "Reprendre" : "Resume") : (locale === "fr" ? "Pause" : "Pause")}
+        <Button onClick={() => onAction(deployment, paused ? "resume" : "pause")} disabled={busy || placeholder}>
+          {phase === "pausing" || phase === "resuming" ? (
+            <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+          ) : paused ? (
+            <PlayCircle size={15} aria-hidden="true" />
+          ) : (
+            <PauseCircle size={15} aria-hidden="true" />
+          )}
+          {phase === "pausing" || phase === "resuming"
+            ? t(`labs.phase_${phase}`)
+            : paused
+              ? t("dashboard.resume")
+              : t("dashboard.pause")}
         </Button>
         <ConfirmDialog
           destructive
-          title={locale === "fr" ? "Supprimer le lab" : "Delete lab"}
-          description={locale === "fr" ? `Supprimer ${deployment.name} et son service Kubernetes ? Les volumes persistants ne sont pas supprimés automatiquement.` : `Delete ${deployment.name} and its Kubernetes service? Persistent volumes are not deleted automatically.`}
-          confirmLabel={locale === "fr" ? "Supprimer" : "Delete"}
+          title={t("labs.delete_title")}
+          description={t("labs.delete_description", { name: deployment.name })}
+          confirmLabel={t("common.delete")}
           trigger={
-            <Button variant="danger">
-              <Trash2 size={15} />
-              {locale === "fr" ? "Supprimer" : "Delete"}
+            <Button variant="danger" disabled={busy || placeholder}>
+              {phase === "deleting" ? (
+                <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Trash2 size={15} aria-hidden="true" />
+              )}
+              {t("common.delete")}
             </Button>
           }
-          onConfirm={() => onDelete(deployment)}
+          onConfirm={() => onAction(deployment, "delete")}
         />
       </div>
     </article>

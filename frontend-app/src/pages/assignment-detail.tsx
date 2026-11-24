@@ -1,19 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, FlaskConical, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, FlaskConical, Loader2, PlayCircle, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeader } from "../components/AppShell";
 import {
   Badge,
   Button,
-  ErrorState,
   LoadingState,
   StatusBadge,
   showToast,
 } from "../components/ui";
+import { LabStatusBadge } from "../components/dashboard/LabStatusBadge";
+import { QueryProblem } from "../components/dashboard/QueryProblem";
+import { canOpen, openLabViaDetails, useDeployments } from "../hooks/useDeployments";
 import { GradingResultList, RunSummary } from "../components/GradingResults";
 import {
-  getDeploymentDetails,
   getGradingRun,
   getStudentAssignment,
   runTestsStudent,
@@ -32,8 +33,10 @@ interface LinkRow {
 export default function AssignmentDetailPage() {
   const { aid } = useParams();
   const assignmentId = Number(aid);
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const navigate = useNavigate();
+  // The live lab list gives the real readiness and the URL to open, and refreshes while it changes.
+  const labsState = useDeployments();
   const queryClient = useQueryClient();
 
   const detail = useQuery({
@@ -109,30 +112,40 @@ export default function AssignmentDetailPage() {
     onError: (e) => showToast((e as Error).message, "error"),
   });
 
-  async function openLab() {
-    const item = detail.data;
-    if (!item?.lab_namespace || !item?.lab_deployment_name) return;
+  const labName = detail.data?.lab_deployment_name;
+  const labNamespace = detail.data?.lab_namespace;
+  const lab = labName
+    ? labsState.labs.find(
+        (candidate) =>
+          candidate.deployment.name === labName && (!labNamespace || candidate.deployment.namespace === labNamespace),
+      )
+    : undefined;
+
+  /** Opens the lab without a pop-up blocker: the tab is created in the click handler itself. */
+  function openLabFallback() {
+    if (!labNamespace || !labName) return;
     setOpening(true);
-    try {
-      const d = await getDeploymentDetails(item.lab_namespace, item.lab_deployment_name);
-      const url = d.access_urls?.find((a) => a.url)?.url;
-      if (url) {
-        window.open(url, "_blank", "noopener,noreferrer");
-      } else {
-        showToast(t("submission.no_lab_url"), "error");
-      }
-    } catch (e) {
-      showToast((e as Error).message, "error");
-    } finally {
-      setOpening(false);
-    }
+    void openLabViaDetails({ namespace: labNamespace, name: labName }, t).finally(() => setOpening(false));
   }
 
   if (detail.isLoading) return <LoadingState label={t("common.loading")} />;
-  if (detail.error) return <ErrorState>{(detail.error as Error).message}</ErrorState>;
+  if (detail.error) {
+    return (
+      <QueryProblem
+        error={detail.error}
+        title={t("assignments.load_error")}
+        onRetry={() => void detail.refetch()}
+        retrying={detail.isFetching}
+      />
+    );
+  }
   if (!detail.data) return null;
 
   const item = detail.data;
+  // Prefer the live cluster state; fall back to the server's record when the list is unavailable.
+  const labReady = lab ? lab.phase === "ready" : item.lab_ready;
+  const labOpenable = lab ? canOpen(lab) && !lab.busy : item.lab_ready;
+  const labUrl = lab?.deployment.access_url || null;
   const sub = item.submission;
   const canSubmit = Boolean(text.trim()) || links.some((l) => l.url.trim());
 
@@ -187,14 +200,14 @@ export default function AssignmentDetailPage() {
                 </h2>
                 <Button
                   variant="primary"
-                  disabled={!item.lab_ready || runActive}
+                  disabled={!labReady || runActive}
                   onClick={() => runTestsMut.mutate()}
                 >
                   {runActive ? t("probe.running") : t("probe.run_tests")}
                 </Button>
               </div>
               <p className="muted text-sm">{t("probe.run_intro")}</p>
-              {!item.lab_ready ? (
+              {!labReady ? (
                 <p className="text-sm mt-1" style={{ color: "var(--warning)" }}>
                   {t("probe.lab_required")}
                 </p>
@@ -217,19 +230,40 @@ export default function AssignmentDetailPage() {
           <section className="panel">
             <div className="section-head">
               <h2>{t("submission.lab")}</h2>
-              <StatusBadge state={item.lab_status || "none"} />
+              {lab ? <LabStatusBadge phase={lab.phase} /> : <StatusBadge state={item.lab_status || "none"} />}
             </div>
             <div className="flex flex-col gap-2">
-              <Button
-                variant="primary"
-                disabled={!item.lab_ready || opening}
-                onClick={openLab}
-                className="justify-center"
-              >
-                <ExternalLink size={16} />
-                {opening ? t("submission.opening") : t("submission.open_lab")}
-              </Button>
-              {!item.lab_ready ? (
+              {labOpenable && labUrl ? (
+                <a className="btn primary justify-center" href={labUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink size={16} aria-hidden="true" />
+                  {t("submission.open_lab")}
+                </a>
+              ) : lab?.phase === "paused" || lab?.phase === "resuming" ? (
+                <Button
+                  variant="primary"
+                  className="justify-center"
+                  disabled={lab.busy}
+                  onClick={() => labsState.runAction(lab.deployment, "resume")}
+                >
+                  {lab.busy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <PlayCircle size={16} aria-hidden="true" />}
+                  {lab.busy ? t("labs.phase_resuming") : t("assignments.resume_lab")}
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  disabled={!labOpenable || opening}
+                  onClick={openLabFallback}
+                  className="justify-center"
+                >
+                  {opening ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ExternalLink size={16} aria-hidden="true" />}
+                  {opening ? t("submission.opening") : t("submission.open_lab")}
+                </Button>
+              )}
+              {lab && (lab.phase === "starting" || lab.phase === "creating" || lab.phase === "resuming") ? (
+                <span className="muted text-sm">{t("labs.hint_starting")}</span>
+              ) : lab?.phase === "paused" ? (
+                <span className="muted text-sm">{t("assignments.paused_hint")}</span>
+              ) : !labOpenable ? (
                 <span className="muted text-sm">{t("submission.lab_not_ready_hint")}</span>
               ) : null}
             </div>
@@ -246,7 +280,7 @@ export default function AssignmentDetailPage() {
                     : undefined
                 }
               >
-                {item.due_at ? fullDate(item.due_at) : t("myassignments.no_due")}
+                {item.due_at ? fullDate(item.due_at, locale) : t("myassignments.no_due")}
               </span>
             </div>
             <div className="detail-meta-row">
@@ -266,7 +300,7 @@ export default function AssignmentDetailPage() {
             {sub?.submitted_at ? (
               <div className="detail-meta-row">
                 <span className="muted">{t("submission.submitted_at")}</span>
-                <span>{fullDate(sub.submitted_at)}</span>
+                <span>{fullDate(sub.submitted_at, locale)}</span>
               </div>
             ) : null}
           </section>
